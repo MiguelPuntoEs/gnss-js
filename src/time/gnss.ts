@@ -12,6 +12,7 @@ import {
   START_UNIX_TIME,
 } from '../constants/time';
 import { getTimeDifference } from './time-difference';
+import { getDateFromUtc, getUtcDate } from './utc';
 
 export function getGpsTime(date: Date): number {
   return date.getTime() - START_GPS_TIME.getTime();
@@ -38,11 +39,13 @@ export function getDateFromBdsTime(bdsTime: number): Date {
 }
 
 export function getUnixTime(date: Date): number {
-  return date.getTime() - START_UNIX_TIME.getTime();
+  // Input date in GPS time
+  const utc_date: Date = getUtcDate(date);
+  return utc_date.getTime();
 }
 
 export function getDateFromUnixTime(unixTime: number): Date {
-  return new Date(unixTime + START_UNIX_TIME.getTime());
+  return getDateFromUtc(new Date(unixTime));
 }
 
 export function getWeekNumber(date: Date): number {

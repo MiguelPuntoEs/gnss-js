@@ -61,13 +61,13 @@ test('getDateFromBdsTime', () => {
 });
 
 test('getUnixTime', () => {
-  const unix_time = getUnixTime(new Date('1970-01-01T00:00:00Z'));
-  expect(unix_time).toBe(0);
+  const unix_time = getUnixTime(new Date('2025-01-01T00:00:18Z'));
+  expect(unix_time).toBe(1735689600000);
 });
 
 test('getDateFromUnixTime', () => {
   const date = getDateFromUnixTime(0);
-  expect(date.getTime()).toBe(new Date('1970-01-01T00:00:00Z').getTime());
+  expect(date.toISOString()).toBe('1969-12-31T23:59:49.000Z');
 });
 
 test('getTaiDate', () => {
