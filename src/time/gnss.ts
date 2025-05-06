@@ -64,19 +64,19 @@ export function getDateFromGpsData(
   );
 }
 
-export function getTAIDate(date: Date): Date {
+export function getTaiDate(date: Date): Date {
   return new Date(date.getTime() + MILLISECONDS_GPS_TAI);
 }
 
-export function getDateFromTAI(tai_date: Date): Date {
+export function getDateFromTai(tai_date: Date): Date {
   return new Date(tai_date.getTime() - MILLISECONDS_GPS_TAI);
 }
 
-export function getTTDate(date: Date): Date {
+export function getTtDate(date: Date): Date {
   return new Date(date.getTime() + MILLISECONDS_GPS_TAI + MILLISECONDS_TT_TAI);
 }
 
-export function getDateFromTT(tt_date: Date): Date {
+export function getDateFromTt(tt_date: Date): Date {
   return new Date(
     tt_date.getTime() - MILLISECONDS_GPS_TAI - MILLISECONDS_TT_TAI
   );
@@ -112,5 +112,5 @@ export function getDateFromGloN(n4: number, na: number, tod: number): Date {
 
 export function getNtpTime(date: Date): number {
   // Input date in GPS time
-  return getTAIDate(date).getTime() - START_NTP_TIME.getTime();
+  return getTaiDate(date).getTime() - START_NTP_TIME.getTime();
 }

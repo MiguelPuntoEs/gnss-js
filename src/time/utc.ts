@@ -1,5 +1,5 @@
 import { MILLISECONDS_IN_SECOND } from '../constants/time';
-import { getNtpTime, getTAIDate } from './gnss';
+import { getDateFromTai, getNtpTime, getTaiDate } from './gnss';
 
 export function getLeap(date: Date): number {
   // Date in GPS time, leap seconds are for TAI
@@ -45,7 +45,7 @@ export function getLeap(date: Date): number {
     }
   }
 
-  return 0;
+  return 8;
 }
 
 export function getGpsLeap(date: Date): number {
@@ -60,8 +60,22 @@ export function getGpsLeap(date: Date): number {
 export function getUtcDate(date: Date): Date {
   // Input date in GPS time
 
-  const tai_date: Date = getTAIDate(date);
+  const tai_date: Date = getTaiDate(date);
   const leap_seconds: number = getLeap(date);
 
   return new Date(tai_date.getTime() - leap_seconds * MILLISECONDS_IN_SECOND);
+}
+
+export function getDateFromUtc(utc_date: Date): Date {
+  // Input date in UTC time
+
+  const tai_date: Date = new Date(
+    utc_date.getTime() + getLeap(utc_date) * MILLISECONDS_IN_SECOND
+  );
+  const leap_seconds: number = getLeap(getDateFromTai(tai_date));
+  const gps_date: Date = getDateFromTai(
+    new Date(utc_date.getTime() + leap_seconds * MILLISECONDS_IN_SECOND)
+  );
+
+  return gps_date;
 }
