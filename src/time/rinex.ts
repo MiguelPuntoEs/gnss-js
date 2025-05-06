@@ -18,7 +18,7 @@ export function getRINEX(date: Date): string {
   return formatted;
 }
 
-export function getDateFromRINEX(rinex: string): Date | undefined {
+export function getDateFromRINEX(rinex: string): Date {
   const year = Number.parseInt(rinex.substring(2, 6));
   const month = Number.parseInt(rinex.substring(7, 9)) - 1;
   const day = Number.parseInt(rinex.substring(10, 12));
