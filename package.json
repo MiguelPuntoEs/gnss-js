@@ -15,6 +15,11 @@
     "gnss",
     "gps"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MiguelPuntoEs/gnss-js.git"
+  },
+  "homepage": "https://gnsscalc.com",
   "author": "Miguel González <work@miguel.es>",
   "license": "ISC",
   "devDependencies": {
