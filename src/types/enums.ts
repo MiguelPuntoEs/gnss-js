@@ -1,4 +1,6 @@
 export enum Scale {
-    TAI,
-    TT
+  TAI,
+  TT,
+  GPS,
+  UTC,
 }

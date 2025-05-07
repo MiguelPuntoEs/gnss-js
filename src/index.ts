@@ -1,5 +1,6 @@
 export * from './constants/time';
 export * from './types/time';
+export * from './types/enums';
 export * from './time/functions';
 export * from './time/gnss';
 export * from './time/rinex';
