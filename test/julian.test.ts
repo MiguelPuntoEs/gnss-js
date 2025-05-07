@@ -6,36 +6,72 @@ import {
   getMJD2000,
   getDateFromMJD2000,
 } from '../src/index';
+import { Scale } from '../src/types/enums';
 
+// TT scale
 test('getJulianDate', () => {
-  const date: Date = new Date('2024-01-01T00:00:00Z');
+  const date: Date = new Date('2000-01-01T11:59:08.816Z');
   const julian_date: number = getJulianDate(date);
-  expect(julian_date).toBeCloseTo(2460310.5002199076, 5);
+  expect(julian_date).toBeCloseTo(2451545.0, 5);
 });
 
 test('getDateFromJulianDate', () => {
-  const date: Date = getDateFromJulianDate(2460310.5002199076);
-  expect(date.toISOString()).toBe('2024-01-01T00:00:00.000Z');
+  const date: Date = getDateFromJulianDate(2451545.0);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:08.816Z');
 });
 
 test('getMJD', () => {
-  const date: Date = new Date('2024-01-01T00:00:00Z');
+  const date: Date = new Date('2000-01-01T11:59:08.816Z');
   const mjd = getMJD(date);
-  expect(mjd).toBeCloseTo(60310.00021990741, 5);
+  expect(mjd).toBeCloseTo(51544.5, 5);
 });
 
 test('getDateFromMJD', () => {
-  const date: Date = getDateFromMJD(60310.00021990761);
-  expect(date.toISOString()).toBe('2024-01-01T00:00:00.000Z');
+  const date: Date = getDateFromMJD(51544.5);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:08.816Z');
 });
 
 test('getMJD2000', () => {
-  const date: Date = new Date('2024-01-01T00:00:00Z');
-  const mjd: number = getMJD2000(date);
-  expect(mjd).toBeCloseTo(8765.500219907612, 5);
+  const date: Date = new Date('2000-01-01T11:59:08.816Z');
+  const mjd2000: number = getMJD2000(date);
+  expect(mjd2000).toBeCloseTo(0, 5);
 });
 
 test('getDateFromMJD2000', () => {
-  const date: Date = getDateFromMJD2000(8765.500219907612);
-  expect(date.toISOString()).toBe('2024-01-01T00:00:00.000Z');
+  const date: Date = getDateFromMJD2000(0);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:08.816Z');
+});
+
+// TAI scale
+test('getJulianDate', () => {
+  const date: Date = new Date('2000-01-01T11:59:41.000Z');
+  const julian_date: number = getJulianDate(date, Scale.TAI);
+  expect(julian_date).toBeCloseTo(2451545.0, 5);
+});
+
+test('getDateFromJulianDate', () => {
+  const date: Date = getDateFromJulianDate(2451545.0, Scale.TAI);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:41.000Z');
+});
+
+test('getMJD', () => {
+  const date: Date = new Date('2000-01-01T11:59:41.000Z');
+  const mjd = getMJD(date, Scale.TAI);
+  expect(mjd).toBeCloseTo(51544.5, 5);
+});
+
+test('getDateFromMJD', () => {
+  const date: Date = getDateFromMJD(51544.5, Scale.TAI);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:41.000Z');
+});
+
+test('getMJD2000', () => {
+  const date: Date = new Date('2000-01-01T11:59:41.000Z');
+  const mjd2000: number = getMJD2000(date, Scale.TAI);
+  expect(mjd2000).toBeCloseTo(0, 5);
+});
+
+test('getDateFromMJD2000', () => {
+  const date: Date = getDateFromMJD2000(0, Scale.TAI);
+  expect(date.toISOString()).toBe('2000-01-01T11:59:41.000Z');
 });
