@@ -51,13 +51,13 @@ test('getDateFromGalTime', () => {
 });
 
 test('getBdsTime', () => {
-  const bds_time: number = getBdsTime(new Date('2006-01-01T00:00:13Z'));
+  const bds_time: number = getBdsTime(new Date('2006-01-01T00:00:14Z'));
   expect(bds_time).toBe(0);
 });
 
 test('getDateFromBdsTime', () => {
   const date: Date = getDateFromBdsTime(0);
-  expect(date.getTime()).toBe(new Date('2006-01-01T00:00:13Z').getTime());
+  expect(date.getTime()).toBe(new Date('2006-01-01T00:00:14Z').getTime());
 });
 
 test('getUnixTime', () => {
