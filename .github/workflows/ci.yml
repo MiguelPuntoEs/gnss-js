@@ -19,6 +19,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: bash scripts/fetch-test-data.sh
       - run: pnpm run lint
       - run: npx tsc --noEmit
       - run: pnpm test
