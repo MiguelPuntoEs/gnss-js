@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest';
 import {
   getHourCode,
   getDayOfYear,
@@ -8,23 +9,24 @@ import {
   getDateFromTimeOfDay,
   getDateFromDayOfYear,
   getWeekOfYear,
+  HourCode,
 } from '../src/index';
 
 test('getTimeOfDay', () => {
   const date: Date = new Date('1980-01-06T23:09:00Z');
   const time_of_day: number = getTimeOfDay(date);
-  expect(time_of_day).toBe(83340);
+  expect(time_of_day).toBe(83340000); // 23h 09m 00s in milliseconds
 });
 
 test('getDateFromTimeOfDay', () => {
   const date: Date = new Date('1980-01-06T00:00:00Z');
-  const new_date: Date = getDateFromTimeOfDay(83340, date);
+  const new_date: Date = getDateFromTimeOfDay(83340000, date);
   expect(new_date.toISOString()).toBe('1980-01-06T23:09:00.000Z');
 });
 
 test('getDayOfYear', () => {
   const date: Date = new Date('1980-01-06T23:09:00Z');
-  const day_of_year: Date = getDayOfYear(date);
+  const day_of_year: number = getDayOfYear(date);
   expect(day_of_year).toBe(6);
 });
 
@@ -36,7 +38,7 @@ test('getDateFromDayOfYear', () => {
 
 test('getHourCode', () => {
   const date: Date = new Date('1980-01-06T00:00:00Z');
-  const hour_code: Date = getHourCode(date);
+  const hour_code: HourCode = getHourCode(date);
   expect(hour_code).toBe('a');
 });
 

@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest';
 import { getLeap, getGpsLeap, getUtcDate, getDateFromUtc } from '../src/index';
 
 test('getLeap', () => {

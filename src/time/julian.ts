@@ -12,6 +12,12 @@ import { Scale } from '../types/enums';
 import { getDateFromTai } from './gnss';
 import { getLeap } from './utc';
 
+/**
+ * Returns the Julian Date for a given Date and time scale.
+ * @param date - Date in GPS time scale
+ * @param scale - Time scale for the output (default: TT)
+ * @returns Julian Date in fractional days
+ */
 export function getJulianDate(date: Date, scale: Scale = Scale.TT): number {
   if (scale === Scale.TAI) {
     return (
@@ -46,6 +52,12 @@ export function getJulianDate(date: Date, scale: Scale = Scale.TT): number {
   );
 }
 
+/**
+ * Converts a Julian Date to a Date.
+ * @param julianDate - Julian Date in fractional days
+ * @param scale - Time scale of the input Julian Date (default: TT)
+ * @returns Date in GPS time scale
+ */
 export function getDateFromJulianDate(
   julianDate: number,
   scale: Scale = Scale.TT
@@ -86,18 +98,42 @@ export function getDateFromJulianDate(
   );
 }
 
+/**
+ * Returns the Modified Julian Date for a given Date and time scale.
+ * @param date - Date in GPS time scale
+ * @param scale - Time scale for the output (default: TT)
+ * @returns Modified Julian Date in fractional days
+ */
 export function getMJD(date: Date, scale: Scale = Scale.TT): number {
   return getJulianDate(date, scale) - DAYS_MJD_JULIAN;
 }
 
+/**
+ * Converts a Modified Julian Date to a Date.
+ * @param mjd - Modified Julian Date in fractional days
+ * @param scale - Time scale of the input MJD (default: TT)
+ * @returns Date in GPS time scale
+ */
 export function getDateFromMJD(mjd: number, scale: Scale = Scale.TT): Date {
   return getDateFromJulianDate(mjd + DAYS_MJD_JULIAN, scale);
 }
 
+/**
+ * Returns the MJD2000 (Modified Julian Date referenced to J2000.0) for a given Date.
+ * @param date - Date in GPS time scale
+ * @param scale - Time scale for the output (default: TT)
+ * @returns MJD2000 in fractional days
+ */
 export function getMJD2000(date: Date, scale: Scale = Scale.TT): number {
   return getMJD(date, scale) - DAYS_MJD2000_MJD;
 }
 
+/**
+ * Converts an MJD2000 value to a Date.
+ * @param mjd2000 - MJD2000 in fractional days
+ * @param scale - Time scale of the input MJD2000 (default: TT)
+ * @returns Date in GPS time scale
+ */
 export function getDateFromMJD2000(
   mjd2000: number,
   scale: Scale = Scale.TT

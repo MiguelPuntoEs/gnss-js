@@ -35,9 +35,12 @@ const LEAP_SECONDS_TABLE: [number, number][] = [
   [2272060800, 10], // 1 Jan 1972
 ];
 
+/**
+ * Returns the TAI-UTC leap seconds count for a given date.
+ * @param date - Date in GPS time scale
+ * @returns Number of TAI-UTC leap seconds
+ */
 export function getLeap(date: Date): number {
-  // Date in GPS time, leap seconds are for TAI
-
   const ntp_time: number = getNtpTime(date);
 
   for (const [timestamp, leapSeconds] of LEAP_SECONDS_TABLE) {
@@ -49,8 +52,12 @@ export function getLeap(date: Date): number {
   return 8;
 }
 
+/**
+ * Returns the GPS-UTC leap seconds count (TAI-UTC minus 19) for a given date.
+ * @param date - Date in GPS time scale
+ * @returns Number of GPS-UTC leap seconds
+ */
 export function getGpsLeap(date: Date): number {
-  // Input date in GPS time, leap seconds for GPS time
   const leap_seconds: number = getLeap(date);
 
   if (leap_seconds < 0) return 0;
@@ -58,18 +65,24 @@ export function getGpsLeap(date: Date): number {
   return leap_seconds - 19;
 }
 
+/**
+ * Converts a GPS-scale Date to UTC scale (applies leap seconds).
+ * @param date - Date in GPS time scale
+ * @returns Date in UTC time scale
+ */
 export function getUtcDate(date: Date): Date {
-  // Input date in GPS time
-
   const tai_date: Date = getTaiDate(date);
   const leap_seconds: number = getLeap(date);
 
   return new Date(tai_date.getTime() - leap_seconds * MILLISECONDS_IN_SECOND);
 }
 
+/**
+ * Converts a UTC-scale Date to GPS scale (applies leap seconds).
+ * @param utc_date - Date in UTC time scale
+ * @returns Date in GPS time scale
+ */
 export function getDateFromUtc(utc_date: Date): Date {
-  // Input date in UTC time
-
   const tai_date: Date = new Date(
     utc_date.getTime() + getLeap(utc_date) * MILLISECONDS_IN_SECOND
   );

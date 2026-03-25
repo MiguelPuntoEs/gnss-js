@@ -1,5 +1,10 @@
 import { MILLISECONDS_IN_SECOND } from '../constants/time';
 
+/**
+ * Formats a Date as a RINEX epoch string (e.g. "> 2024 01 15 12 00 00.0000000").
+ * @param date - Date in GPS time scale
+ * @returns RINEX-formatted epoch string
+ */
 export function getRINEX(date: Date): string {
   const seconds = date.getUTCSeconds();
   const milliseconds = date.getUTCMilliseconds();
@@ -18,6 +23,11 @@ export function getRINEX(date: Date): string {
   return formatted;
 }
 
+/**
+ * Parses a RINEX epoch string into a Date.
+ * @param rinex - RINEX-formatted epoch string
+ * @returns Date in GPS time scale
+ */
 export function getDateFromRINEX(rinex: string): Date {
   const year = Number.parseInt(rinex.substring(2, 6));
   const month = Number.parseInt(rinex.substring(7, 9)) - 1;

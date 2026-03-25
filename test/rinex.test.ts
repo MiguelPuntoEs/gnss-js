@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest';
 import { getRINEX, getDateFromRINEX } from '../src/index';
 
 test('getRINEX', () => {

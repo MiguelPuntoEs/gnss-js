@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest';
 import {
   getGpsTime,
   getDateFromGpsTime,
@@ -102,8 +103,8 @@ test('getDateFromTt', () => {
 test('getTimeOfWeek', () => {
   // GPS epoch: TOW = 0
   expect(getTimeOfWeek(new Date('1980-01-06T00:00:00Z'))).toBe(0);
-  // 1 day + 1 hour into the week = 90000 seconds
-  expect(getTimeOfWeek(new Date('1980-01-07T01:00:00Z'))).toBe(90000);
+  // 1 day + 1 hour into the week = 90000000 milliseconds
+  expect(getTimeOfWeek(new Date('1980-01-07T01:00:00Z'))).toBe(90000000);
 });
 
 test('getGloN4', () => {
@@ -129,8 +130,8 @@ test('getDateFromGloN', () => {
   // N4=0, NA=1, TOD=0 → 1996-01-01T00:00:00Z
   const date = getDateFromGloN(0, 1, 0);
   expect(date.toISOString()).toBe('1996-01-01T00:00:00.000Z');
-  // N4=1, NA=1, TOD=3600 → 2000-01-01T01:00:00Z
-  const date2 = getDateFromGloN(1, 1, 3600);
+  // N4=1, NA=1, TOD=3600000ms (1 hour) → 2000-01-01T01:00:00Z
+  const date2 = getDateFromGloN(1, 1, 3600000);
   expect(date2.toISOString()).toBe('2000-01-01T01:00:00.000Z');
 });
 

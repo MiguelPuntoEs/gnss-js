@@ -1,27 +1,24 @@
-import {
-  RINEX_CODES,
-  MILLISECONDS_IN_DAY,
-  MILLISECONDS_IN_SECOND,
-} from '../constants/time';
+import { RINEX_CODES, MILLISECONDS_IN_DAY } from '../constants/time';
 import { HourCode } from '../types/time';
 
+/** Returns milliseconds elapsed since the start of the UTC day. */
 export function getTimeOfDay(date: Date): number {
   return (
-    (date.getTime() -
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-        0,
-        0,
-        0
-      )) /
-    MILLISECONDS_IN_SECOND
+    date.getTime() -
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      0,
+      0,
+      0
+    )
   );
 }
 
+/** Reconstruct a Date from time-of-day in milliseconds and a reference date. */
 export function getDateFromTimeOfDay(timeOfDay: number, dateRaw: Date): Date {
-  const date = new Date(
+  return new Date(
     Date.UTC(
       dateRaw.getUTCFullYear(),
       dateRaw.getUTCMonth(),
@@ -29,13 +26,15 @@ export function getDateFromTimeOfDay(timeOfDay: number, dateRaw: Date): Date {
       0,
       0,
       0
-    ) +
-      timeOfDay * MILLISECONDS_IN_SECOND
+    ) + timeOfDay
   );
-
-  return date;
 }
 
+/**
+ * Returns the day-of-year (1-366) for a given date.
+ * @param date - Date in GPS time scale
+ * @returns Day-of-year number (1-based)
+ */
 export function getDayOfYear(date: Date): number {
   return (
     Math.floor(
@@ -44,6 +43,12 @@ export function getDayOfYear(date: Date): number {
   );
 }
 
+/**
+ * Reconstructs a Date from a day-of-year and a reference date (preserves time-of-day).
+ * @param dayOfYear - Day-of-year number (1-based)
+ * @param date - Reference date in GPS time scale (year and time-of-day are used)
+ * @returns Date in GPS time scale
+ */
 export function getDateFromDayOfYear(dayOfYear: number, date: Date): Date {
   return new Date(
     Date.UTC(
@@ -59,10 +64,21 @@ export function getDateFromDayOfYear(dayOfYear: number, date: Date): Date {
   );
 }
 
+/**
+ * Returns the UTC day of the week (0 = Sunday, 6 = Saturday).
+ * @param date - Date in GPS time scale
+ * @returns Day of week (0-6)
+ */
 export function getDayOfWeek(date: Date): number {
   return date.getUTCDay();
 }
 
+/**
+ * Reconstructs a Date by shifting a reference date to the given day of the week.
+ * @param dayOfWeek - Day of week (0 = Sunday, 6 = Saturday)
+ * @param dateRaw - Reference date in GPS time scale
+ * @returns Date in GPS time scale
+ */
 export function getDateFromDayOfWeek(dayOfWeek: number, dateRaw: Date): Date {
   if (dayOfWeek < 0 || dayOfWeek > 6)
     throw new Error('Day of week must be a value between 0 and 7');
@@ -72,6 +88,12 @@ export function getDateFromDayOfWeek(dayOfWeek: number, dateRaw: Date): Date {
   );
 }
 
+/**
+ * Reconstructs a Date by setting the hour from a RINEX hour code ('a'-'x').
+ * @param hourCode - RINEX hour code letter ('a' = 00h, 'x' = 23h)
+ * @param date - Reference date in GPS time scale
+ * @returns Date in GPS time scale with the specified hour
+ */
 export function getDateFromHourCode(hourCode: HourCode, date: Date): Date {
   const hour = RINEX_CODES.indexOf(hourCode);
   if (hour === -1)
@@ -82,10 +104,20 @@ export function getDateFromHourCode(hourCode: HourCode, date: Date): Date {
   return newDate;
 }
 
+/**
+ * Returns the RINEX hour code ('a'-'x') for a given date.
+ * @param date - Date in GPS time scale
+ * @returns RINEX hour code letter ('a' = 00h, 'x' = 23h)
+ */
 export function getHourCode(date: Date): HourCode {
   return RINEX_CODES[date.getUTCHours()];
 }
 
+/**
+ * Returns the ISO 8601 week number of the year (1-53).
+ * @param date - Date in GPS time scale
+ * @returns ISO week number
+ */
 export function getWeekOfYear(date: Date): number {
   // ISO week
   const target: Date = new Date(
