@@ -13,6 +13,11 @@ import {
   getDateFromTt,
   getWeekNumber,
   getDateFromGpsData,
+  getGloN4,
+  getGloNA,
+  getDateFromGloN,
+  getNtpTime,
+  getTimeOfWeek,
 } from '../src/index';
 
 test('getGpsTime', () => {
@@ -92,4 +97,50 @@ test('getTtDate', () => {
 test('getDateFromTt', () => {
   const date: Date = getDateFromTt(new Date('1980-01-06T00:00:51.184Z'));
   expect(getGpsTime(date)).toBe(0);
+});
+
+test('getTimeOfWeek', () => {
+  // GPS epoch: TOW = 0
+  expect(getTimeOfWeek(new Date('1980-01-06T00:00:00Z'))).toBe(0);
+  // 1 day + 1 hour into the week = 90000 seconds
+  expect(getTimeOfWeek(new Date('1980-01-07T01:00:00Z'))).toBe(90000);
+});
+
+test('getGloN4', () => {
+  // GLONASS leap epoch is 1996-01-01
+  // 1996-01-01 → N4 = 0 (first 4-year period)
+  expect(getGloN4(new Date('1996-01-01T00:00:00Z'))).toBe(0);
+  // 2000-01-01 → N4 = 1
+  expect(getGloN4(new Date('2000-01-01T00:00:00Z'))).toBe(1);
+  // 2024-03-15 → N4 = 7 (2024-1996=28, 28/4=7)
+  expect(getGloN4(new Date('2024-03-15T00:00:00Z'))).toBe(7);
+});
+
+test('getGloNA', () => {
+  // 1996-01-01 → NA = 1 (first day of the 4-year period)
+  expect(getGloNA(new Date('1996-01-01T00:00:00Z'))).toBe(1);
+  // 1996-01-02 → NA = 2
+  expect(getGloNA(new Date('1996-01-02T00:00:00Z'))).toBe(2);
+  // 1996-12-31 → NA = 366 (1996 is a leap year)
+  expect(getGloNA(new Date('1996-12-31T00:00:00Z'))).toBe(366);
+});
+
+test('getDateFromGloN', () => {
+  // N4=0, NA=1, TOD=0 → 1996-01-01T00:00:00Z
+  const date = getDateFromGloN(0, 1, 0);
+  expect(date.toISOString()).toBe('1996-01-01T00:00:00.000Z');
+  // N4=1, NA=1, TOD=3600 → 2000-01-01T01:00:00Z
+  const date2 = getDateFromGloN(1, 1, 3600);
+  expect(date2.toISOString()).toBe('2000-01-01T01:00:00.000Z');
+});
+
+test('getNtpTime', () => {
+  // At GPS epoch (1980-01-06T00:00:00Z), TAI = 1980-01-06T00:00:19Z
+  // NTP epoch = 1900-01-01T00:00:00Z
+  // NTP time = TAI - NTP epoch
+  const ntp = getNtpTime(new Date('1980-01-06T00:00:00Z'));
+  const expected =
+    new Date('1980-01-06T00:00:19Z').getTime() -
+    new Date('1900-01-01T00:00:00Z').getTime();
+  expect(ntp).toBe(expected);
 });
