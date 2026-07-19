@@ -19,6 +19,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # BKG/ESA are intermittently unreachable from GitHub runners; the
+      # fetch script skips existing files, so a cache hit is a no-op.
+      - name: Cache test fixtures
+        uses: actions/cache@v4
+        with:
+          path: test-fixtures
+          key: test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
       - run: bash scripts/fetch-test-data.sh
       - run: pnpm run lint
       - run: npx tsc --noEmit
