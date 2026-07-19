@@ -10,7 +10,7 @@ import type {
 } from '../rinex/nav';
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
-import { START_GPS_TIME } from '../constants/time';
+import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
 /* ================================================================== */
@@ -541,10 +541,14 @@ export function computeSatPosition(
   if (eph.system === 'R' || eph.system === 'S') {
     return glonassPosition(eph, timeMs / 1000);
   }
-  // Compute GPS time of week from Unix time
+  // Compute time of week from Unix time
   const GPS_EPOCH = START_GPS_TIME.getTime();
   const gpsSeconds = (timeMs - GPS_EPOCH) / 1000;
-  const tow = gpsSeconds % (7 * 86400);
+  let tow = gpsSeconds % (7 * 86400);
+  // BDS broadcast elements reference BDT seconds-of-week (BDT = GPS − 14 s):
+  // both tk and the Ωe·toe term in keplerPosition need tow in BDT
+  // (BDS-SIS-ICD; matches RTKLIB's bdt2gpst handling).
+  if (eph.system === 'C') tow = (tow - 14 + 604800) % 604800;
   return keplerPosition(eph as KeplerEphemeris, tow);
 }
 
@@ -701,10 +705,8 @@ function selectBest(ephs: Ephemeris[], timeMs: number): Ephemeris | null {
 /* ================================================================== */
 
 const GPS_EPOCH_MS = START_GPS_TIME.getTime();
-// TODO(review): BDT is 14 s behind GPS time; constants/time.ts encodes
-// the BDS epoch as 2006-01-01T00:00:14Z (GPS scale) but this omits the
-// offset, biasing BDS toc/toe by 14 s. Align with one convention.
-const BDS_EPOCH_MS = Date.UTC(2006, 0, 1);
+// BDS epoch on the GPS-scale axis (BDT = GPS − 14 s), like GPS/GAL below
+const BDS_EPOCH_MS = START_BDS_TIME.getTime();
 const GAL_EPOCH_MS = GPS_EPOCH_MS; // Galileo uses GST which shares GPS epoch
 
 /** Convert an RTCM3 EphemerisInfo to the Ephemeris type used by orbit computation. */

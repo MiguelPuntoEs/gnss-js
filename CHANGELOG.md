@@ -5,6 +5,7 @@
 ### Fixed
 
 - **MSM6/7 lock time** was returned in raw DF407 milliseconds instead of seconds (1000× too large).
+- **BDS time convention unified** (BDT = GPS − 14 s, matching `START_BDS_TIME` and RTKLIB): satellite positions now evaluate BDS ephemerides at BDT seconds-of-week (was GPS sow — a 14 s along-track bias, tens of km of satellite position), BDS `tocDate` sits on the GPS-scale axis, and `msmEpochToDate` BDS timestamps shift +10 s to the correct UTC.
 
 ### Improvements
 
@@ -14,10 +15,9 @@
 - Physically impossible Keplerian ephemerides (e ≥ 1, sqrtA outside 3000–9000 √m, toe outside the week) are rejected before orbit computation.
 - `setGloFreqNumber()` + automatic wiring from decoded 1020 ephemerides: GLONASS MSM4/6 streams (no DF419) now resolve FDMA wavelengths and emit carrier phase.
 - GPS epoch / week-length constants unified with `constants/time.ts`.
-
-### Known issues (flagged, not changed)
-
-- The BDS epoch offset differs between `constants/time.ts` (+14 s GPS scale), `rtcm3/msm.ts` (−14 s), and `orbit/index.ts` (no offset) — see `TODO(review)` comments; needs a deliberate convention decision.
+- `setGloFreqNumber` rejects frequency numbers outside −7…+13 so a garbage 1020 cannot poison the wavelength cache.
+- `gloFreq`/`getFreq` now resolve the GLONASS CDMA bands 3/4/6 without needing a channel map.
+- `fetch-test-data.sh` fails loudly on missing fixtures — CI/publish can no longer pass with nav suites silently skipped.
 
 ## 1.0.1
 

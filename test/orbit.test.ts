@@ -441,3 +441,27 @@ describe('navTimesFromEph', () => {
     expect(times).toHaveLength(0);
   });
 });
+
+describe('BDS time convention (BDT = GPS − 14 s)', () => {
+  it('computeSatPosition evaluates BDS ephemerides at BDT time of week', () => {
+    const bdsEph = makeGpsEph({ system: 'C', prn: 'C01' });
+    // Pick an instant whose GPS tow is exactly 100000 s
+    const GPS_EPOCH = Date.UTC(1980, 0, 6);
+    const weeks = 2400;
+    const timeMs = GPS_EPOCH + weeks * 604800_000 + 100_000_000;
+    const viaCompute = computeSatPosition(bdsEph, timeMs);
+    // BDT tow = GPS tow − 14
+    const direct = keplerPosition(bdsEph, 100_000 - 14);
+    expect(viaCompute.x).toBeCloseTo(direct.x, 6);
+    expect(viaCompute.y).toBeCloseTo(direct.y, 6);
+    expect(viaCompute.z).toBeCloseTo(direct.z, 6);
+    // And it must differ from the (wrong) GPS-tow evaluation
+    const wrong = keplerPosition(bdsEph, 100_000);
+    const dist = Math.hypot(
+      viaCompute.x - wrong.x,
+      viaCompute.y - wrong.y,
+      viaCompute.z - wrong.z
+    );
+    expect(dist).toBeGreaterThan(1000); // ~14 s × ~3 km/s along-track
+  });
+});

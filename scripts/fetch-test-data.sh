@@ -64,8 +64,15 @@ decompress "$DIR/brdc_v2_glo.nav"
 download "https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/001/BRDC00IGS_R_20260010000_01D_MN.rnx.gz" "$DIR/brdc_v3_igs.nav.gz"
 decompress "$DIR/brdc_v3_igs.nav"
 
-# RINEX 4 DLR nav (2026/001) — may not be available
-download "https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/001/BRD400DLR_S_20260010000_01D_MN.rnx.gz" "$DIR/brdc_v4_dlr.nav.gz" || true
+# RINEX 4 DLR nav (2026/001)
+download "https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/001/BRD400DLR_S_20260010000_01D_MN.rnx.gz" "$DIR/brdc_v4_dlr.nav.gz"
 decompress "$DIR/brdc_v4_dlr.nav"
+
+# The nav test suites skip silently (describe.skipIf) when fixtures are
+# missing — fail loudly here instead so CI can never green-light a
+# publish with suites skipped.
+for f in BRDC.nav brdc_v2.nav brdc_v2_glo.nav brdc_v3_igs.nav brdc_v4_dlr.nav; do
+  [[ -f "$DIR/$f" ]] || { echo "Missing fixture: $f" >&2; exit 1; }
+done
 
 echo "Done."

@@ -18,7 +18,11 @@ import {
   GLO_F2_BASE,
   GLO_F2_STEP,
 } from '../constants/gnss';
-import { MILLISECONDS_IN_WEEK, START_GPS_TIME } from '../constants/time';
+import {
+  MILLISECONDS_IN_WEEK,
+  START_BDS_TIME,
+  START_GPS_TIME,
+} from '../constants/time';
 
 /* ================================================================== */
 /*  Constants                                                          */
@@ -664,17 +668,15 @@ export function msmEpochToDate(
   }
 
   if (sys === 'C') {
-    // BDS time starts at Jan 1 2006, 14s behind GPS time
-    // TODO(review): this -14000 mixes GPS−BDT (14 s) with BDT−UTC
-    // (currently 4 s), and disagrees with both START_BDS_TIME
-    // (constants/time.ts, +14 s in GPS scale) and orbit/index.ts
-    // (no offset). Pick one convention and document it.
-    const BDS_EPOCH = Date.UTC(2006, 0, 1) - 14000;
+    // BDS epoch on the GPS-scale axis (BDT = GPS − 14 s); convert to
+    // UTC with the same fixed GPS−UTC leap offset as the GPS branch.
+    const BDS_EPOCH = START_BDS_TIME.getTime();
     const weeksSinceEpoch = Math.floor((refMs - BDS_EPOCH) / MS_PER_WEEK);
     let t = BDS_EPOCH + weeksSinceEpoch * MS_PER_WEEK + epochMs;
     // Adjust if more than half a week off
     if (t - refMs > MS_PER_WEEK / 2) t -= MS_PER_WEEK;
     else if (refMs - t > MS_PER_WEEK / 2) t += MS_PER_WEEK;
+    t -= 18000; // GPS scale → UTC (current leap seconds)
     return new Date(t);
   }
 
@@ -695,7 +697,11 @@ export function msmEpochToDate(
  * this the wavelength — and hence carrier phase — stays unknown.
  */
 export function setGloFreqNumber(slot: number, k: number): void {
-  if (slot >= 1 && slot <= 64) gloFreqNum[slot - 1] = k;
+  // k outside the FDMA range means a garbage or reserved DF040 value —
+  // never let it poison the (process-global) wavelength cache.
+  if (slot >= 1 && slot <= 64 && k >= -7 && k <= 13) {
+    gloFreqNum[slot - 1] = k;
+  }
 }
 
 /**

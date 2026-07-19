@@ -152,11 +152,12 @@ export function gloFreq(
   prn: string,
   band: string
 ): number | undefined {
+  // CDMA bands are fixed-frequency — no channel needed
+  if (band === '3' || band === '4' || band === '6') return FREQ.R![band];
   const k = gloChannels[prn];
   if (k === undefined) return undefined;
   if (band === '1') return GLO_F1_BASE + k * GLO_F1_STEP;
   if (band === '2') return GLO_F2_BASE + k * GLO_F2_STEP;
-  if (band === '3') return GLO_F3;
   return undefined;
 }
 

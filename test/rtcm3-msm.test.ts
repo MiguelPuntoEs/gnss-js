@@ -471,3 +471,16 @@ describe('lockTimeSec via MSM7 decode', () => {
     expect(sig.lockTime).toBeCloseTo((319 * 2 ** 21 + 2 ** 26) / 1000, 3);
   });
 });
+
+describe('msmEpochToDate BDS convention', () => {
+  it('a BDS sow maps to the same instant as GPS sow + 14 s', () => {
+    // BDT = GPS − 14 s: the BDT instant with sow s equals the GPS
+    // instant with sow s + 14, so both branches must return the same
+    // UTC Date (both apply the fixed 18 s GPS→UTC leap offset).
+    const ref = new Date('2024-03-10T12:00:00Z');
+    const sowBds = 40_000_000; // ms into the BDT week
+    const bds = msmEpochToDate('C', sowBds, ref);
+    const gps = msmEpochToDate('G', sowBds + 14_000, ref);
+    expect(bds.getTime()).toBe(gps.getTime());
+  });
+});
