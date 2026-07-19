@@ -97,12 +97,10 @@ function buildMsm4Frame(opts: {
     w.writeU(1, 1);
   }
 
-  // Satellite data (MSM4): rrint(8) + extsat(4) + rrmod(10) per sat
+  // Satellite data (MSM4): rrint(8) + rrmod(10) per sat.
+  // No extended sat info — DF419 exists only in MSM5/7.
   for (let j = 0; j < numSat; j++) {
     w.writeU(80, 8); // ~80ms rough range integer
-  }
-  for (let j = 0; j < numSat; j++) {
-    w.writeU(0, 4); // extended sat info
   }
   for (let j = 0; j < numSat; j++) {
     w.writeU(512, 10); // ~0.5ms fractional rough range
@@ -392,5 +390,36 @@ describe('MSM7 fine phase scaling', () => {
     const sig = epoch!.observations[0]!.signals[0]!;
     expect(sig.phase).toBeUndefined();
     expect(sig.pseudorange).toBeUndefined();
+  });
+});
+
+describe('MSM4 satellite-data alignment', () => {
+  const C = 299792458;
+  const lambda = C / 1575.42e6;
+  const roughMs = 80 + 512 / 1024;
+  const roughM = (roughMs * C) / 1000;
+
+  it('decodes exact values (no phantom DF419 in MSM4)', () => {
+    // Regression: MSM4/6 were decoded with a spurious 4-bit extended
+    // satellite info field (MSM5/7 only), shifting all cell data by
+    // 4 x numSat bits.
+    const frame = buildMsm4Frame({
+      messageType: 1074,
+      satIndices: [1],
+      sigIndices: [1],
+      cellValues: [{ psr: 1000, cp: 2000, ll: 6, hc: 0, cnr: 42 }],
+    });
+    const epoch = decodeMsmFull(frame);
+    expect(epoch).not.toBeNull();
+    const sig = epoch!.observations[0]!.signals[0]!;
+    expect(sig.pseudorange).toBeCloseTo(
+      ((1000 / 2 ** 24) * C) / 1000 + roughM,
+      3
+    );
+    expect(sig.phase).toBeCloseTo(
+      ((2000 / 2 ** 29) * C) / 1000 / lambda + roughM / lambda,
+      1
+    );
+    expect(sig.cn0).toBe(42);
   });
 });

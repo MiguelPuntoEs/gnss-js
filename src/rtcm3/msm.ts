@@ -524,11 +524,11 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     const extsat = new Int8Array(numSat); // extended info (GLO freq num)
     const rdop = new Float64Array(numSat); // rough rate of range change (m/s)
 
+    // Extended satellite info (DF419, GLO freq number) exists ONLY in
+    // MSM5/7. MSM4/6 satellite data is DF397 + DF398 alone — reading a
+    // phantom 4-bit field here shifted every subsequent field.
     if (variant === 4 || variant === 6) {
       for (let j = 0; j < numSat; j++) rrint[j] = bits.u(8);
-      // Extended satellite info (not present in types 4, 6 per RTCM standard)
-      // Actually types 4,6 DO have 4-bit extended info:
-      for (let j = 0; j < numSat; j++) extsat[j] = bits.u(4);
       for (let j = 0; j < numSat; j++) rrmod[j] = bits.u(10) / 1024;
     } else {
       // Types 5, 7
@@ -538,7 +538,8 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
       for (let j = 0; j < numSat; j++) rdop[j] = bits.s(14) * 1.0;
     }
 
-    // Update GLONASS frequency numbers
+    // Update GLONASS frequency numbers (MSM5/7 only — extsat stays 0
+    // for MSM4/6, which is treated as "unknown")
     if (sys === 'R') {
       for (let j = 0; j < numSat; j++) {
         const slot = satIndices[j]!;
