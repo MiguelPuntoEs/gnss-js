@@ -11,6 +11,7 @@ import type {
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
+import { getGpsLeap } from '../time/utc';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
 /* ================================================================== */
@@ -539,7 +540,12 @@ export function computeSatPosition(
   timeMs: number
 ): SatPosition {
   if (eph.system === 'R' || eph.system === 'S') {
-    return glonassPosition(eph, timeMs / 1000);
+    // glonassPosition works on the UTC axis (RINEX/RTCM GLONASS epochs
+    // are UTC); timeMs is GPS-scale like everywhere else in this
+    // module, so remove the GPS-UTC leap seconds here. Getting this
+    // wrong displaced GLONASS satellites by ~63 km (18 s x 3.5 km/s).
+    const leapMs = getGpsLeap(new Date(timeMs)) * 1000;
+    return glonassPosition(eph, (timeMs - leapMs) / 1000);
   }
   // Compute time of week from Unix time
   const GPS_EPOCH = START_GPS_TIME.getTime();
@@ -830,7 +836,8 @@ export function computeLiveSkyPositions(
   rxPos: [number, number, number],
   cn0Map?: Map<string, number>
 ): SatAzEl[] {
-  const now = Date.now();
+  // Wall clock is UTC; the orbit math runs on the GPS-scale axis.
+  const now = Date.now() + getGpsLeap(new Date()) * 1000;
   const result: SatAzEl[] = [];
   const [rxX, rxY, rxZ] = rxPos;
 

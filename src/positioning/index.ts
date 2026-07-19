@@ -62,9 +62,13 @@ const F_REL = -4.442807633e-10; // s/√m — IS-GPS-200 relativistic constant
  */
 export function satClockCorrection(eph: Ephemeris, tMs: number): number {
   if (eph.system === 'R' || eph.system === 'S') {
+    // Both parse paths already store the clock-bias term (−τ_n) in
+    // `tauN`: RINEX keeps the raw SV-clock field (= −τ_n per the spec),
+    // and the RTCM path negates raw τ_n to match. So the correction is
+    // +tauN + gammaN·dt — using −tauN put GLONASS tens of km out and
+    // got every GLONASS satellite rejected by the SPP outlier filter.
     const dt = (tMs - eph.tocDate.getTime()) / 1000;
-    // RINEX GLONASS convention: correction = −TauN + GammaN·dt
-    return -eph.tauN + eph.gammaN * dt;
+    return eph.tauN + eph.gammaN * dt;
   }
   const k = eph as KeplerEphemeris;
   const dt = (tMs - k.tocDate.getTime()) / 1000;

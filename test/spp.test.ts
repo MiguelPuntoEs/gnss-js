@@ -90,12 +90,21 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
   });
 
   it('solves single-frequency multi-GNSS within 30 m', async () => {
+    // GPS + Galileo + GLONASS. The ~28 m error is dominated by
+    // untreated single-frequency ionosphere plus GLONASS FDMA
+    // inter-frequency code biases (several m/sat) that one clock
+    // parameter cannot absorb — realistic for uncalibrated SPP.
     const { single, ephMap, approx } = await load();
     const sol = solveSpp(single, ephMap, TARGET_MS);
     expect(sol).not.toBeNull();
     expect(sol!.converged).toBe(true);
     expect(err(sol!.position, approx)).toBeLessThan(30);
     expect(sol!.usedSatellites.length).toBeGreaterThan(8);
+    // GLONASS satellites now contribute (regression guard: the RINEX
+    // time-axis + clock-sign bugs used to get them all rejected).
+    expect(
+      sol!.usedSatellites.filter((p) => p.startsWith('R')).length
+    ).toBeGreaterThan(3);
     expect(sol!.dop?.pdop).toBeGreaterThan(0.5);
     expect(sol!.dop?.pdop).toBeLessThan(6);
   });
