@@ -8,6 +8,7 @@ export default defineConfig({
     time: './src/time/index.ts',
     coordinates: './src/coordinates/index.ts',
     frames: './src/frames/index.ts',
+    positioning: './src/positioning/index.ts',
     constants: './src/constants/index.ts',
     rinex: './src/rinex/index.ts',
     rtcm3: './src/rtcm3/index.ts',

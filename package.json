@@ -69,6 +69,11 @@
       "types": "./dist/frames.d.ts",
       "import": "./dist/frames.js",
       "require": "./dist/frames.cjs"
+    },
+    "./positioning": {
+      "types": "./dist/positioning.d.ts",
+      "import": "./dist/positioning.js",
+      "require": "./dist/positioning.cjs"
     }
   },
   "main": "./dist/index.cjs",

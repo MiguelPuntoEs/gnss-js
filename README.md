@@ -51,6 +51,17 @@ const { distance } = vincenty(
 // distance in meters, angles in radians
 ```
 
+### Single-point positioning
+
+```ts
+import { solveSpp, ionoFree } from 'gnss-js/positioning';
+
+const sol = solveSpp(pseudoranges, ephemerides, epochMs);
+// sol.position (ECEF m), per-system clock biases, DOP, residuals,
+// rejected outliers. ~10 m single-frequency; use ionoFree(p1, p2, f1, f2)
+// pseudoranges for metre-level.
+```
+
 ### Reference frame transformations
 
 ```ts
