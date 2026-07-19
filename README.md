@@ -167,6 +167,32 @@ Every exported function has JSDoc with `@param` and `@returns` annotations inclu
 - **Class-based API** — Ergonomic wrappers like `GnssTime.fromUtc(date).gps` and `Position.fromGeodetic(lat, lon, h).utm` on top of the existing functional core
 - **RINEX observation writers** (RINEX 2/3/4 with gzip compression)
 
+## Development
+
+```bash
+pnpm install
+bash scripts/fetch-test-data.sh   # RINEX test fixtures (~5 MB, checksummed; gitignored)
+pnpm test
+pnpm run lint
+pnpm run build
+```
+
+Without the fixtures, the nav-file test suites are skipped silently (`describe.skipIf`), so run the fetch script before trusting a green test run.
+
+**Releasing**: bump the version and push the tag — CI publishes to npm (needs the `NPM_TOKEN` repo secret) and creates the GitHub Release:
+
+```bash
+npm version patch   # or minor/major; updates package.json + creates the tag
+git push --follow-tags
+```
+
+**Developing against [gnsscalc](https://github.com/MiguelPuntoEs/gnsscalc)** without publishing:
+
+```bash
+cd ../gnsscalc && pnpm link ../gnss-js   # then `pnpm run build --watch` here
+# undo with: pnpm unlink gnss-js && pnpm install
+```
+
 ## License
 
 This project is dual-licensed:

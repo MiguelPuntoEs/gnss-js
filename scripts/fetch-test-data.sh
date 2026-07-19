@@ -3,13 +3,43 @@
 # Sources: IGS/BKG and ESA GSSC.
 set -euo pipefail
 
-DIR="$(cd "$(dirname "$0")/../test-fixtures" 2>/dev/null || mkdir -p "$(dirname "$0")/../test-fixtures" && cd "$(dirname "$0")/../test-fixtures" && pwd)"
+DIR="$(cd "$(dirname "$0")/.." && pwd)/test-fixtures"
+mkdir -p "$DIR"
+
+# SHA256 of each archive — the sources are static historical files, so a
+# mismatch means a corrupt or tampered download, not an update.
+checksum_for() {
+  case "$(basename "$1")" in
+    BRDC.nav.gz)        echo "17f1a43c5074df56ea261136214d5fda5d9befa0a5422c4768ad14651b252e49" ;;
+    brdc_v2.nav.gz)     echo "b6aeae1dc03c65c94dd93cefd4796e0d5566760d3e564241a989544cc8ba0d91" ;;
+    brdc_v2_glo.nav.gz) echo "9f040749e0e0be916743bf47f24b3fe530c11876b2bd9cd80cc362755b8d3aee" ;;
+    brdc_v3_igs.nav.gz) echo "e68833b1280a4413fe5cf6cfb537ef406d8a396f9e8331d339272d8c9ee27ebe" ;;
+    brdc_v4_dlr.nav.gz) echo "ff11082ccb87c8c678f9aa258487ec5d8e838e330f1c5e92ce289134ef15f805" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+verify() {
+  local file="$1" expected actual
+  expected="$(checksum_for "$file")"
+  [[ -z "$expected" ]] && return 0
+  actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "  ✗ checksum mismatch for $(basename "$file")" >&2
+    echo "    expected $expected" >&2
+    echo "    got      $actual" >&2
+    rm -f "$file"
+    return 1
+  fi
+}
 
 download() {
   local url="$1" out="$2"
-  if [[ -f "$out" ]]; then return; fi
+  if [[ -f "$out" ]]; then verify "$out"; return; fi
   echo "  ↓ $(basename "$out")"
-  curl -fSL --retry 3 --retry-delay 5 "$url" -o "$out.tmp" && mv "$out.tmp" "$out"
+  curl -fSL --retry 3 --retry-delay 5 "$url" -o "$out.tmp"
+  mv "$out.tmp" "$out"
+  verify "$out"
 }
 
 decompress() {
