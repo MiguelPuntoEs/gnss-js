@@ -8,6 +8,7 @@
  * data and are skipped.
  */
 
+import { BitReader } from './decoder';
 import type { Rtcm3Frame } from './decoder';
 import {
   C_LIGHT,
@@ -274,53 +275,6 @@ function signalTable(sys: string): SignalDef[] {
 }
 
 /* ================================================================== */
-/*  Bit reader                                                         */
-/* ================================================================== */
-
-class BitReader {
-  private data: Uint8Array;
-  private pos: number;
-
-  constructor(data: Uint8Array, startBit = 0) {
-    this.data = data;
-    this.pos = startBit;
-  }
-
-  /** Read unsigned value of numBits bits (max 53) */
-  u(numBits: number): number {
-    let val = 0;
-    for (let i = 0; i < numBits; i++) {
-      const byteIdx = (this.pos + i) >>> 3;
-      const bitIdx = 7 - ((this.pos + i) & 7);
-      const bit =
-        byteIdx < this.data.length ? (this.data[byteIdx]! >>> bitIdx) & 1 : 0;
-      // Float arithmetic instead of shifts: `<<` wraps at 32 bits and
-      // returns negative values for 32-bit reads with the MSB set.
-      val = val * 2 + bit;
-    }
-    this.pos += numBits;
-    return val;
-  }
-
-  /** Read signed value (two's complement) */
-  s(numBits: number): number {
-    const raw = this.u(numBits);
-    const half = 2 ** (numBits - 1);
-    return raw >= half ? raw - 2 ** numBits : raw;
-  }
-
-  /** Skip bits */
-  skip(n: number): void {
-    this.pos += n;
-  }
-
-  /** Current bit position */
-  get position(): number {
-    return this.pos;
-  }
-}
-
-/* ================================================================== */
 /*  Public types                                                       */
 /* ================================================================== */
 
@@ -472,7 +426,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     bits.skip(12); // reference station ID
 
     // Epoch timestamp (30 bits for most, different for GLONASS)
-    const epochMs = bits.u(30);
+    const epochMs = bits.readU(30);
 
     bits.skip(1); // multiple message bit
     bits.skip(3); // IODS
@@ -484,8 +438,8 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
 
     // ── Satellite mask (64 bits) ──
     // Read as two 32-bit chunks since JS bitwise ops are 32-bit
-    const satMaskHi = bits.u(32) >>> 0;
-    const satMaskLo = bits.u(32) >>> 0;
+    const satMaskHi = bits.readU(32) >>> 0;
+    const satMaskLo = bits.readU(32) >>> 0;
 
     const satIndices: number[] = [];
     for (let i = 0; i < 32; i++) {
@@ -498,7 +452,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     if (numSat === 0) return null;
 
     // ── Signal mask (32 bits) ──
-    const sigMask = bits.u(32) >>> 0;
+    const sigMask = bits.readU(32) >>> 0;
     const sigIndices: number[] = [];
     for (let i = 0; i < 32; i++) {
       if (sigMask & (1 << (31 - i))) sigIndices.push(i);
@@ -510,7 +464,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     const numCells = numSat * numSig;
     const cellMask: boolean[] = [];
     for (let i = 0; i < numCells; i++) {
-      cellMask.push(bits.u(1) === 1);
+      cellMask.push(bits.readU(1) === 1);
     }
 
     // Count active cells
@@ -528,14 +482,14 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     // MSM5/7. MSM4/6 satellite data is DF397 + DF398 alone — reading a
     // phantom 4-bit field here shifted every subsequent field.
     if (variant === 4 || variant === 6) {
-      for (let j = 0; j < numSat; j++) rrint[j] = bits.u(8);
-      for (let j = 0; j < numSat; j++) rrmod[j] = bits.u(10) / 1024;
+      for (let j = 0; j < numSat; j++) rrint[j] = bits.readU(8);
+      for (let j = 0; j < numSat; j++) rrmod[j] = bits.readU(10) / 1024;
     } else {
       // Types 5, 7
-      for (let j = 0; j < numSat; j++) rrint[j] = bits.u(8);
-      for (let j = 0; j < numSat; j++) extsat[j] = bits.u(4);
-      for (let j = 0; j < numSat; j++) rrmod[j] = bits.u(10) / 1024;
-      for (let j = 0; j < numSat; j++) rdop[j] = bits.s(14) * 1.0;
+      for (let j = 0; j < numSat; j++) rrint[j] = bits.readU(8);
+      for (let j = 0; j < numSat; j++) extsat[j] = bits.readU(4);
+      for (let j = 0; j < numSat; j++) rrmod[j] = bits.readU(10) / 1024;
+      for (let j = 0; j < numSat; j++) rdop[j] = bits.readS(14) * 1.0;
     }
 
     // Update GLONASS frequency numbers (MSM5/7 only — extsat stays 0
@@ -566,32 +520,32 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     // JS, which flipped the sign of MSM6/7 fine phase and let the
     // invalid-value sentinel pass the validity checks below.
     if (variant === 4) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / 2 ** 24;
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / 2 ** 29;
-      for (let i = 0; i < activeCells; i++) ll[i] = bits.u(4);
-      for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
-      for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(6);
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(15) / 2 ** 24;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(22) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(4);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+      for (let i = 0; i < activeCells; i++) cnr[i] = bits.readU(6);
     } else if (variant === 5) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / 2 ** 24;
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / 2 ** 29;
-      for (let i = 0; i < activeCells; i++) ll[i] = bits.u(4);
-      for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
-      for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(6);
-      for (let i = 0; i < activeCells; i++) dop[i] = bits.s(15) * 0.0001;
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(15) / 2 ** 24;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(22) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(4);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+      for (let i = 0; i < activeCells; i++) cnr[i] = bits.readU(6);
+      for (let i = 0; i < activeCells; i++) dop[i] = bits.readS(15) * 0.0001;
     } else if (variant === 6) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / 2 ** 29;
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / 2 ** 31;
-      for (let i = 0; i < activeCells; i++) ll[i] = bits.u(10);
-      for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
-      for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(10) / 16;
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(20) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(24) / 2 ** 31;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(10);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+      for (let i = 0; i < activeCells; i++) cnr[i] = bits.readU(10) / 16;
     } else {
       // variant === 7
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / 2 ** 29;
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / 2 ** 31;
-      for (let i = 0; i < activeCells; i++) ll[i] = bits.u(10);
-      for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
-      for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(10) / 16;
-      for (let i = 0; i < activeCells; i++) dop[i] = bits.s(15) * 0.0001;
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(20) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(24) / 2 ** 31;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(10);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+      for (let i = 0; i < activeCells; i++) cnr[i] = bits.readU(10) / 16;
+      for (let i = 0; i < activeCells; i++) dop[i] = bits.readS(15) * 0.0001;
     }
 
     // ── Reconstruct observations ──
