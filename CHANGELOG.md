@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (1.1.0)
+
+### Fixed
+
+- **MSM6/7 lock time** was returned in raw DF407 milliseconds instead of seconds (1000× too large).
+
+### Improvements
+
+- Single `BitReader` shared by all RTCM3 decoders (msm.ts had a private near-duplicate).
+- Single source of truth for carrier frequencies (`constants/gnss.ts` `FREQ`); the MSM signal tables and the MHz spectrum constants are derived from it. `FREQ.R` gains bands `4`/`6` (GLONASS CDMA L1OC/L2OC).
+- `setRtcm3DebugHandler()` — observe decode errors that are otherwise silently mapped to null results.
+- Physically impossible Keplerian ephemerides (e ≥ 1, sqrtA outside 3000–9000 √m, toe outside the week) are rejected before orbit computation.
+- `setGloFreqNumber()` + automatic wiring from decoded 1020 ephemerides: GLONASS MSM4/6 streams (no DF419) now resolve FDMA wavelengths and emit carrier phase.
+- GPS epoch / week-length constants unified with `constants/time.ts`.
+
+### Known issues (flagged, not changed)
+
+- The BDS epoch offset differs between `constants/time.ts` (+14 s GPS scale), `rtcm3/msm.ts` (−14 s), and `orbit/index.ts` (no offset) — see `TODO(review)` comments; needs a deliberate convention decision.
+
+## 1.0.1
+
+### Fixed
+
+- **RTCM 1005/1006 station coordinates**: the 38-bit ECEF fields were truncated to 32 bits (`BitReader` built values with 32-bit shift operators), so any |axis| > ~429 496 m decoded as the true value mod 2³². Reported by Hans van der Marel (TU Delft) for DELF00NLD0. Sign handling of negative coordinates via `readSM` had the same bug class.
+- **MSM4/6 observations**: the decoder read a phantom 4-bit extended-satellite-info field (DF419 exists only in MSM5/7), shifting all satellite and cell data — MSM4/MSM6 messages decoded to garbage. Verified against RTKLIB `decode_msm4`/`decode_msm6`.
+- **MSM6/7 carrier phase**: the fine phase range was scaled by `(1 << 31)`, which is negative in JavaScript — every value had an inverted sign, and the invalid-value sentinel passed the validity check, emitting phony phase observations.
+
 ## 1.0.0
 
 ### Breaking changes
