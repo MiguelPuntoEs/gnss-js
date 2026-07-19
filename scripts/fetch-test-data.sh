@@ -37,7 +37,7 @@ download() {
   local url="$1" out="$2"
   if [[ -f "$out" ]]; then verify "$out"; return; fi
   echo "  ↓ $(basename "$out")"
-  curl -fSL --retry 3 --retry-delay 5 "$url" -o "$out.tmp"
+  curl -fSL --connect-timeout 15 --retry 3 --retry-delay 5 "$url" -o "$out.tmp"
   mv "$out.tmp" "$out"
   verify "$out"
 }
