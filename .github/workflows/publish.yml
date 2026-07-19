@@ -1,0 +1,50 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Publishing uses npm Trusted Publishing (OIDC) — no NPM_TOKEN secret.
+    # One-time setup on npmjs.com: package gnss-js → Settings → Trusted
+    # Publisher → GitHub Actions, repository MiguelPuntoEs/gnss-js,
+    # workflow filename publish.yml.
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # npm OIDC auth + provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Trusted Publishing needs npm >= 11.5
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/fetch-test-data.sh
+      - run: pnpm run lint
+      - run: npx tsc --noEmit
+      - run: pnpm test
+      - run: pnpm run build
+      - name: Check tag matches package.json version
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json $PKG_VERSION" >&2
+            exit 1
+          fi
+      - name: Publish to npm (OIDC)
+        run: npm publish --provenance --access public
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "See [CHANGELOG.md](https://github.com/MiguelPuntoEs/gnss-js/blob/main/CHANGELOG.md)."
