@@ -64,6 +64,11 @@
       "types": "./dist/signals.d.ts",
       "import": "./dist/signals.js",
       "require": "./dist/signals.cjs"
+    },
+    "./frames": {
+      "types": "./dist/frames.d.ts",
+      "import": "./dist/frames.js",
+      "require": "./dist/frames.cjs"
     }
   },
   "main": "./dist/index.cjs",

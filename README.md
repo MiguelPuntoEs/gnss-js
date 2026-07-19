@@ -51,6 +51,23 @@ const { distance } = vincenty(
 // distance in meters, angles in radians
 ```
 
+### Reference frame transformations
+
+```ts
+import { transformFrame, dateToEpoch } from 'gnss-js/frames';
+
+// ETRS89 (ETRF2000) station coordinates → ITRF2020 at epoch 2010.5
+const itrf = transformFrame(
+  [3924687.7039, 301132.7618, 5001910.7712],
+  'ETRF2000',
+  'ITRF2020',
+  2010.5
+);
+// Time-dependent 14-parameter Helmert (IERS/EPSG parameters);
+// supports ITRF88–ITRF2020, ETRF2000/2014/2020, NAD83(2011).
+// 'WGS84' is treated as an ITRF2020 alias (standard GNSS practice).
+```
+
 ### RINEX parsing
 
 ```ts
