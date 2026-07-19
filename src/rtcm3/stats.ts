@@ -8,7 +8,7 @@ import type { EphemerisInfo } from './ephemeris';
 import { decodeEphemeris } from './ephemeris';
 import type { StationMeta } from './station';
 import { createStationMeta, updateStationMeta } from './station';
-import { decodeMsmFull } from './msm';
+import { decodeMsmFull, setGloFreqNumber } from './msm';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -264,6 +264,11 @@ export function updateStreamStats(
     const eph = decodeEphemeris(frame);
     if (eph) {
       stats.ephemerides.set(eph.prn, eph);
+      // 1020 carries the GLONASS FDMA frequency number — feed the MSM
+      // wavelength cache so MSM4/6 streams (no DF419) get phase too.
+      if (eph.freqChannel !== undefined && eph.prn.startsWith('R')) {
+        setGloFreqNumber(parseInt(eph.prn.slice(1), 10), eph.freqChannel);
+      }
     }
 
     // Decode station metadata (1005/1006/1007/1008/1029/1033)

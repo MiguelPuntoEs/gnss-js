@@ -2,7 +2,7 @@
  * RTCM3 ephemeris decoders for GPS, GLONASS, Galileo, BeiDou, and QZSS.
  */
 
-import { BitReader } from './decoder';
+import { BitReader, reportDecodeError } from './decoder';
 import type { Rtcm3Frame } from './decoder';
 
 /* ================================================================== */
@@ -573,7 +573,8 @@ export function decodeEphemeris(frame: Rtcm3Frame): EphemerisInfo | null {
       default:
         return null;
     }
-  } catch {
+  } catch (err) {
+    reportDecodeError('ephemeris', err);
     return null;
   }
 }

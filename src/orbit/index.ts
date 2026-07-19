@@ -22,6 +22,11 @@ const GM_GAL = 3.986004418e14; // m³/s² — Galileo
 const GM_BDS = 3.986004418e14; // m³/s² — BeiDou (CGCS2000)
 const GM_GLO = 3.9860044e14; // m³/s² — PZ-90
 const OMEGA_E = 7.2921151467e-5; // rad/s — Earth rotation rate
+
+// BDS GEO detection thresholds (BDS-SIS-ICD-2.1 §5.2): GEO orbits sit
+// at ~42164 km with near-zero inclination; MEO/IGSO are ≥ 0.5 rad.
+const BDS_GEO_MAX_INCLINATION_RAD = 0.1;
+const BDS_GEO_MIN_SEMIMAJOR_AXIS_M = 4.0e7;
 const AE_GLO = 6378136.0; // m — Earth equatorial radius (PZ-90)
 const J2_GLO = 1.08263e-3; // J2 zonal harmonic (PZ-90)
 
@@ -116,7 +121,10 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
 
   // BeiDou GEO satellites use a different ECEF transformation (BDS-SIS-ICD).
   // GEO sats have near-zero inclination (< 0.2 rad) vs ~0.96 rad for MEO/IGSO.
-  const isBdsGeo = eph.system === 'C' && Math.abs(eph.i0) < 0.1 && a > 4.0e7;
+  const isBdsGeo =
+    eph.system === 'C' &&
+    Math.abs(eph.i0) < BDS_GEO_MAX_INCLINATION_RAD &&
+    a > BDS_GEO_MIN_SEMIMAJOR_AXIS_M;
 
   if (isBdsGeo) {
     // GEO node: no Earth rotation subtracted from omegaDot
@@ -752,6 +760,21 @@ function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     info.week === undefined
   )
     return null;
+
+  // Reject physically impossible ephemerides — a corrupt frame that
+  // survives CRC decodes to garbage that would otherwise propagate
+  // into orbit computation. Broadcast e < 0.05; sqrt(a) spans ~5153
+  // (MEO) to ~6493 (GEO/IGSO) sqrt-meters.
+  if (
+    info.eccentricity < 0 ||
+    info.eccentricity >= 1 ||
+    info.sqrtA < 3000 ||
+    info.sqrtA > 9000 ||
+    info.toe < 0 ||
+    info.toe > 604800
+  ) {
+    return null;
+  }
 
   // Compute tocDate from week + toc
   let epochMs: number;

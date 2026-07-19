@@ -2,7 +2,7 @@
  * RTCM3 station metadata decoders (messages 1005/1006, 1007/1008, 1029, 1033).
  */
 
-import { BitReader } from './decoder';
+import { BitReader, reportDecodeError } from './decoder';
 import type { Rtcm3Frame } from './decoder';
 import { readString } from './ephemeris';
 
@@ -189,7 +189,8 @@ export function updateStationMeta(
       default:
         return false;
     }
-  } catch {
+  } catch (err) {
+    reportDecodeError('station', err);
     return false;
   }
 }

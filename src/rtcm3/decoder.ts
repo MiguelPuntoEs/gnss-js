@@ -14,6 +14,29 @@ export interface Rtcm3Frame {
 }
 
 /* ================================================================== */
+/*  Decode diagnostics                                                 */
+/* ================================================================== */
+
+/** Called when a message decoder swallows an exception. */
+export type Rtcm3DebugHandler = (context: string, error: unknown) => void;
+
+let debugHandler: Rtcm3DebugHandler | null = null;
+
+/**
+ * Install a handler to observe decode errors that are otherwise
+ * silently mapped to null results (corrupt frames, truncated payloads).
+ * Pass null to remove.
+ */
+export function setRtcm3DebugHandler(fn: Rtcm3DebugHandler | null): void {
+  debugHandler = fn;
+}
+
+/** @internal Report a swallowed decode error to the debug handler. */
+export function reportDecodeError(context: string, error: unknown): void {
+  if (debugHandler) debugHandler(context, error);
+}
+
+/* ================================================================== */
 /*  BitReader                                                          */
 /* ================================================================== */
 

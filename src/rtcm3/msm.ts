@@ -8,7 +8,7 @@
  * data and are skipped.
  */
 
-import { BitReader } from './decoder';
+import { BitReader, reportDecodeError } from './decoder';
 import type { Rtcm3Frame } from './decoder';
 import {
   C_LIGHT,
@@ -575,13 +575,13 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
 
         // Pseudorange
         const psrVal = psr[cellIdx]!;
-        if (psrVal > -1 / (1 << 10)) {
+        if (psrVal > -(2 ** -10)) {
           signal.pseudorange = (psrVal * C_LIGHT) / 1000.0 + roughRange_m;
         }
 
         // Carrier phase (in cycles)
         const cpVal = cp[cellIdx]!;
-        if (cpVal > -1 / (1 << 8) && wavelength > 0) {
+        if (cpVal > -(2 ** -8) && wavelength > 0) {
           signal.phase =
             (cpVal * C_LIGHT) / 1000.0 / wavelength + roughRange_m / wavelength;
         }
@@ -619,7 +619,8 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
       system: sys,
       observations,
     };
-  } catch {
+  } catch (err) {
+    reportDecodeError('msm', err);
     return null;
   }
 }
@@ -686,6 +687,15 @@ export function msmEpochToDate(
   // GPS time is currently 18s ahead of UTC (leap seconds since 1980)
   t -= 18000;
   return new Date(t);
+}
+
+/**
+ * Set a GLONASS FDMA frequency number (k = -7..+13) for a slot (1-24),
+ * e.g. from a decoded 1020 ephemeris. MSM4/6 carry no DF419, so without
+ * this the wavelength — and hence carrier phase — stays unknown.
+ */
+export function setGloFreqNumber(slot: number, k: number): void {
+  if (slot >= 1 && slot <= 64) gloFreqNum[slot - 1] = k;
 }
 
 /**
