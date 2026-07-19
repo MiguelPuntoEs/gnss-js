@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.3.0)
+
+### New features
+
+- **`computeVisibility(ephemerides, rxPos, startMs, endMs, stepSec, maskDeg)`** in `gnss-js/orbit` — satellite visibility and DOP prediction over a time window for a fixed location: per-satellite elevation timelines, visible-count and PDOP per epoch, and discrete rise/peak/set passes. Foundation for session planning.
+
 ## Unreleased (1.2.0)
 
 ### Fixed

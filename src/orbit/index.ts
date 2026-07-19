@@ -886,3 +886,121 @@ export function computeLiveSkyPositions(
 
   return result;
 }
+
+/* ================================================================== */
+/*  Visibility / pass prediction                                       */
+/* ================================================================== */
+
+/** A single above-mask visibility interval for one satellite. */
+export interface VisibilityPass {
+  prn: string;
+  system: string;
+  /** Rise time (Unix ms) — first sample at or above the mask. */
+  rise: number;
+  /** Set time (Unix ms) — last sample at or above the mask. */
+  set: number;
+  /** Time of peak elevation (Unix ms). */
+  peakTime: number;
+  /** Peak elevation (radians). */
+  peakEl: number;
+}
+
+export interface VisibilityResult {
+  /** Sample epochs (Unix ms). */
+  times: number[];
+  /** Elevation (radians) per PRN per epoch; null when below −0.05 rad / no eph. */
+  elevation: Record<string, (number | null)[]>;
+  /** Number of satellites at or above the mask, per epoch. */
+  visibleCount: number[];
+  /** PDOP per epoch (null when < 4 satellites above the mask). */
+  pdop: (number | null)[];
+  /** Discrete above-mask passes, sorted by rise time. */
+  passes: VisibilityPass[];
+}
+
+/**
+ * Predict satellite visibility and DOP over a time window for a fixed
+ * receiver location.
+ *
+ * @param ephemerides Broadcast ephemerides covering the window.
+ * @param rxPos Receiver ECEF position (meters).
+ * @param startMs Window start (Unix ms).
+ * @param endMs Window end (Unix ms).
+ * @param stepSec Sample spacing in seconds (default 300).
+ * @param elevationMaskDeg Elevation mask in degrees (default 10).
+ */
+export function computeVisibility(
+  ephemerides: Ephemeris[],
+  rxPos: [number, number, number],
+  startMs: number,
+  endMs: number,
+  stepSec = 300,
+  elevationMaskDeg = 10
+): VisibilityResult {
+  const stepMs = stepSec * 1000;
+  const times: number[] = [];
+  for (let t = startMs; t <= endMs; t += stepMs) times.push(t);
+
+  const maskRad = (elevationMaskDeg * Math.PI) / 180;
+  const all = computeAllPositions(ephemerides, times, rxPos);
+
+  const elevation: Record<string, (number | null)[]> = {};
+  const visibleCount = new Array<number>(times.length).fill(0);
+  const pdop = new Array<number | null>(times.length).fill(null);
+
+  // Per-epoch visible az/el for DOP
+  const visiblePerEpoch: { az: number; el: number }[][] = times.map(() => []);
+
+  for (const prn of all.prns) {
+    const series = all.positions[prn]!;
+    elevation[prn] = series.map((p) => (p ? p.el : null));
+    for (let i = 0; i < series.length; i++) {
+      const p = series[i];
+      if (p && p.el >= maskRad) {
+        visibleCount[i]!++;
+        visiblePerEpoch[i]!.push({ az: p.az, el: p.el });
+      }
+    }
+  }
+
+  for (let i = 0; i < times.length; i++) {
+    const dop = computeDop(visiblePerEpoch[i]!);
+    pdop[i] = dop ? dop.pdop : null;
+  }
+
+  // Extract passes: contiguous runs at or above the mask per PRN
+  const passes: VisibilityPass[] = [];
+  for (const prn of all.prns) {
+    const els = elevation[prn]!;
+    let start = -1;
+    let peakEl = -Infinity;
+    let peakTime = 0;
+    for (let i = 0; i <= els.length; i++) {
+      const el = i < els.length ? els[i] : null;
+      const above = el !== null && el !== undefined && el >= maskRad;
+      if (above) {
+        if (start === -1) {
+          start = i;
+          peakEl = -Infinity;
+        }
+        if (el! > peakEl) {
+          peakEl = el!;
+          peakTime = times[i]!;
+        }
+      } else if (start !== -1) {
+        passes.push({
+          prn,
+          system: prn[0]!,
+          rise: times[start]!,
+          set: times[i - 1]!,
+          peakTime,
+          peakEl,
+        });
+        start = -1;
+      }
+    }
+  }
+  passes.sort((a, b) => a.rise - b.rise);
+
+  return { times, elevation, visibleCount, pdop, passes };
+}

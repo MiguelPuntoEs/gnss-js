@@ -51,6 +51,16 @@ const { distance } = vincenty(
 // distance in meters, angles in radians
 ```
 
+### Visibility / pass prediction
+
+```ts
+import { computeVisibility } from 'gnss-js/orbit';
+
+const vis = computeVisibility(ephemerides, rxEcef, startMs, endMs, 300, 10);
+// vis.passes: rise/peak/set per satellite; vis.pdop / vis.visibleCount
+// per epoch; vis.elevation[prn]: elevation timeline for plotting.
+```
+
 ### Single-point positioning
 
 ```ts
