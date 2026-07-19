@@ -109,7 +109,6 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^20.11.17",
     "eslint": "^10.1.0",
-    "eslint-plugin-unused-imports": "^4.4.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.5.3",
