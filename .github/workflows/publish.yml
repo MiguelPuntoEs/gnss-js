@@ -8,9 +8,13 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Publishing uses npm Trusted Publishing (OIDC) — no NPM_TOKEN secret.
+    # One-time setup on npmjs.com: package gnss-js → Settings → Trusted
+    # Publisher → GitHub Actions, repository MiguelPuntoEs/gnss-js,
+    # workflow filename publish.yml.
     permissions:
       contents: write # create the GitHub Release
-      id-token: write # npm provenance
+      id-token: write # npm OIDC auth + provenance
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +24,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+      # Trusted Publishing needs npm >= 11.5
+      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/fetch-test-data.sh
       - run: pnpm run lint
@@ -34,10 +39,8 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package.json $PKG_VERSION" >&2
             exit 1
           fi
-      - name: Publish to npm
+      - name: Publish to npm (OIDC)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

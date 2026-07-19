@@ -179,7 +179,7 @@ pnpm run build
 
 Without the fixtures, the nav-file test suites are skipped silently (`describe.skipIf`), so run the fetch script before trusting a green test run.
 
-**Releasing**: bump the version and push the tag — CI publishes to npm (needs the `NPM_TOKEN` repo secret) and creates the GitHub Release:
+**Releasing**: bump the version and push the tag — CI publishes to npm via Trusted Publishing (one-time setup: npm package settings → Trusted Publisher → this repo + publish.yml) and creates the GitHub Release:
 
 ```bash
 npm version patch   # or minor/major; updates package.json + creates the tag
