@@ -36,7 +36,8 @@ export const C_LIGHT = 299792458;
 /** Carrier frequencies (Hz) per system letter, per RINEX band digit. GLONASS FDMA bands 1/2 use gloFreq(). */
 export const FREQ: Record<string, Record<string, number>> = {
   G: { '1': 1575.42e6, '2': 1227.6e6, '5': 1176.45e6 },
-  R: { '3': 1202.025e6 },
+  // R bands 4/6 are the CDMA L1OC/L2OC center frequencies
+  R: { '3': 1202.025e6, '4': 1600.995e6, '6': 1248.06e6 },
   E: {
     '1': 1575.42e6,
     '5': 1176.45e6,

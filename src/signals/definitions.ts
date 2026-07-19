@@ -4,48 +4,60 @@
  */
 
 /* ── Frequency constants (MHz) ───────────────────────────────── */
+/* Derived from the canonical Hz tables in constants/gnss.ts — do not
+   restate literal frequencies here. */
+
+import {
+  FREQ,
+  GLO_F1_BASE,
+  GLO_F1_STEP,
+  GLO_F2_BASE,
+  GLO_F2_STEP,
+} from '../constants/gnss';
+
+const MHz = 1e6;
 
 // GPS
-export const FREQ_GPS_L1 = 1575.42;
-export const FREQ_GPS_L2 = 1227.6;
-export const FREQ_GPS_L5 = 1176.45;
+export const FREQ_GPS_L1 = FREQ.G!['1']! / MHz;
+export const FREQ_GPS_L2 = FREQ.G!['2']! / MHz;
+export const FREQ_GPS_L5 = FREQ.G!['5']! / MHz;
 
 // GLONASS FDMA
-export const FREQ_GLO_L1 = 1602.0;
-export const FREQ_GLO_L2 = 1246.0;
-export const DELTA_GLO_L1 = 0.5625;
-export const DELTA_GLO_L2 = 0.4375;
+export const FREQ_GLO_L1 = GLO_F1_BASE / MHz;
+export const FREQ_GLO_L2 = GLO_F2_BASE / MHz;
+export const DELTA_GLO_L1 = GLO_F1_STEP / MHz;
+export const DELTA_GLO_L2 = GLO_F2_STEP / MHz;
 
 // GLONASS CDMA
-export const FREQ_GLO_L1OC = 1600.995;
-export const FREQ_GLO_L2OC = 1248.06;
-export const FREQ_GLO_L3OC = 1202.025;
+export const FREQ_GLO_L1OC = FREQ.R!['4']! / MHz;
+export const FREQ_GLO_L2OC = FREQ.R!['6']! / MHz;
+export const FREQ_GLO_L3OC = FREQ.R!['3']! / MHz;
 
 // Galileo
-export const FREQ_GAL_E1 = 1575.42;
-export const FREQ_GAL_E5 = 1191.795;
-export const FREQ_GAL_E5a = 1176.45;
-export const FREQ_GAL_E5b = 1207.14;
-export const FREQ_GAL_E6 = 1278.75;
+export const FREQ_GAL_E1 = FREQ.E!['1']! / MHz;
+export const FREQ_GAL_E5 = FREQ.E!['8']! / MHz;
+export const FREQ_GAL_E5a = FREQ.E!['5']! / MHz;
+export const FREQ_GAL_E5b = FREQ.E!['7']! / MHz;
+export const FREQ_GAL_E6 = FREQ.E!['6']! / MHz;
 
 // BeiDou-2
-export const FREQ_BDS_B1I = 1561.098;
-export const FREQ_BDS_B2I = 1207.14;
-export const FREQ_BDS_B3I = 1268.52;
+export const FREQ_BDS_B1I = FREQ.C!['2']! / MHz;
+export const FREQ_BDS_B2I = FREQ.C!['7']! / MHz;
+export const FREQ_BDS_B3I = FREQ.C!['6']! / MHz;
 
 // BeiDou-3
-export const FREQ_BDS_B1A = 1575.42;
-export const FREQ_BDS_B1C = 1575.42;
-export const FREQ_BDS_B3A = 1268.52;
+export const FREQ_BDS_B1A = FREQ.C!['1']! / MHz;
+export const FREQ_BDS_B1C = FREQ.C!['1']! / MHz;
+export const FREQ_BDS_B3A = FREQ.C!['6']! / MHz;
 
 // QZSS
-export const FREQ_QZS_L1 = 1575.42;
-export const FREQ_QZS_L2 = 1227.6;
-export const FREQ_QZS_L5 = 1176.45;
-export const FREQ_QZS_L6 = 1278.75;
+export const FREQ_QZS_L1 = FREQ.J!['1']! / MHz;
+export const FREQ_QZS_L2 = FREQ.J!['2']! / MHz;
+export const FREQ_QZS_L5 = FREQ.J!['5']! / MHz;
+export const FREQ_QZS_L6 = FREQ.J!['6']! / MHz;
 
 // NavIC
-export const FREQ_NAVIC_L5 = 1176.45;
+export const FREQ_NAVIC_L5 = FREQ.I!['5']! / MHz;
 
 /* ── Signal type definitions ─────────────────────────────────── */
 

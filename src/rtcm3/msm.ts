@@ -12,40 +12,42 @@ import { BitReader } from './decoder';
 import type { Rtcm3Frame } from './decoder';
 import {
   C_LIGHT,
+  FREQ,
   GLO_F1_BASE,
   GLO_F1_STEP,
   GLO_F2_BASE,
   GLO_F2_STEP,
 } from '../constants/gnss';
+import { MILLISECONDS_IN_WEEK, START_GPS_TIME } from '../constants/time';
 
 /* ================================================================== */
 /*  Constants                                                          */
 /* ================================================================== */
 
-/* Frequencies (Hz) */
-const GPS_L1 = 1575420000.0;
-const GPS_L2 = 1227600000.0;
-const GPS_L5 = 1176450000.0;
+/* Frequencies (Hz) — canonical values live in constants/gnss.ts FREQ */
+const GPS_L1 = FREQ.G!['1']!;
+const GPS_L2 = FREQ.G!['2']!;
+const GPS_L5 = FREQ.G!['5']!;
 
-const GLO_L1a = 1600995000.0;
-const GLO_L2a = 1248060000.0;
-const GLO_L3 = 1202025000.0;
+const GLO_L1a = FREQ.R!['4']!; // L1OC (CDMA)
+const GLO_L2a = FREQ.R!['6']!; // L2OC (CDMA)
+const GLO_L3 = FREQ.R!['3']!;
 
-const GAL_E1 = 1575420000.0;
-const GAL_E5a = 1176450000.0;
-const GAL_E5b = 1207140000.0;
-const GAL_E5 = 1191795000.0;
-const GAL_E6 = 1278750000.0;
+const GAL_E1 = FREQ.E!['1']!;
+const GAL_E5a = FREQ.E!['5']!;
+const GAL_E5b = FREQ.E!['7']!;
+const GAL_E5 = FREQ.E!['8']!;
+const GAL_E6 = FREQ.E!['6']!;
 
-const BDS_B1 = 1561098000.0;
-const BDS_B3 = 1268520000.0;
-const BDS_B2 = 1207140000.0;
-const BDS_B1C = 1575420000.0;
-const BDS_B2a = 1176450000.0;
-const BDS_B2b = 1207140000.0;
+const BDS_B1 = FREQ.C!['2']!; // B1I
+const BDS_B3 = FREQ.C!['6']!; // B3I
+const BDS_B2 = FREQ.C!['7']!; // B2I/B2b
+const BDS_B1C = FREQ.C!['1']!;
+const BDS_B2a = FREQ.C!['5']!;
+const BDS_B2b = FREQ.C!['7']!;
 
-const QZSS_L6 = 1278750000.0;
-const NAVIC_S = 2492028000.0;
+const QZSS_L6 = FREQ.J!['6']!;
+const NAVIC_S = FREQ.I!['9']!;
 
 /* ================================================================== */
 /*  Signal mapping: RTCM signal index → { RINEX 2-char code, freq Hz} */
@@ -644,8 +646,8 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
 /* ================================================================== */
 
 /** GPS epoch: Jan 6 1980 00:00:00 UTC */
-const GPS_EPOCH = Date.UTC(1980, 0, 6);
-const MS_PER_WEEK = 604800000;
+const GPS_EPOCH = START_GPS_TIME.getTime();
+const MS_PER_WEEK = MILLISECONDS_IN_WEEK;
 
 /**
  * Convert MSM epoch timestamp to a Date.
@@ -679,6 +681,10 @@ export function msmEpochToDate(
 
   if (sys === 'C') {
     // BDS time starts at Jan 1 2006, 14s behind GPS time
+    // TODO(review): this -14000 mixes GPS−BDT (14 s) with BDT−UTC
+    // (currently 4 s), and disagrees with both START_BDS_TIME
+    // (constants/time.ts, +14 s in GPS scale) and orbit/index.ts
+    // (no offset). Pick one convention and document it.
     const BDS_EPOCH = Date.UTC(2006, 0, 1) - 14000;
     const weeksSinceEpoch = Math.floor((refMs - BDS_EPOCH) / MS_PER_WEEK);
     let t = BDS_EPOCH + weeksSinceEpoch * MS_PER_WEEK + epochMs;

@@ -10,6 +10,7 @@ import type {
 } from '../rinex/nav';
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
+import { START_GPS_TIME } from '../constants/time';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
 /* ================================================================== */
@@ -533,8 +534,7 @@ export function computeSatPosition(
     return glonassPosition(eph, timeMs / 1000);
   }
   // Compute GPS time of week from Unix time
-  // GPS epoch: Jan 6, 1980 00:00:00 UTC
-  const GPS_EPOCH = Date.UTC(1980, 0, 6);
+  const GPS_EPOCH = START_GPS_TIME.getTime();
   const gpsSeconds = (timeMs - GPS_EPOCH) / 1000;
   const tow = gpsSeconds % (7 * 86400);
   return keplerPosition(eph as KeplerEphemeris, tow);
@@ -692,7 +692,10 @@ function selectBest(ephs: Ephemeris[], timeMs: number): Ephemeris | null {
 /*  Live RTCM3 ephemeris → orbit computation                           */
 /* ================================================================== */
 
-const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
+const GPS_EPOCH_MS = START_GPS_TIME.getTime();
+// TODO(review): BDT is 14 s behind GPS time; constants/time.ts encodes
+// the BDS epoch as 2006-01-01T00:00:14Z (GPS scale) but this omits the
+// offset, biasing BDS toc/toe by 14 s. Align with one convention.
 const BDS_EPOCH_MS = Date.UTC(2006, 0, 1);
 const GAL_EPOCH_MS = GPS_EPOCH_MS; // Galileo uses GST which shares GPS epoch
 
