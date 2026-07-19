@@ -355,32 +355,15 @@ const LTI_TABLE_4BIT = [
 function lockTimeSec(msmType: number, lti: number): number {
   const variant = msmType % 10;
   if (variant <= 5) {
-    // 4-bit lock time indicator
+    // 4-bit lock time indicator (DF402), table value in seconds
     return LTI_TABLE_4BIT[lti] ?? 0;
   }
-  // Types 6-7: 10-bit extended indicator (piecewise linear)
-  if (lti < 64) return lti;
-  if (lti < 96) return (lti - 64) * 2 + 64;
-  if (lti < 128) return (lti - 96) * 4 + 128;
-  if (lti < 160) return (lti - 128) * 8 + 256;
-  if (lti < 192) return (lti - 160) * 16 + 512;
-  if (lti < 224) return (lti - 192) * 32 + 1024;
-  if (lti < 256) return (lti - 224) * 64 + 2048;
-  if (lti < 288) return (lti - 256) * 128 + 4096;
-  if (lti < 320) return (lti - 288) * 256 + 8192;
-  if (lti < 352) return (lti - 320) * 512 + 16384;
-  if (lti < 384) return (lti - 352) * 1024 + 32768;
-  if (lti < 416) return (lti - 384) * 2048 + 65536;
-  if (lti < 448) return (lti - 416) * 4096 + 131072;
-  if (lti < 480) return (lti - 448) * 8192 + 262144;
-  if (lti < 512) return (lti - 480) * 16384 + 524288;
-  if (lti < 544) return (lti - 512) * 32768 + 1048576;
-  if (lti < 576) return (lti - 544) * 65536 + 2097152;
-  if (lti < 608) return (lti - 576) * 131072 + 4194304;
-  if (lti < 640) return (lti - 608) * 262144 + 8388608;
-  if (lti < 672) return (lti - 640) * 524288 + 16777216;
-  if (lti < 704) return (lti - 672) * 1048576 + 33554432;
-  return (lti - 704) * 2097152 + 67108864;
+  // Types 6-7: 10-bit extended indicator (DF407), piecewise linear in
+  // MILLISECONDS: below 64 the value is lti ms; each following range of
+  // 32 doubles both the step (2^(n+1)) and the base offset (2^(n+6)).
+  if (lti < 64) return lti / 1000;
+  const n = Math.min(20, Math.floor((lti - 64) / 32));
+  return ((lti - 64 - 32 * n) * 2 ** (n + 1) + 2 ** (n + 6)) / 1000;
 }
 
 /* ================================================================== */

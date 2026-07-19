@@ -423,3 +423,51 @@ describe('MSM4 satellite-data alignment', () => {
     expect(sig.cn0).toBe(42);
   });
 });
+
+describe('lockTimeSec via MSM7 decode', () => {
+  it('returns seconds for the 10-bit indicator (DF407 is in ms)', () => {
+    // lti=100 → (100-96)*4+128 = 144 ms = 0.144 s (was returned as 144)
+    const frame = buildMsm7Frame({
+      psr: 0,
+      cp: 0,
+      ll: 100,
+      hc: 0,
+      cnr: 672,
+      dop: 0,
+    });
+    const sig = decodeMsmFull(frame)!.observations[0]!.signals[0]!;
+    expect(sig.lockTime).toBeCloseTo(0.144, 6);
+  });
+
+  it('matches the original piecewise table at range boundaries', () => {
+    for (const [lti, ms] of [
+      [0, 0],
+      [63, 63],
+      [64, 64],
+      [95, 126],
+      [96, 128],
+    ] as const) {
+      const frame = buildMsm7Frame({
+        psr: 0,
+        cp: 0,
+        ll: lti,
+        hc: 0,
+        cnr: 672,
+        dop: 0,
+      });
+      const sig = decodeMsmFull(frame)!.observations[0]!.signals[0]!;
+      expect(sig.lockTime).toBeCloseTo(ms / 1000, 9);
+    }
+    // Top of the table: lti=1023 → (1023-704)*2^21 + 2^26 ms
+    const frame = buildMsm7Frame({
+      psr: 0,
+      cp: 0,
+      ll: 1023,
+      hc: 0,
+      cnr: 672,
+      dop: 0,
+    });
+    const sig = decodeMsmFull(frame)!.observations[0]!.signals[0]!;
+    expect(sig.lockTime).toBeCloseTo((319 * 2 ** 21 + 2 ** 26) / 1000, 3);
+  });
+});
