@@ -130,6 +130,45 @@ function buildMsm4Frame(opts: {
   return { messageType, length: payload.length, payload };
 }
 
+/**
+ * Build a minimal MSM7 frame (GPS) with one satellite and one signal.
+ * MSM7 sat data: rrint(8) + extsat(4) + rrmod(10) + rdop(s14);
+ * cell data: psr(s20) + cp(s24) + ll(10) + hc(1) + cnr(10) + dop(s15).
+ */
+function buildMsm7Frame(cell: {
+  psr: number; // raw signed 20-bit
+  cp: number; // raw signed 24-bit
+  ll: number;
+  hc: number;
+  cnr: number; // raw, 1/16 dB-Hz
+  dop: number; // raw signed 15-bit
+}): Rtcm3Frame {
+  const w = new BitWriter();
+  w.writeU(1077, 12); // GPS MSM7
+  w.writeU(0, 12);
+  w.writeU(100000, 30);
+  w.writeU(0, 1 + 3 + 7 + 2 + 2 + 1 + 3);
+  w.writeU(0x80000000, 32); // sat mask: G01
+  w.writeU(0, 32);
+  w.writeU(1 << 30, 32); // signal mask: index 1 → "1C"
+  w.writeU(1, 1); // cell mask
+
+  w.writeU(80, 8); // rough range integer (ms)
+  w.writeU(0, 4); // extended sat info
+  w.writeU(512, 10); // rough range fraction (512/1024 ms)
+  w.writeS(0, 14); // rough phase range rate
+
+  w.writeS(cell.psr, 20);
+  w.writeS(cell.cp, 24);
+  w.writeU(cell.ll, 10);
+  w.writeU(cell.hc, 1);
+  w.writeU(cell.cnr, 10);
+  w.writeS(cell.dop, 15);
+
+  const payload = w.toUint8Array();
+  return { messageType: 1077, length: payload.length, payload };
+}
+
 /* ================================================================== */
 /*  Tests                                                              */
 /* ================================================================== */
@@ -302,5 +341,56 @@ describe('msmEpochToDate', () => {
     // BDS week start
     expect(date).toBeInstanceOf(Date);
     expect(date.getTime()).toBeGreaterThan(0);
+  });
+});
+
+describe('MSM7 fine phase scaling', () => {
+  const C = 299792458;
+  const L1 = 1575.42e6;
+  const lambda = C / L1;
+  const roughMs = 80 + 512 / 1024;
+  const roughM = (roughMs * C) / 1000;
+
+  it('decodes negative fine phase with correct sign', () => {
+    // Regression: cp was divided by (1 << 31), which is NEGATIVE in JS,
+    // flipping the sign of every MSM6/7 fine phase value.
+    const frame = buildMsm7Frame({
+      psr: 1000,
+      cp: -2000,
+      ll: 100,
+      hc: 0,
+      cnr: 672, // 42 dB-Hz in 1/16 units
+      dop: 0,
+    });
+    const epoch = decodeMsmFull(frame);
+    expect(epoch).not.toBeNull();
+    const sig = epoch!.observations[0]!.signals[0]!;
+    const expected = ((-2000 / 2 ** 31) * C) / 1000 / lambda + roughM / lambda;
+    expect(sig.phase).toBeCloseTo(expected, 1);
+    expect(sig.phase!).toBeLessThan(roughM / lambda);
+    expect(sig.pseudorange).toBeCloseTo(
+      ((1000 / 2 ** 29) * C) / 1000 + roughM,
+      3
+    );
+    expect(sig.cn0).toBe(42);
+  });
+
+  it('treats the invalid-value sentinels as missing data', () => {
+    // Most-negative raw values mean "not available" per RTCM 10403.3.
+    // With the (1 << 31) bug the phase sentinel became +1/256 and
+    // passed the validity check.
+    const frame = buildMsm7Frame({
+      psr: -524288, // s20 sentinel
+      cp: -8388608, // s24 sentinel
+      ll: 0,
+      hc: 0,
+      cnr: 672,
+      dop: 0,
+    });
+    const epoch = decodeMsmFull(frame);
+    expect(epoch).not.toBeNull();
+    const sig = epoch!.observations[0]!.signals[0]!;
+    expect(sig.phase).toBeUndefined();
+    expect(sig.pseudorange).toBeUndefined();
   });
 });

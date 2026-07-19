@@ -561,29 +561,32 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
     cp.fill(-1e30);
     dop.fill(-1e30);
 
+    // Scale factors as 2 ** n, never (1 << n): `1 << 31` is negative in
+    // JS, which flipped the sign of MSM6/7 fine phase and let the
+    // invalid-value sentinel pass the validity checks below.
     if (variant === 4) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / (1 << 24);
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / (1 << 29);
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / 2 ** 24;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / 2 ** 29;
       for (let i = 0; i < activeCells; i++) ll[i] = bits.u(4);
       for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
       for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(6);
     } else if (variant === 5) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / (1 << 24);
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / (1 << 29);
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(15) / 2 ** 24;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(22) / 2 ** 29;
       for (let i = 0; i < activeCells; i++) ll[i] = bits.u(4);
       for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
       for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(6);
       for (let i = 0; i < activeCells; i++) dop[i] = bits.s(15) * 0.0001;
     } else if (variant === 6) {
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / (1 << 29);
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / (1 << 31);
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / 2 ** 31;
       for (let i = 0; i < activeCells; i++) ll[i] = bits.u(10);
       for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
       for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(10) / 16;
     } else {
       // variant === 7
-      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / (1 << 29);
-      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / (1 << 31);
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.s(20) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.s(24) / 2 ** 31;
       for (let i = 0; i < activeCells; i++) ll[i] = bits.u(10);
       for (let i = 0; i < activeCells; i++) hc[i] = bits.u(1);
       for (let i = 0; i < activeCells; i++) cnr[i] = bits.u(10) / 16;
