@@ -26,21 +26,21 @@ export class BitReader {
     this.data = data;
   }
 
-  /** Read `n` bits as unsigned integer (max 32). */
+  /** Read `n` bits as unsigned integer (max 53). */
   readU(n: number): number {
     if (n === 0) return 0;
     let val = 0;
     for (let i = 0; i < n; i++) {
       const byteIdx = (this.bitPos + i) >> 3;
       const bitIdx = 7 - ((this.bitPos + i) & 7);
-      if (byteIdx < this.data.length) {
-        val = (val << 1) | ((this.data[byteIdx]! >> bitIdx) & 1);
-      } else {
-        val <<= 1;
-      }
+      const bit =
+        byteIdx < this.data.length ? (this.data[byteIdx]! >> bitIdx) & 1 : 0;
+      // Float arithmetic instead of shifts: values wider than 32 bits
+      // (e.g. the 38-bit ECEF fields in msg 1005/1006) overflow `<<`.
+      val = val * 2 + bit;
     }
     this.bitPos += n;
-    return val >>> 0;
+    return val;
   }
 
   /** Read `n` bits as signed (two's complement) integer. */
@@ -53,9 +53,9 @@ export class BitReader {
   /** Read `n` bits as sign-magnitude integer (MSB = sign, rest = magnitude). */
   readSM(n: number): number {
     const val = this.readU(n);
-    const sign = val >> (n - 1);
-    const mag = val & ((1 << (n - 1)) - 1);
-    return sign ? -mag : mag;
+    const half = 2 ** (n - 1);
+    const mag = val % half;
+    return val >= half ? -mag : mag;
   }
 
   /** Skip `n` bits. */

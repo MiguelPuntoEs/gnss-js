@@ -286,17 +286,17 @@ class BitReader {
     this.pos = startBit;
   }
 
-  /** Read unsigned value of numBits bits */
+  /** Read unsigned value of numBits bits (max 53) */
   u(numBits: number): number {
     let val = 0;
     for (let i = 0; i < numBits; i++) {
       const byteIdx = (this.pos + i) >>> 3;
       const bitIdx = 7 - ((this.pos + i) & 7);
-      if (byteIdx < this.data.length) {
-        val = (val << 1) | ((this.data[byteIdx]! >>> bitIdx) & 1);
-      } else {
-        val <<= 1;
-      }
+      const bit =
+        byteIdx < this.data.length ? (this.data[byteIdx]! >>> bitIdx) & 1 : 0;
+      // Float arithmetic instead of shifts: `<<` wraps at 32 bits and
+      // returns negative values for 32-bit reads with the MSB set.
+      val = val * 2 + bit;
     }
     this.pos += numBits;
     return val;
@@ -305,8 +305,8 @@ class BitReader {
   /** Read signed value (two's complement) */
   s(numBits: number): number {
     const raw = this.u(numBits);
-    const sign = 1 << (numBits - 1);
-    return (raw & (sign - 1)) - (raw & sign);
+    const half = 2 ** (numBits - 1);
+    return raw >= half ? raw - 2 ** numBits : raw;
   }
 
   /** Skip bits */
