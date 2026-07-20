@@ -88,6 +88,25 @@ interface SatBandState {
 
 const MIN_ARC_LENGTH = 10;
 
+/**
+ * Intra-arc step threshold (m). A cycle slip that escapes the external
+ * detector shifts MP by ~0.76 m per L1/L2 cycle — a step, which
+ * mean-debiasing turns into a bimodal arc with metre-level fake RMS.
+ * Steps beyond this close the arc and start a new one.
+ */
+const MP_JUMP_M = 1.25;
+/** Points compared against the running median for step detection. */
+const MP_JUMP_WINDOW = 5;
+/** Iterative sigma-editing threshold for per-arc outlier rejection. */
+const MP_EDIT_SIGMA = 3;
+
+/** Median of a short numeric array. */
+function median(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+
 /* ================================================================== */
 /*  Multipath accumulator                                              */
 /* ================================================================== */
@@ -170,11 +189,17 @@ export class MultipathAccumulator {
       satStates.set(pairKey, bandState);
     }
 
-    // Arc break detection: time gap only (cycle slips handled externally via notifySlip)
+    // Arc break detection: time gap, or an MP step larger than the
+    // jump threshold (an undetected cycle slip — see MP_JUMP_M).
     const gap = bandState.lastTime > 0 ? (time - bandState.lastTime) / 1000 : 0;
 
     if (bandState.lastTime > 0 && gap > this.interval * ARC_GAP_FACTOR) {
       this.closeArc(prn, band, refBand, bandState);
+    } else if (bandState.arc.rawMp.length > 0) {
+      const recent = bandState.arc.rawMp.slice(-MP_JUMP_WINDOW);
+      if (Math.abs(mp - median(recent)) > MP_JUMP_M) {
+        this.closeArc(prn, band, refBand, bandState);
+      }
     }
 
     bandState.arc.times.push(time);
@@ -202,14 +227,32 @@ export class MultipathAccumulator {
   ) {
     const arc = state.arc;
     if (arc.times.length >= MIN_ARC_LENGTH) {
-      const mean = arc.rawMp.reduce((a, b) => a + b, 0) / arc.rawMp.length;
+      // Iterative sigma-editing: debias, reject > MP_EDIT_SIGMA·σ,
+      // repeat. Removes reacquisition spikes and receiver glitches that
+      // otherwise dominate the RMS (a handful of bad arcs inflated the
+      // aggregate ~10× over Anubis/TEQC-style daily values).
+      let keep = arc.times.map((_, i) => i);
+      let mean = 0;
+      for (let pass = 0; pass < 3; pass++) {
+        mean = keep.reduce((s, i) => s + arc.rawMp[i]!, 0) / keep.length;
+        const sigma = Math.sqrt(
+          keep.reduce((s, i) => s + (arc.rawMp[i]! - mean) ** 2, 0) /
+            keep.length
+        );
+        const kept = keep.filter(
+          (i) => Math.abs(arc.rawMp[i]! - mean) <= MP_EDIT_SIGMA * sigma
+        );
+        if (kept.length === keep.length || kept.length < MIN_ARC_LENGTH) break;
+        keep = kept;
+      }
+
       const sys = prn[0]!;
       const bLabel = BAND_LABELS[sys]?.[band] ?? band;
       const rLabel = BAND_LABELS[sys]?.[refBand] ?? refBand;
       const label = `${prn} MP ${bLabel}-${rLabel}`;
 
-      const points: MultipathPoint[] = arc.times.map((t, i) => ({
-        time: t,
+      const points: MultipathPoint[] = keep.map((i) => ({
+        time: arc.times[i]!,
         mp: arc.rawMp[i]! - mean,
       }));
 
@@ -270,7 +313,7 @@ export class MultipathAccumulator {
         refBand,
         rms,
         count,
-        satellites: seriesList.length,
+        satellites: new Set(seriesList.map((s) => s.prn)).size,
       });
     }
 

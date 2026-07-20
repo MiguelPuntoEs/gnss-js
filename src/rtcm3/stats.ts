@@ -88,6 +88,7 @@ export const RTCM3_MESSAGE_NAMES: Record<number, string> = {
   1031: 'GLONASS Network RTK Residual',
   1032: 'Physical Reference Station',
   1033: 'Receiver+Antenna Descriptor',
+  1041: 'NavIC Ephemeris',
   1042: 'BeiDou Ephemeris',
   1043: 'SBAS Ephemeris',
   1044: 'QZSS Ephemeris',
@@ -152,6 +153,8 @@ export const RTCM3_MESSAGE_NAMES: Record<number, string> = {
   1064: 'GLONASS SSR Clock',
   1065: 'GLONASS SSR Code Bias',
   1066: 'GLONASS SSR Orbit+Clock',
+  // Biases
+  1230: 'GLONASS Code-Phase Biases',
   // IGS SSR
   4076: 'IGS SSR',
 };
@@ -162,6 +165,7 @@ export function rtcm3Constellation(msgType: number): string | null {
   if (msgType >= 1009 && msgType <= 1012) return 'GLONASS';
   if (msgType === 1019) return 'GPS';
   if (msgType === 1020) return 'GLONASS';
+  if (msgType === 1041) return 'NavIC';
   if (msgType === 1042) return 'BeiDou';
   if (msgType === 1043) return 'SBAS';
   if (msgType === 1044) return 'QZSS';
@@ -173,6 +177,7 @@ export function rtcm3Constellation(msgType: number): string | null {
   if (msgType >= 1111 && msgType <= 1117) return 'QZSS';
   if (msgType >= 1121 && msgType <= 1127) return 'BeiDou';
   if (msgType >= 1131 && msgType <= 1137) return 'NavIC';
+  if (msgType === 1230) return 'GLONASS';
   return null;
 }
 
