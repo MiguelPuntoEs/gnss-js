@@ -14,6 +14,9 @@ const DELF: [number, number, number] = [
   3924687.7039, 301132.7618, 5001910.7712,
 ];
 
+/** Boulder-ish CONUS point for the NAD83 tests. */
+const BOULDER: [number, number, number] = [-1288398.0, -4721696.0, 4078625.0];
+
 const dist = (
   a: readonly [number, number, number],
   b: readonly [number, number, number]
@@ -148,15 +151,55 @@ describe('transformFrame', () => {
     expect(d).toBeLessThan(0.8);
   });
 
-  it('NAD83(2011) offset from ITRF2014 is 1–2 m (CONUS)', () => {
-    // Boulder-ish point; the NAD83 frame offset is ~2.2 m in total.
-    const boulder: [number, number, number] = [
-      -1288398.0, -4721696.0, 4078625.0,
-    ];
-    const nad = transformFrame(boulder, 'ITRF2014', 'NAD83(2011)', 2010.0);
-    const d = dist(nad, boulder);
-    expect(d).toBeGreaterThan(1.0);
-    expect(d).toBeLessThan(3.0);
+  it('NAD83(2011) offset from ITRF2014 is ~1.52 m at Boulder (2010.0)', () => {
+    const nad = transformFrame(BOULDER, 'ITRF2014', 'NAD83(2011)', 2010.0);
+    const d = dist(nad, BOULDER);
+    expect(d).toBeGreaterThan(1.4);
+    expect(d).toBeLessThan(1.7);
+  });
+
+  it('NAD83(2011) rates produce plate-scale secular motion (2010→2020)', () => {
+    // At the 2010.0 parameter epoch the rate terms vanish, so this pair
+    // of epochs is what actually exercises the CF→PV rate negation: a
+    // NAD83-fixed point drifts through ITRF2014 with the North American
+    // plate, ~1.8 cm/yr at Boulder.
+    const at2010 = transformFrame(BOULDER, 'ITRF2014', 'NAD83(2011)', 2010.0);
+    const at2020 = transformFrame(BOULDER, 'ITRF2014', 'NAD83(2011)', 2020.0);
+    const drift = dist(at2010, at2020);
+    expect(drift).toBeGreaterThan(0.1);
+    expect(drift).toBeLessThan(0.25);
+  });
+});
+
+describe('pinned vectors (independent implementation)', () => {
+  // Expected outputs computed with a separate Python implementation of
+  // the time-dependent Helmert formula, fed the published parameters —
+  // for NAD83 starting from EPSG:8970's RAW Coordinate-Frame rotations
+  // with the CF→PV negation performed independently. Epochs are chosen
+  // off the parameter epochs so every rate term is active, and the
+  // points are far from the origin so every rotation term is active.
+  // Round-trip tests cancel a consistently-applied sign error; these
+  // pins do not.
+
+  it('ITRF2020→ITRF93 at 2020.0 (full rotation vector + all rates)', () => {
+    const out = transformFrame(DELF, 'ITRF2020', 'ITRF93', 2020.0);
+    expect(out[0]).toBeCloseTo(3924687.5144, 4);
+    expect(out[1]).toBeCloseTo(301132.88, 4);
+    expect(out[2]).toBeCloseTo(5001910.8085, 4);
+  });
+
+  it('ITRF2014→NAD83(2011) at 2020.0 (CF→PV negation, rates active)', () => {
+    const out = transformFrame(BOULDER, 'ITRF2014', 'NAD83(2011)', 2020.0);
+    expect(out[0]).toBeCloseTo(-1288397.0668, 4);
+    expect(out[1]).toBeCloseTo(-4721697.3057, 4);
+    expect(out[2]).toBeCloseTo(4078625.1209, 4);
+  });
+
+  it('ITRF2020→ETRF2000 at 2024.0 (two-edge path through ITRF2014)', () => {
+    const out = transformFrame(DELF, 'ITRF2020', 'ETRF2000', 2024.0);
+    expect(out[0]).toBeCloseTo(3924688.2277, 4);
+    expect(out[1]).toBeCloseTo(301132.2184, 4);
+    expect(out[2]).toBeCloseTo(5001910.3677, 4);
   });
 });
 
