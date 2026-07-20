@@ -149,21 +149,36 @@ export class MultipathAccumulator {
 
     if (bandData.size < 2) return;
 
+    // MP_a = C_a - (1 + 2/(α-1)) · L_a · λ_a + (2/(α-1)) · L_b · λ_b,
+    // α = (f_a/f_b)² — code multipath on band a, phases on a and b.
+    const mpOf = (
+      a: { C: number; L: number; f: number },
+      b: { C: number; L: number; f: number }
+    ) => {
+      const λa = C_LIGHT / a.f;
+      const λb = C_LIGHT / b.f;
+      const α = (a.f * a.f) / (b.f * b.f);
+      const coeff = 2 / (α - 1);
+      return a.C - (1 + coeff) * a.L * λa + coeff * b.L * λb;
+    };
+
+    // One MP series per CODE band (matching Anubis/TEQC): the first
+    // available pair yields MP on its primary band, and every pair
+    // yields MP on its secondary band with the roles swapped — e.g.
+    // GPS pairs (1,2), (1,5) produce MP1, MP2 and MP5, where MP5 is
+    // the L5 *code* with L5/L1 phases (not the L1 code re-referenced).
     const pairs = DUAL_FREQ_PAIRS[sys] ?? [];
+    let primaryDone = false;
     for (const [bi, bj] of pairs) {
       const di = bandData.get(bi);
       const dj = bandData.get(bj);
       if (!di || !dj) continue;
 
-      const λi = C_LIGHT / di.f;
-      const λj = C_LIGHT / dj.f;
-      const α = (di.f * di.f) / (dj.f * dj.f);
-      const coeff = 2 / (α - 1);
-
-      // MP_i = C_i - (1 + 2/(α-1)) · L_i · λ_i + (2/(α-1)) · L_j · λ_j
-      const mp = di.C - (1 + coeff) * di.L * λi + coeff * dj.L * λj;
-
-      this.pushMp(prn, bi, bj, time, mp);
+      if (!primaryDone) {
+        this.pushMp(prn, bi, bj, time, mpOf(di, dj));
+        primaryDone = true;
+      }
+      this.pushMp(prn, bj, bi, time, mpOf(dj, di));
     }
   };
 
