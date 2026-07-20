@@ -1,6 +1,6 @@
 /**
  * Combined quality analysis — runs cycle slip detection, data completeness,
- * and multipath analysis in a single file re-parse pass.
+ * multipath and ionosphere analysis in a single file re-parse pass.
  */
 
 import type { RinexHeader } from '../rinex/parser';
@@ -11,11 +11,14 @@ import { CompletenessAccumulator } from './completeness';
 import type { CompletenessResult } from './completeness';
 import { MultipathAccumulator } from './multipath';
 import type { MultipathResult } from './multipath';
+import { IonoAccumulator } from './ionosphere';
+import type { IonoResult } from './ionosphere';
 
 export interface QualityResult {
   cycleSlips: CycleSlipResult;
   completeness: CompletenessResult;
   multipath: MultipathResult;
+  iono: IonoResult;
 }
 
 export async function analyzeQuality(
@@ -25,8 +28,10 @@ export async function analyzeQuality(
   signal?: AbortSignal
 ): Promise<QualityResult> {
   const mpAccum = new MultipathAccumulator(header);
+  const ionoAccum = new IonoAccumulator(header);
   const csAccum = new CycleSlipAccumulator(header, (time, prn, bands) => {
     mpAccum.notifySlip(time, prn, bands);
+    ionoAccum.notifySlip(time, prn, bands);
   });
   const compAccum = new CompletenessAccumulator(header);
 
@@ -37,6 +42,7 @@ export async function analyzeQuality(
     (time, prn, codes, values) => {
       csAccum.onObservation(time, prn, codes, values);
       mpAccum.onObservation(time, prn, codes, values);
+      ionoAccum.onObservation(time, prn, codes, values);
       compAccum.onObservation(time, prn, codes, values);
     },
     true /* workerMode: skip EpochSummary construction */
@@ -46,5 +52,6 @@ export async function analyzeQuality(
     cycleSlips: csAccum.finalize(),
     completeness: compAccum.finalize(),
     multipath: mpAccum.finalize(),
+    iono: ionoAccum.finalize(),
   };
 }

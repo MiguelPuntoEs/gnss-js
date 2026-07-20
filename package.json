@@ -1,6 +1,6 @@
 {
   "name": "gnss-js",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Comprehensive GNSS library for JavaScript — time scales, coordinates, RINEX parsing, RTCM3 decoding, orbit computation, and signal analysis",
   "type": "module",
   "sideEffects": false,
