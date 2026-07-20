@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -26,6 +30,8 @@ jobs:
         with:
           path: test-fixtures
           key: test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
+          restore-keys: |
+            test-data-
       - run: bash scripts/fetch-test-data.sh
       - run: pnpm run lint
       - run: npx tsc --noEmit

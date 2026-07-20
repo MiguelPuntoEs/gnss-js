@@ -22,10 +22,10 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-      # Trusted Publishing needs npm >= 11.5
-      - run: npm install -g npm@latest
+      # Trusted Publishing needs npm >= 11.5 — Node 24 bundles it,
+      # no unpinned npm@latest install in the OIDC-privileged workflow.
       - run: pnpm install --frozen-lockfile
       # BKG/ESA are intermittently unreachable from GitHub runners; the
       # fetch script skips existing files, so a cache hit is a no-op.
@@ -34,6 +34,8 @@ jobs:
         with:
           path: test-fixtures
           key: test-data-${{ hashFiles('scripts/fetch-test-data.sh') }}
+          restore-keys: |
+            test-data-
       - run: bash scripts/fetch-test-data.sh
       - run: pnpm run lint
       - run: npx tsc --noEmit
