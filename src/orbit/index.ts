@@ -512,23 +512,10 @@ export function selectEphemeris(
   prn: string,
   timeMs: number
 ): Ephemeris | null {
-  let best: Ephemeris | null = null;
-  let bestDt = Infinity;
-
-  for (const eph of ephemerides) {
-    if (eph.prn !== prn) continue;
-    const ephTime = eph.tocDate.getTime();
-    const dt = Math.abs(timeMs - ephTime);
-    // GLONASS ephemerides are valid for ~30 min; Keplerian for ~2–4 hours
-    const maxAge =
-      eph.system === 'R' || eph.system === 'S' ? 1800_000 : 4 * 3600_000;
-    if (dt > maxAge) continue;
-    if (dt < bestDt) {
-      bestDt = dt;
-      best = eph;
-    }
-  }
-  return best;
+  return selectBest(
+    ephemerides.filter((e) => e.prn === prn),
+    timeMs
+  );
 }
 
 /**
@@ -713,9 +700,11 @@ function selectBest(ephs: Ephemeris[], timeMs: number): Ephemeris | null {
 /* ================================================================== */
 
 const GPS_EPOCH_MS = START_GPS_TIME.getTime();
+const MS_PER_WEEK = 7 * 86400_000;
 // BDS epoch on the GPS-scale axis (BDT = GPS − 14 s), like GPS/GAL below
 const BDS_EPOCH_MS = START_BDS_TIME.getTime();
-const GAL_EPOCH_MS = GPS_EPOCH_MS; // Galileo uses GST which shares GPS epoch
+// GST week numbering starts at GPS week 1024 (1999-08-22)
+const GAL_EPOCH_MS = GPS_EPOCH_MS + 1024 * MS_PER_WEEK;
 
 /** Convert an RTCM3 EphemerisInfo to the Ephemeris type used by orbit computation. */
 export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
@@ -789,8 +778,13 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     return null;
   }
 
-  // Compute tocDate from week + toc
+  // Compute tocDate from week + toc. RTCM broadcasts the week as-is:
+  // GPS/QZSS (1019/1044) send a 10-bit week (mod 1024) that must be
+  // resolved against the reception time; Galileo (1045/1046) sends the
+  // 12-bit GST week, whose epoch is GPS week 1024; BDS (1042) sends
+  // the full 13-bit BDT week.
   let epochMs: number;
+  let week = info.week;
   const tocSec = info.toc ?? info.toe;
   if (sys === 'C') {
     epochMs = BDS_EPOCH_MS;
@@ -798,8 +792,10 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     epochMs = GAL_EPOCH_MS;
   } else {
     epochMs = GPS_EPOCH_MS;
+    const weeksNow = (info.lastReceived - GPS_EPOCH_MS) / MS_PER_WEEK;
+    week += 1024 * Math.round((weeksNow - week) / 1024);
   }
-  const tocDate = new Date(epochMs + info.week * 7 * 86400_000 + tocSec * 1000);
+  const tocDate = new Date(epochMs + week * MS_PER_WEEK + tocSec * 1000);
 
   return {
     system: sys as 'G' | 'E' | 'C' | 'J' | 'I',
@@ -826,7 +822,7 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     omega: info.argPerigee,
     omegaDot: info.omegaDot ?? 0,
     idot: info.idot ?? 0,
-    week: info.week,
+    week,
     svHealth: info.health,
     tgd: 0,
   } satisfies KeplerEphemeris;
@@ -913,7 +909,7 @@ export interface VisibilityPass {
 export interface VisibilityResult {
   /** Sample epochs (Unix ms). */
   times: number[];
-  /** Elevation (radians) per PRN per epoch; null when below −0.05 rad / no eph. */
+  /** Elevation (radians) per PRN per epoch; null when no valid ephemeris. */
   elevation: Record<string, (number | null)[]>;
   /** Number of satellites at or above the mask, per epoch. */
   visibleCount: number[];

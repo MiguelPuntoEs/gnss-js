@@ -21,6 +21,7 @@
  */
 
 import type { RinexHeader } from '../rinex/parser';
+import { MIN_ARC_LENGTH, median } from './stats-util';
 import {
   C_LIGHT,
   BAND_LABELS,
@@ -79,15 +80,6 @@ const TEC_FACTOR = 40.3e16;
  *  cycle-slip detector's GF criterion. The iono itself rarely moves
  *  more than a few cm between 30 s epochs. */
 const GF_JUMP_M = 0.15;
-
-const MIN_ARC_LENGTH = 10;
-
-/** Median of a numeric array. */
-function median(values: number[]): number {
-  const s = [...values].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
-}
 
 /* ================================================================== */
 /*  Arc state                                                          */
@@ -283,7 +275,7 @@ export class IonoAccumulator {
     const series: IonoSeries[] = [];
     let sum = 0;
     let count = 0;
-    let maxStec = 0;
+    let maxStec = -Infinity;
     for (const [prn, satArcs] of this.closed) {
       // The pair with the most samples wins (band availability can
       // differ between satellites of the same system).
@@ -320,6 +312,10 @@ export class IonoAccumulator {
     }
     series.sort((a, b) => a.prn.localeCompare(b.prn));
 
-    return { series, maxStec, meanStec: count > 0 ? sum / count : 0 };
+    return {
+      series,
+      maxStec: count > 0 ? maxStec : 0,
+      meanStec: count > 0 ? sum / count : 0,
+    };
   }
 }

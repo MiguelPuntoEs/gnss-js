@@ -12,6 +12,7 @@
  */
 
 import type { IonoResult, IonoSeries } from './ionosphere';
+import { percentile } from './stats-util';
 
 /** PRN → "C1C-C2W" → bias (ns), satellite entries only. */
 export type SatDcbMap = Map<string, Map<string, number>>;
@@ -20,10 +21,14 @@ const PRN_RE = /^[A-Z]\d{2}$/;
 const SVN_RE = /^[A-Z]\d{3}$/;
 const OBS_RE = /^[CL]\d[A-Z]$/;
 
-/** SINEX epoch "YYYY:DDD:SSSSS" → Unix ms; year 0000 means open-ended. */
-function sinexEpochMs(s: string): number {
+/**
+ * SINEX epoch "YYYY:DDD:SSSSS" → Unix ms. Year 0000 means open-ended,
+ * which resolves to `openValue` (−Infinity for a start, +Infinity for
+ * an end field).
+ */
+function sinexEpochMs(s: string, openValue: number): number {
   const [y, d, sec] = s.split(':').map(Number);
-  if (!y) return Infinity;
+  if (!y) return openValue;
   return Date.UTC(y, 0, 1) + ((d ?? 1) - 1) * 86400_000 + (sec ?? 0) * 1000;
 }
 
@@ -62,8 +67,8 @@ export function parseSinexBiasDcb(text: string, epochMs?: number): SatDcbMap {
     const value = parseFloat(t[unitIdx + 1]!);
     if (!isFinite(value)) continue;
 
-    const start = sinexEpochMs(t[5] ?? '');
-    const end = sinexEpochMs(t[6] ?? '');
+    const start = sinexEpochMs(t[5] ?? '', -Infinity);
+    const end = sinexEpochMs(t[6] ?? '', Infinity);
     const covers = epochMs !== undefined && epochMs >= start && epochMs < end;
 
     const prn = t[2]!;
@@ -100,12 +105,6 @@ export interface IonoDcbResult {
   satellitesMissing: string[];
   /** Estimated receiver bias per "system label" group (TECU). */
   receiverDcbTecu: Record<string, number>;
-}
-
-/** Low percentile of a sample array (robust minimum). */
-function percentile(values: number[], p: number): number {
-  const s = [...values].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor(p * s.length))] ?? 0;
 }
 
 /**
@@ -190,7 +189,7 @@ export function applyIonoDcb(
 
   let sum = 0;
   let count = 0;
-  let maxStec = 0;
+  let maxStec = -Infinity;
   for (const s of out) {
     for (const p of s.points) {
       sum += p.stec;
@@ -200,7 +199,11 @@ export function applyIonoDcb(
   }
 
   return {
-    result: { series: out, maxStec, meanStec: count > 0 ? sum / count : 0 },
+    result: {
+      series: out,
+      maxStec: count > 0 ? maxStec : 0,
+      meanStec: count > 0 ? sum / count : 0,
+    },
     satellitesCorrected: corrected,
     satellitesMissing: [...new Set(missing)].sort(),
     receiverDcbTecu,

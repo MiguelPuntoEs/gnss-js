@@ -90,9 +90,10 @@ describe('ephInfoToEphemeris — Keplerian validation', () => {
     prn: 'G12',
     constellation: 'GPS',
     health: 0,
-    lastReceived: Date.now(),
+    lastReceived: new Date('2026-07-20T12:00:00Z').getTime(),
     messageType: 1019,
-    week: 2400,
+    // RTCM 1019 broadcasts a 10-bit week: 2428 mod 1024 = 380
+    week: 380,
     toe: 302400,
     toc: 302400,
     sqrtA: 5153.7,
@@ -106,6 +107,27 @@ describe('ephInfoToEphemeris — Keplerian validation', () => {
 
   it('accepts a physically plausible GPS ephemeris', () => {
     expect(ephInfoToEphemeris(keplerInfo)).not.toBeNull();
+  });
+
+  it('resolves the 10-bit GPS week against the reception time', () => {
+    const eph = ephInfoToEphemeris(keplerInfo)!;
+    // Without rollover resolution week 380 lands in 1987.
+    const dtDays =
+      Math.abs(eph.tocDate.getTime() - keplerInfo.lastReceived) / 86400_000;
+    expect(dtDays).toBeLessThan(4);
+  });
+
+  it('interprets the Galileo week on the GST axis (GPS week 1024)', () => {
+    const gal = ephInfoToEphemeris({
+      ...keplerInfo,
+      prn: 'E11',
+      constellation: 'Galileo',
+      messageType: 1046,
+      week: 2428 - 1024, // GST week as broadcast
+    })!;
+    const dtDays =
+      Math.abs(gal.tocDate.getTime() - keplerInfo.lastReceived) / 86400_000;
+    expect(dtDays).toBeLessThan(4);
   });
 
   it('rejects garbage that survived CRC (sqrtA out of range)', () => {

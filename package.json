@@ -1,6 +1,6 @@
 {
   "name": "gnss-js",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Comprehensive GNSS library for JavaScript — time scales, coordinates, RINEX parsing, RTCM3 decoding, orbit computation, and signal analysis",
   "type": "module",
   "sideEffects": false,
@@ -106,10 +106,10 @@
     "positioning"
   ],
   "author": "Miguel González <work@miguel.es>",
-  "license": "AGPL-3.0-only",
+  "license": "AGPL-3.0-only OR LicenseRef-Commercial",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MiguelPuntoEs/gnss-js"
+    "url": "git+https://github.com/MiguelPuntoEs/gnss-js.git"
   },
   "homepage": "https://github.com/MiguelPuntoEs/gnss-js#readme",
   "bugs": {

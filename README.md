@@ -94,12 +94,16 @@ const itrf = transformFrame(
 ```ts
 import { parseRinexStream, parseNavFile } from 'gnss-js/rinex';
 
-// Streaming observation parser (works with ReadableStream)
-const result = await parseRinexStream(stream, {
-  onObservation: (time, prn, codes, values) => {
-    // process each epoch
-  },
-});
+// Streaming observation parser (positional arguments)
+const result = await parseRinexStream(
+  file, // File (plain, Hatanaka .crx, or .gz)
+  (percent) => {}, // optional progress callback
+  undefined, // optional AbortSignal
+  (time, prn, codes, values) => {
+    // per-satellite observation callback
+  }
+);
+// result.header: RinexHeader
 
 // Navigation file parser
 const nav = parseNavFile(navFileText);
@@ -125,28 +129,36 @@ for (const frame of decoder) {
 import { computeAllPositions, computeDop } from 'gnss-js/orbit';
 
 const positions = computeAllPositions(ephemerides, times, receiverPosition);
-// positions.prns: string[], positions.times: number[], positions.az/el/lat/lon: Float64Array
+// positions.prns: string[], positions.times: number[]
+// positions.positions[prn][epochIdx]: { lat, lon, az, el } | null
 ```
 
 ### Signal analysis
 
 ```ts
-import {
-  MultipathAccumulator,
-  CycleSlipAccumulator,
-  CompletenessAccumulator,
-} from 'gnss-js/analysis';
+import { analyzeQuality } from 'gnss-js/analysis';
 
-const mp = new MultipathAccumulator(header);
-const cs = new CycleSlipAccumulator(header);
-await parseRinexStream(stream, {
-  onObservation: (time, prn, codes, values) => {
-    mp.onObservation(time, prn, codes, values);
-    cs.onObservation(time, prn, codes, values);
-  },
-});
-const multipathResult = mp.finalize();
-const cycleSlipResult = cs.finalize();
+// One re-parse pass: multipath (per code band, Anubis-style), cycle
+// slips, completeness, and slant-TEC ionosphere series.
+const q = await analyzeQuality(file, header);
+// q.multipath, q.cycleSlips, q.completeness, q.iono
+
+// The accumulators (MultipathAccumulator, CycleSlipAccumulator,
+// CompletenessAccumulator, IonoAccumulator) are also exported for
+// wiring into a custom parseRinexStream pass.
+```
+
+### Ionosphere and DCBs
+
+```ts
+import { parseSinexBiasDcb, applyIonoDcb } from 'gnss-js/analysis';
+
+// q.iono: slant TEC per satellite from the geometry-free phase
+// levelled to the code — DCB-biased until calibrated:
+const satDcb = parseSinexBiasDcb(sinexBiasText, obsEpochMs); // ESA .BIA / CAS .BSX
+const { result, receiverDcbTecu } = applyIonoDcb(q.iono, satDcb);
+// result.series[n].points: calibrated STEC (TECU); receiver bias
+// estimated from the night-time floor per system/signal pair.
 ```
 
 ### NTRIP client
@@ -171,6 +183,17 @@ const { reader, abort } = await connectToMountpoint(
     version: '2.0',
   }
 );
+```
+
+### NMEA and ANTEX
+
+```ts
+import { parseNmeaFile, computeStats } from 'gnss-js/nmea';
+import { parseAntex } from 'gnss-js/antex';
+
+const track = parseNmeaFile(nmeaText); // fixes, satellites, per-sentence records
+const stats = computeStats(track.fixes); // position/HDOP/speed statistics
+const antex = parseAntex(antexText); // antenna PCO/PCV calibrations
 ```
 
 ### Constants

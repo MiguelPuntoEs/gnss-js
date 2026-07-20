@@ -177,6 +177,11 @@ export function rtcm3Constellation(msgType: number): string | null {
   if (msgType >= 1111 && msgType <= 1117) return 'QZSS';
   if (msgType >= 1121 && msgType <= 1127) return 'BeiDou';
   if (msgType >= 1131 && msgType <= 1137) return 'NavIC';
+  if (msgType >= 1015 && msgType <= 1017) return 'GPS';
+  if (msgType === 1030) return 'GPS';
+  if (msgType === 1031) return 'GLONASS';
+  if (msgType >= 1057 && msgType <= 1062) return 'GPS';
+  if (msgType >= 1063 && msgType <= 1068) return 'GLONASS';
   if (msgType === 1230) return 'GLONASS';
   return null;
 }
@@ -231,7 +236,6 @@ export function updateStreamStats(
     // Decode full MSM observations (C/N0, obs types)
     const msmEpoch = decodeMsmFull(frame);
     if (msmEpoch) {
-      const now2 = Date.now();
       for (const obs of msmEpoch.observations) {
         const signals: SignalCn0[] = [];
         let bestCn0 = 0;
@@ -246,7 +250,7 @@ export function updateStreamStats(
             prn: obs.prn,
             system: obs.system,
             cn0: bestCn0,
-            lastSeen: now2,
+            lastSeen: now,
             signals,
           });
         }

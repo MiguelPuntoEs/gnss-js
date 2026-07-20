@@ -9,6 +9,7 @@
  */
 
 import type { RinexHeader } from '../rinex/parser';
+import { MIN_ARC_LENGTH, median } from './stats-util';
 import {
   C_LIGHT,
   BAND_LABELS,
@@ -40,7 +41,7 @@ export interface MultipathSeries {
   band: string;
   /** Reference band digit used in dual-frequency combination, e.g. "2". */
   refBand: string;
-  /** Human-readable label, e.g. "MP1 L1-L2". */
+  /** Human-readable label, e.g. "G01 MP L1-L2". */
   label: string;
   /** Time series of multipath values. */
   points: MultipathPoint[];
@@ -49,7 +50,7 @@ export interface MultipathSeries {
 }
 
 export interface MultipathSignalStat {
-  /** Human-readable label, e.g. "MP1 L1-L2 (GPS)". */
+  /** Human-readable label, e.g. "MP L1-L2 (GPS)". */
   label: string;
   /** System letter, e.g. "G". */
   system: string;
@@ -86,8 +87,6 @@ interface SatBandState {
   lastTime: number;
 }
 
-const MIN_ARC_LENGTH = 10;
-
 /**
  * Intra-arc step threshold (m). A cycle slip that escapes the external
  * detector shifts MP by ~0.76 m per L1/L2 cycle — a step, which
@@ -99,13 +98,6 @@ const MP_JUMP_M = 1.25;
 const MP_JUMP_WINDOW = 5;
 /** Iterative sigma-editing threshold for per-arc outlier rejection. */
 const MP_EDIT_SIGMA = 3;
-
-/** Median of a short numeric array. */
-function median(values: number[]): number {
-  const s = [...values].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
-}
 
 /* ================================================================== */
 /*  Multipath accumulator                                              */
