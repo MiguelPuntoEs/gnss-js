@@ -69,6 +69,13 @@ else
   echo "  ⚠ ESA SP3 unavailable — the precise-orbit test will skip" >&2
 fi
 
+# ESA rapid satellite DCBs (SINEX_BIAS, rolling monthly file, no
+# checksum — contents update in place). Best-effort like the SP3: the
+# iono-dcb real-product tests skipIf when absent.
+if ! download "https://navigation-office.esa.int/products/gnss-products/ESA0OPSFIN_DCB.BIA" "$DIR/ESA0OPSFIN_DCB.BIA"; then
+  echo "  ⚠ ESA DCB unavailable — the real-product DCB tests will skip" >&2
+fi
+
 # RINEX 3 mixed nav (2024/001)
 download "https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2024/001/BRDC00IGS_R_20240010000_01D_MN.rnx.gz" "$DIR/BRDC.nav.gz"
 decompress "$DIR/BRDC.nav"

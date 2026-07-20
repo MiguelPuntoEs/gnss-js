@@ -49,6 +49,12 @@ export interface IonoSeries {
   system: string;
   /** Band pair used, e.g. "L1-L2". */
   label: string;
+  /** Observation codes of the pair, e.g. ["C1C", "C2W"] — the key for
+   *  matching differential code bias products. */
+  codes: [string, string];
+  /** TECU shift caused by 1 ns of geometry-free code bias (B_i − B_j);
+   *  multiply a product DCB in ns by this to correct the series. */
+  tecuPerNs: number;
   /** Time series of slant TEC values (TECU, DCB-biased). */
   points: IonoPoint[];
 }
@@ -113,6 +119,8 @@ export class IonoAccumulator {
   private obsIndices: Map<string, Map<string, { L: number; C: number | null }>>;
   private gloChannels: Record<string, number>;
   private pairLabel = new Map<string, string>();
+  private pairCodes = new Map<string, [string, string]>();
+  private pairMeta = new Map<string, { fi: number; gamma: number }>();
 
   constructor(header: RinexHeader) {
     this.interval = header.interval ?? 30;
@@ -124,21 +132,29 @@ export class IonoAccumulator {
   onObservation = (
     time: number,
     prn: string,
-    _codes: string[],
+    codes: string[],
     values: (number | null)[]
   ) => {
     const sys = prn[0]!;
     const bandMap = this.obsIndices.get(sys) ?? this.obsIndices.get('_v2');
     if (!bandMap) return;
 
-    const bandData = new Map<string, { C: number; L: number; f: number }>();
+    const bandData = new Map<
+      string,
+      { C: number; L: number; f: number; code: string }
+    >();
     for (const [band, { C, L }] of bandMap) {
       if (C === null) continue;
       const cVal = values[C];
       const lVal = values[L];
       const freq = getFreq(this.gloChannels, prn, band);
       if (cVal != null && cVal !== 0 && lVal != null && lVal !== 0 && freq) {
-        bandData.set(band, { C: cVal, L: lVal, f: freq });
+        bandData.set(band, {
+          C: cVal,
+          L: lVal,
+          f: freq,
+          code: codes[C] ?? `C${band}`,
+        });
       }
     }
     if (bandData.size < 2) return;
@@ -161,7 +177,9 @@ export class IonoAccumulator {
         const bLabel = BAND_LABELS[sys]?.[bi] ?? bi;
         const rLabel = BAND_LABELS[sys]?.[bj] ?? bj;
         this.pairLabel.set(`${sys}:${pairKey}`, `${bLabel}-${rLabel}`);
+        this.pairCodes.set(`${sys}:${pairKey}`, [di.code, dj.code]);
       }
+      this.pairMeta.set(`${prn}:${pairKey}`, { fi: di.f, gamma });
       this.push(prn, pairKey, time, l4, p4, di.f, gamma);
       break;
     }
@@ -286,10 +304,17 @@ export class IonoAccumulator {
         count++;
         if (p.stec > maxStec) maxStec = p.stec;
       }
+      const meta = this.pairMeta.get(`${prn}:${bestKey}`);
+      const tecuPerNs = meta
+        ? ((C_LIGHT * 1e-9) / (meta.gamma - 1)) *
+          ((meta.fi * meta.fi) / TEC_FACTOR)
+        : 0;
       series.push({
         prn,
         system: sys,
         label: this.pairLabel.get(`${sys}:${bestKey}`) ?? bestKey,
+        codes: this.pairCodes.get(`${sys}:${bestKey}`) ?? ['', ''],
+        tecuPerNs,
         points,
       });
     }
