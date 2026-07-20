@@ -14,7 +14,7 @@
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
 import { computeSatPosition, computeDop, ecefToAzEl } from '../orbit';
 import type { DopValues } from '../orbit';
-import { C_LIGHT } from '../constants/gnss';
+import { C_LIGHT, OMEGA_E } from '../constants/gnss';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -120,7 +120,6 @@ function sagnac(
   pos: { x: number; y: number; z: number },
   travelTimeS: number
 ): [number, number, number] {
-  const OMEGA_E = 7.2921151467e-5;
   const theta = OMEGA_E * travelTimeS;
   const c = Math.cos(theta);
   const s = Math.sin(theta);

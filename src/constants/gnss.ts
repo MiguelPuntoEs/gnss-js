@@ -31,6 +31,9 @@ export const SYS_SHORT: Record<string, string> = {
 /** Speed of light in m/s. */
 export const C_LIGHT = 299792458;
 
+/** Earth rotation rate in rad/s (WGS84/PZ-90 value). */
+export const OMEGA_E = 7.2921151467e-5;
+
 /* ── Signal frequencies ───────────────────────────────────────── */
 
 /** Carrier frequencies (Hz) per system letter, per RINEX band digit. GLONASS FDMA bands 1/2 use gloFreq(). */

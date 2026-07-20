@@ -11,6 +11,7 @@ import type {
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
+import { OMEGA_E } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
@@ -22,7 +23,6 @@ const GM_GPS = 3.986005e14; // m³/s² — WGS84 gravitational parameter
 const GM_GAL = 3.986004418e14; // m³/s² — Galileo
 const GM_BDS = 3.986004418e14; // m³/s² — BeiDou (CGCS2000)
 const GM_GLO = 3.9860044e14; // m³/s² — PZ-90
-const OMEGA_E = 7.2921151467e-5; // rad/s — Earth rotation rate
 
 // BDS GEO detection thresholds (BDS-SIS-ICD-2.1 §5.2): GEO orbits sit
 // at ~42164 km with near-zero inclination; MEO/IGSO are ≥ 0.5 rad.
