@@ -111,7 +111,9 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
 
   it('solves iono-free GPS within 10 m', async () => {
     const { dual, ephMap, approx } = await load();
-    const sol = solveSpp(dual, ephMap, TARGET_MS);
+    // The broadcast clock is referenced to the P1/P2 iono-free
+    // combination, so the group delay must NOT be applied here.
+    const sol = solveSpp(dual, ephMap, TARGET_MS, { tgd: false });
     expect(sol).not.toBeNull();
     expect(sol!.converged).toBe(true);
     expect(err(sol!.position, approx)).toBeLessThan(10);
@@ -119,7 +121,7 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
 
   it('post-fit residuals are metre-level for the iono-free solution', async () => {
     const { dual, ephMap } = await load();
-    const sol = solveSpp(dual, ephMap, TARGET_MS)!;
+    const sol = solveSpp(dual, ephMap, TARGET_MS, { tgd: false })!;
     const values = Object.values(sol.residuals);
     const rms = Math.sqrt(
       values.reduce((s, v) => s + v * v, 0) / values.length

@@ -4,9 +4,9 @@
  *
  * Weighted iterative least squares with one receiver-clock unknown per
  * constellation (absorbing inter-system time offsets), satellite clock
- * polynomial + relativistic correction, Sagnac (Earth-rotation)
- * correction, elevation masking/weighting, and a simple tropospheric
- * model. Ionospheric delay is NOT modelled — use the iono-free
+ * polynomial + relativistic correction, broadcast group delay
+ * (TGD/BGD), Sagnac (Earth-rotation) correction, elevation
+ * masking/weighting, and a simple tropospheric model. Ionospheric delay is NOT modelled — use the iono-free
  * combination (ionoFree helper) with dual-frequency pseudoranges for
  * metre-level results, or expect ~2–10 m of iono bias on L1-only.
  */
@@ -29,6 +29,14 @@ export interface SppOptions {
   maxIterations?: number;
   /** Convergence threshold on the position update (m). Default 1e-4. */
   convergenceM?: number;
+  /**
+   * Apply the broadcast group-delay correction (GPS TGD, Galileo
+   * BGD E5a/E1, BeiDou TGD1) to the satellite clock. Correct for
+   * single-frequency measurements on the primary frequency (C1C/E1/B1I)
+   * — the default. Disable when feeding iono-free combinations, whose
+   * reference the broadcast clock already matches. Default true.
+   */
+  tgd?: boolean;
 }
 
 export interface SppSolution {
@@ -164,6 +172,7 @@ export function solveSpp(
     troposphere = true,
     maxIterations = 15,
     convergenceM = 1e-4,
+    tgd = true,
   } = opts;
 
   const all = [...pseudoranges.keys()].filter((p) => ephemerides.has(p));
@@ -207,10 +216,18 @@ export function solveSpp(
         const sys = prn[0]!;
         const clk = clock.get(sys)!;
 
+        // Transmission time: receiver epoch minus travel time, further
+        // corrected by the satellite clock offset (up to ~1 ms → metres
+        // of along-track satellite motion).
         const tTx = timeMs - (psr / C_LIGHT) * 1000;
-        const sat = computeSatPosition(eph, tTx);
+        const dtsClock = satClockCorrection(eph, tTx);
+        const sat = computeSatPosition(eph, tTx - dtsClock * 1000);
         if (!Number.isFinite(sat.x)) continue;
-        const dts = satClockCorrection(eph, tTx);
+        // Group delay is a measurement (code) bias, not a clock offset:
+        // it enters the pseudorange model but not the transmission time.
+        const isKepler = eph.system !== 'R' && eph.system !== 'S';
+        const dts =
+          dtsClock - (tgd && isKepler ? (eph as KeplerEphemeris).tgd : 0);
 
         const travel = Math.hypot(sat.x - x, sat.y - y, sat.z - z) / C_LIGHT;
         const [sx, sy, sz] = sagnac(sat, travel);

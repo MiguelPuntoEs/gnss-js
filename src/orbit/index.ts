@@ -121,7 +121,7 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
   const yp = rk * Math.sin(uk);
 
   // BeiDou GEO satellites use a different ECEF transformation (BDS-SIS-ICD).
-  // GEO sats have near-zero inclination (< 0.2 rad) vs ~0.96 rad for MEO/IGSO.
+  // GEO sats have near-zero inclination (< 0.1 rad) vs ~0.96 rad for MEO/IGSO.
   const isBdsGeo =
     eph.system === 'C' &&
     Math.abs(eph.i0) < BDS_GEO_MAX_INCLINATION_RAD &&
@@ -519,8 +519,10 @@ export function selectEphemeris(
     if (eph.prn !== prn) continue;
     const ephTime = eph.tocDate.getTime();
     const dt = Math.abs(timeMs - ephTime);
-    // Reject ephemerides older than 4 hours (14400 s)
-    if (dt > 4 * 3600 * 1000) continue;
+    // GLONASS ephemerides are valid for ~30 min; Keplerian for ~2–4 hours
+    const maxAge =
+      eph.system === 'R' || eph.system === 'S' ? 1800_000 : 4 * 3600_000;
+    if (dt > maxAge) continue;
     if (dt < bestDt) {
       bestDt = dt;
       best = eph;
@@ -716,7 +718,7 @@ const BDS_EPOCH_MS = START_BDS_TIME.getTime();
 const GAL_EPOCH_MS = GPS_EPOCH_MS; // Galileo uses GST which shares GPS epoch
 
 /** Convert an RTCM3 EphemerisInfo to the Ephemeris type used by orbit computation. */
-function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
+export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
   const sys = info.prn.charAt(0);
 
   if (sys === 'R') {
@@ -725,14 +727,17 @@ function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
       return null;
     if (info.vx === undefined || info.vy === undefined || info.vz === undefined)
       return null;
-    // Approximate tocDate from tb (15-minute intervals from 00:00 Moscow time = UTC+3)
-    const now = new Date(info.lastReceived);
+    // tb counts from midnight of the current *Moscow* day (UTC+3), so
+    // the day boundary must be resolved on the Moscow calendar: between
+    // 21:00 and 24:00 UTC the Moscow date is already tomorrow, and
+    // using the UTC date there put toc a full day in the past.
+    const moscow = new Date(info.lastReceived + 3 * 3600 * 1000);
     const utcMidnight = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate()
+      moscow.getUTCFullYear(),
+      moscow.getUTCMonth(),
+      moscow.getUTCDate()
     );
-    const tbSec = (info.tb ?? 0) * 900; // tb in 15-min intervals
+    const tbSec = (info.tb ?? 0) * 60; // EphemerisInfo.tb is minutes
     const moscowOffset = 3 * 3600; // Moscow = UTC+3
     const tocMs = utcMidnight + (tbSec - moscowOffset) * 1000;
     return {
