@@ -58,6 +58,12 @@ export interface IonoSeries {
   tecuPerNs: number;
   /** Time series of slant TEC values (TECU, DCB-biased). */
   points: IonoPoint[];
+  /**
+   * Indices into `points` where a new continuous arc begins (gap,
+   * cycle slip, or geometry-free jump). Differencing and per-arc
+   * detrending must not cross these boundaries.
+   */
+  arcStarts: number[];
 }
 
 export interface IonoResult {
@@ -107,6 +113,7 @@ interface PairState {
 export class IonoAccumulator {
   private state = new Map<string, Map<string, PairState>>();
   private closed = new Map<string, Map<string, IonoPoint[]>>();
+  private closedArcStarts = new Map<string, Map<string, number[]>>();
   private interval: number;
   private obsIndices: Map<string, Map<string, { L: number; C: number | null }>>;
   private gloChannels: Record<string, number>;
@@ -254,6 +261,17 @@ export class IonoAccumulator {
         points = [];
         satArcs.set(pairKey, points);
       }
+      let satStarts = this.closedArcStarts.get(prn);
+      if (!satStarts) {
+        satStarts = new Map();
+        this.closedArcStarts.set(prn, satStarts);
+      }
+      let starts = satStarts.get(pairKey);
+      if (!starts) {
+        starts = [];
+        satStarts.set(pairKey, starts);
+      }
+      starts.push(points.length);
       for (let k = 0; k < arc.times.length; k++) {
         points.push({
           time: arc.times[k]!,
@@ -289,7 +307,7 @@ export class IonoAccumulator {
       }
       if (!bestKey) continue;
       const points = satArcs.get(bestKey)!;
-      points.sort((a, b) => a.time - b.time);
+      const arcStarts = this.closedArcStarts.get(prn)?.get(bestKey) ?? [0];
       const sys = prn[0]!;
       for (const p of points) {
         sum += p.stec;
@@ -308,6 +326,7 @@ export class IonoAccumulator {
         codes: this.pairCodes.get(`${sys}:${bestKey}`) ?? ['', ''],
         tecuPerNs,
         points,
+        arcStarts,
       });
     }
     series.sort((a, b) => a.prn.localeCompare(b.prn));
@@ -318,4 +337,133 @@ export class IonoAccumulator {
       meanStec: count > 0 ? sum / count : 0,
     };
   }
+}
+
+/* ================================================================== */
+/*  Time-differenced ionosphere (rate of TEC)                          */
+/* ================================================================== */
+
+export interface IonoRatePoint {
+  /** Epoch time (ms) — the later epoch of the differenced pair. */
+  time: number;
+  /** ROT in TECU/min (order 1) or undivided ΔΔSTEC in TECU (order 2). */
+  value: number;
+}
+
+export interface IonoRateSeries {
+  prn: string;
+  system: string;
+  points: IonoRatePoint[];
+}
+
+/**
+ * Sequential time differences of the slant TEC series — the biases
+ * (ambiguities, DCBs) cancel, leaving ionospheric rate of TEC, phase
+ * noise, and scintillation. Differences never cross arc boundaries,
+ * so cycle slips do not appear as outliers (arcs split there).
+ *
+ * @param intervalSec Standardized differencing baseline in seconds.
+ *   Omit for native-rate sequential differences; set e.g. 60 for a
+ *   sample-rate-independent picture (all pairs ~1 min apart are used).
+ * @param order 1 (default) = first difference in TECU/min;
+ *   2 = second undivided difference in TECU (native rate only,
+ *   gradients removed, noise and scintillation amplified).
+ */
+export function computeIonoRate(
+  result: IonoResult,
+  intervalSec?: number,
+  order: 1 | 2 = 1
+): IonoRateSeries[] {
+  const out: IonoRateSeries[] = [];
+  for (const s of result.series) {
+    const pts: IonoRatePoint[] = [];
+    const bounds = [...s.arcStarts, s.points.length];
+    for (let a = 0; a < bounds.length - 1; a++) {
+      const lo = bounds[a]!;
+      const hi = bounds[a + 1]!;
+      if (order === 2) {
+        // Second undivided difference on (approximately) uniform spacing
+        for (let i = lo + 2; i < hi; i++) {
+          const dt1 = s.points[i - 1]!.time - s.points[i - 2]!.time;
+          const dt2 = s.points[i]!.time - s.points[i - 1]!.time;
+          if (Math.abs(dt1 - dt2) > 0.1 * Math.max(dt1, dt2)) continue;
+          pts.push({
+            time: s.points[i]!.time,
+            value:
+              s.points[i]!.stec -
+              2 * s.points[i - 1]!.stec +
+              s.points[i - 2]!.stec,
+          });
+        }
+        continue;
+      }
+      if (intervalSec === undefined) {
+        for (let i = lo + 1; i < hi; i++) {
+          const dtMin = (s.points[i]!.time - s.points[i - 1]!.time) / 60_000;
+          if (dtMin <= 0) continue;
+          pts.push({
+            time: s.points[i]!.time,
+            value: (s.points[i]!.stec - s.points[i - 1]!.stec) / dtMin,
+          });
+        }
+      } else {
+        // All pairs ~intervalSec apart (two-pointer over the arc)
+        const targetMs = intervalSec * 1000;
+        let j = lo;
+        for (let i = lo; i < hi; i++) {
+          if (j <= i) j = i + 1;
+          while (j < hi && s.points[j]!.time - s.points[i]!.time < targetMs)
+            j++;
+          if (j >= hi) break;
+          const dtMs = s.points[j]!.time - s.points[i]!.time;
+          if (dtMs > 1.5 * targetMs) continue; // gap-ish, not a clean pair
+          pts.push({
+            time: s.points[j]!.time,
+            value: ((s.points[j]!.stec - s.points[i]!.stec) / dtMs) * 60_000,
+          });
+        }
+      }
+    }
+    if (pts.length > 0) out.push({ prn: s.prn, system: s.system, points: pts });
+  }
+  return out;
+}
+
+/**
+ * Remove the per-arc bias from a slant TEC result — each arc is
+ * shifted so its first observation reads zero, leaving only the TEC
+ * *variation* along the arc (Hans van der Marel's suggestion; using
+ * the first observation keeps the shape untouched at the small risk
+ * of anchoring on an outlier).
+ */
+export function detrendIonoArcs(result: IonoResult): IonoResult {
+  let sum = 0;
+  let count = 0;
+  let maxStec = -Infinity;
+  const series = result.series.map((s) => {
+    const bounds = [...s.arcStarts, s.points.length];
+    const points: IonoPoint[] = new Array<IonoPoint>(s.points.length);
+    for (let a = 0; a < bounds.length - 1; a++) {
+      const lo = bounds[a]!;
+      const hi = bounds[a + 1]!;
+      const anchor = s.points[lo]?.stec ?? 0;
+      for (let i = lo; i < hi; i++) {
+        points[i] = {
+          time: s.points[i]!.time,
+          stec: s.points[i]!.stec - anchor,
+        };
+      }
+    }
+    for (const p of points) {
+      sum += p.stec;
+      count++;
+      if (p.stec > maxStec) maxStec = p.stec;
+    }
+    return { ...s, points };
+  });
+  return {
+    series,
+    maxStec: count > 0 ? maxStec : 0,
+    meanStec: count > 0 ? sum / count : 0,
+  };
 }
