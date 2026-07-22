@@ -6,15 +6,23 @@
  * constellation (absorbing inter-system time offsets), satellite clock
  * polynomial + relativistic correction, broadcast group delay
  * (TGD/BGD), Sagnac (Earth-rotation) correction, elevation
- * masking/weighting, and a simple tropospheric model. Ionospheric delay is NOT modelled — use the iono-free
- * combination (ionoFree helper) with dual-frequency pseudoranges for
- * metre-level results, or expect ~2–10 m of iono bias on L1-only.
+ * masking/weighting, and a simple tropospheric model. Ionospheric
+ * delay can be modelled from the broadcast Klobuchar coefficients
+ * (`iono` option) for single-frequency measurements; for metre-level
+ * results prefer the iono-free combination (ionoFree helper) with
+ * dual-frequency pseudoranges.
  */
 
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
 import { computeSatPosition, computeDop, ecefToAzEl } from '../orbit';
 import type { DopValues } from '../orbit';
 import { C_LIGHT, OMEGA_E } from '../constants/gnss';
+import { ecefToGeodetic } from '../coordinates/ecef';
+import { klobucharDelay } from './klobuchar';
+import type { KlobucharCoeffs } from './klobuchar';
+
+export { klobucharDelay } from './klobuchar';
+export type { KlobucharCoeffs } from './klobuchar';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -29,6 +37,14 @@ export interface SppOptions {
   maxIterations?: number;
   /** Convergence threshold on the position update (m). Default 1e-4. */
   convergenceM?: number;
+  /**
+   * Broadcast Klobuchar coefficients (RINEX nav header GPSA/GPSB —
+   * `NavResult.header.ionoCorrections`). When given, the modelled
+   * slant delay is removed from every single-frequency pseudorange,
+   * scaled to each system's primary frequency. Omit when feeding
+   * iono-free combinations.
+   */
+  iono?: KlobucharCoeffs;
   /**
    * Apply the broadcast group-delay correction (GPS TGD, Galileo
    * BGD E5a/E1, BeiDou TGD1) to the satellite clock. Correct for
@@ -109,6 +125,20 @@ export function ionoFree(
   return g * p1 - (g - 1) * p2;
 }
 
+const GPS_EPOCH_MS_SPP = Date.UTC(1980, 0, 6);
+
+// Primary single-frequency signal per system, for scaling the L1
+// Klobuchar delay by (f_L1/f)². GLONASS uses the nominal G1 centre.
+const PRIMARY_FREQ_HZ: Record<string, number> = {
+  G: 1575.42e6,
+  E: 1575.42e6,
+  J: 1575.42e6,
+  S: 1575.42e6,
+  C: 1561.098e6,
+  R: 1602.0e6,
+};
+const F_L1 = 1575.42e6;
+
 /** Simple tropospheric zenith-delay model mapped by elevation (m). */
 function tropoDelay(elevationRad: number): number {
   const sinEl = Math.sin(elevationRad);
@@ -172,7 +202,9 @@ export function solveSpp(
     maxIterations = 15,
     convergenceM = 1e-4,
     tgd = true,
+    iono,
   } = opts;
+  const gpsTow = ((timeMs - GPS_EPOCH_MS_SPP) / 1000) % 604800;
 
   const all = [...pseudoranges.keys()].filter((p) => ephemerides.has(p));
   const minSats = (list: string[]) => 3 + new Set(list.map((p) => p[0]!)).size;
@@ -209,6 +241,11 @@ export function solveSpp(
       let rows = 0;
       for (const k of Object.keys(residuals)) delete residuals[k];
 
+      const positionSaneIter = x * x + y * y + z * z > 1e12; // > 1000 km
+      const [rxLat, rxLon] = positionSaneIter
+        ? ecefToGeodetic(x, y, z)
+        : [0, 0];
+
       for (const prn of prns) {
         const psr = pseudoranges.get(prn)!;
         const eph = ephemerides.get(prn)!;
@@ -237,18 +274,28 @@ export function solveSpp(
         const uz = (z - sz) / rho;
 
         let elev = Math.PI / 2;
+        let azim = 0;
         let weight = 1;
-        const positionSane = x * x + y * y + z * z > 1e12; // > 1000 km
+        const positionSane = positionSaneIter;
         if (positionSane) {
           const azel = ecefToAzEl(x, y, z, sx, sy, sz);
           elev = azel.el;
+          azim = azel.az;
           if (iter >= 2 && elev < (elevationMaskDeg * Math.PI) / 180) continue;
           const sinEl = Math.max(Math.sin(elev), 0.1);
           weight = sinEl * sinEl;
         }
 
         const tropo = troposphere && positionSane ? tropoDelay(elev) : 0;
-        const predicted = rho + clk - C_LIGHT * dts + tropo;
+        let ionoM = 0;
+        if (iono && positionSane) {
+          const f = PRIMARY_FREQ_HZ[sys] ?? F_L1;
+          ionoM =
+            C_LIGHT *
+            klobucharDelay(iono, rxLat, rxLon, azim, elev, gpsTow) *
+            ((F_L1 / f) * (F_L1 / f));
+        }
+        const predicted = rho + clk - C_LIGHT * dts + tropo + ionoM;
         const v = psr - predicted;
 
         const h = new Array<number>(dim).fill(0);

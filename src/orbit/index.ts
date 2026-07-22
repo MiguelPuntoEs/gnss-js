@@ -11,7 +11,7 @@ import type {
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
-import { OMEGA_E } from '../constants/gnss';
+import { OMEGA_E, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
@@ -42,6 +42,9 @@ export interface SatPosition {
   x: number; // m (ECEF)
   y: number;
   z: number;
+  vx: number; // m/s (ECEF)
+  vy: number;
+  vz: number;
 }
 
 export interface SatAzEl {
@@ -70,8 +73,11 @@ function gmForSystem(sys: string): number {
   return GM_GPS;
 }
 
+// Re-entrancy guard for the BDS-GEO numeric-velocity differencing.
+let geoVelocityPass = false;
+
 /**
- * Compute satellite ECEF position from Keplerian ephemeris.
+ * Compute satellite ECEF position and velocity from Keplerian ephemeris.
  * @param eph Broadcast ephemeris
  * @param t GPS time of week in seconds
  */
@@ -116,9 +122,21 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
   const rk = a * (1 - eph.e * cosE) + drk;
   const ik = eph.i0 + dik + eph.idot * tk;
 
+  // Time derivatives (analytic velocity)
+  const EkDot = n / (1 - eph.e * cosE);
+  const vkDot = (EkDot * Math.sqrt(1 - eph.e * eph.e)) / (1 - eph.e * cosE);
+  const dukDot = 2 * vkDot * (eph.cus * cos2phi - eph.cuc * sin2phi);
+  const drkDot =
+    a * eph.e * sinE * EkDot +
+    2 * vkDot * (eph.crs * cos2phi - eph.crc * sin2phi);
+  const dikDot = eph.idot + 2 * vkDot * (eph.cis * cos2phi - eph.cic * sin2phi);
+  const ukDot = vkDot + dukDot;
+
   // Orbital plane position
   const xp = rk * Math.cos(uk);
   const yp = rk * Math.sin(uk);
+  const xpDot = drkDot * Math.cos(uk) - rk * ukDot * Math.sin(uk);
+  const ypDot = drkDot * Math.sin(uk) + rk * ukDot * Math.cos(uk);
 
   // BeiDou GEO satellites use a different ECEF transformation (BDS-SIS-ICD).
   // GEO sats have near-zero inclination (< 0.1 rad) vs ~0.96 rad for MEO/IGSO.
@@ -147,27 +165,59 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
     const COS5 = Math.cos((-5 * Math.PI) / 180);
     const SIN5 = Math.sin((-5 * Math.PI) / 180);
 
+    const px = xg * cosPhi + yg * sinPhi * COS5 + zg * sinPhi * SIN5;
+    const py = -xg * sinPhi + yg * cosPhi * COS5 + zg * cosPhi * SIN5;
+    const pz = -yg * SIN5 + zg * COS5;
+
+    // Velocity in the doubly-rotated GEO frame is messy analytically;
+    // a central difference of the (smooth) position is exact to well
+    // below mm/s for GEO dynamics.
+    if (geoVelocityPass) {
+      return { prn: eph.prn, x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0 };
+    }
+    geoVelocityPass = true;
+    const h = 0.5;
+    const pm = keplerPosition(eph, t - h);
+    const pp = keplerPosition(eph, t + h);
+    geoVelocityPass = false;
     return {
       prn: eph.prn,
-      x: xg * cosPhi + yg * sinPhi * COS5 + zg * sinPhi * SIN5,
-      y: -xg * sinPhi + yg * cosPhi * COS5 + zg * cosPhi * SIN5,
-      z: -yg * SIN5 + zg * COS5,
+      x: px,
+      y: py,
+      z: pz,
+      vx: (pp.x - pm.x) / (2 * h),
+      vy: (pp.y - pm.y) / (2 * h),
+      vz: (pp.z - pm.z) / (2 * h),
     };
   }
 
   // Standard MEO/IGSO: Earth rotation folded into the node
   const omegak = eph.omega0 + (eph.omegaDot - OMEGA_E) * tk - OMEGA_E * eph.toe;
+  const omegakDot = eph.omegaDot - OMEGA_E;
 
   const cosO = Math.cos(omegak);
   const sinO = Math.sin(omegak);
   const cosI = Math.cos(ik);
   const sinI = Math.sin(ik);
 
+  const x = xp * cosO - yp * cosI * sinO;
+  const y = xp * sinO + yp * cosI * cosO;
   return {
     prn: eph.prn,
-    x: xp * cosO - yp * cosI * sinO,
-    y: xp * sinO + yp * cosI * cosO,
+    x,
+    y,
     z: yp * sinI,
+    vx:
+      xpDot * cosO -
+      ypDot * cosI * sinO +
+      yp * sinI * sinO * dikDot -
+      omegakDot * y,
+    vy:
+      xpDot * sinO +
+      ypDot * cosI * cosO -
+      yp * sinI * cosO * dikDot +
+      omegakDot * x,
+    vz: ypDot * sinI + yp * cosI * dikDot,
   };
 }
 
@@ -272,7 +322,45 @@ export function glonassPosition(
     state = rk4Step(state, acc, remainder);
   }
 
-  return { prn: eph.prn, x: state[0], y: state[1], z: state[2] };
+  return {
+    prn: eph.prn,
+    x: state[0],
+    y: state[1],
+    z: state[2],
+    vx: state[3],
+    vy: state[4],
+    vz: state[5],
+  };
+}
+
+/* ================================================================== */
+/*  Range rate / Doppler                                               */
+/* ================================================================== */
+
+/**
+ * Geometric range rate (m/s, positive = receding) between a satellite
+ * with ECEF velocity and a receiver (static by default).
+ */
+export function rangeRate(
+  sat: SatPosition,
+  rx: [number, number, number],
+  rxVel: [number, number, number] = [0, 0, 0]
+): number {
+  const dx = sat.x - rx[0];
+  const dy = sat.y - rx[1];
+  const dz = sat.z - rx[2];
+  const rho = Math.hypot(dx, dy, dz);
+  return (
+    ((sat.vx - rxVel[0]) * dx +
+      (sat.vy - rxVel[1]) * dy +
+      (sat.vz - rxVel[2]) * dz) /
+    rho
+  );
+}
+
+/** Predicted carrier Doppler (Hz) from a range rate at frequency f. */
+export function dopplerHz(rangeRateMs: number, freqHz: number): number {
+  return (-rangeRateMs * freqHz) / C_LIGHT;
 }
 
 /* ================================================================== */
