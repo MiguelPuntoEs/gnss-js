@@ -922,6 +922,8 @@ export interface VisibilityResult {
   subLon: Record<string, (number | null)[]>;
   /** Number of satellites at or above the mask, per epoch. */
   visibleCount: number[];
+  /** Per-system visible counts per epoch (system letter → counts). */
+  visibleBySystem: Record<string, number[]>;
   /** PDOP per epoch (null when < 4 satellites above the mask). */
   pdop: (number | null)[];
   /** GDOP per epoch (null when < 4 satellites above the mask). */
@@ -993,6 +995,7 @@ export function computeVisibility(
   const subLat: Record<string, (number | null)[]> = {};
   const subLon: Record<string, (number | null)[]> = {};
   const visibleCount = new Array<number>(times.length).fill(0);
+  const visibleBySystem: Record<string, number[]> = {};
   const pdop = new Array<number | null>(times.length).fill(null);
   const gdop = new Array<number | null>(times.length).fill(null);
   const hdop = new Array<number | null>(times.length).fill(null);
@@ -1011,6 +1014,10 @@ export function computeVisibility(
       const p = series[i];
       if (p && p.el >= maskRadFor(p.az)) {
         visibleCount[i]!++;
+        const sys = prn[0]!;
+        (visibleBySystem[sys] ??= new Array<number>(times.length).fill(0))[
+          i
+        ]!++;
         visiblePerEpoch[i]!.push({ az: p.az, el: p.el });
       }
     }
@@ -1066,6 +1073,7 @@ export function computeVisibility(
     subLat,
     subLon,
     visibleCount,
+    visibleBySystem,
     pdop,
     gdop,
     hdop,

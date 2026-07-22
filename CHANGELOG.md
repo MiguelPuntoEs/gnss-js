@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0
+
+### New features
+
+- `VisibilityResult` gains **`visibleBySystem`** — per-constellation visible counts per epoch, honoring the (possibly azimuth-dependent) elevation mask.
+
 ## 1.9.0
 
 ### New features
