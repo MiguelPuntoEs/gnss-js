@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.0
+
+### New features
+
+- **IONEX parser** — `parseIonex(text)` in `gnss-js/rinex` reads IGS global ionosphere maps (tested against a real ESA0OPSRAP GIM): epochs, lat/lon grid, TEC maps in TECU with NaN for missing cells.
+- **Azimuth-dependent elevation mask** — `computeVisibility`'s mask accepts a per-azimuth array (uniform 0–360° sectors, linearly interpolated) describing a local horizon/obstruction profile; `maskRadForAzimuth` exported.
+- `VisibilityResult` gains **`subLat`/`subLon`** sub-satellite series for ground-track views.
+
 ## 1.8.0
 
 ### New features

@@ -916,6 +916,10 @@ export interface VisibilityResult {
   elevation: Record<string, (number | null)[]>;
   /** Azimuth (radians) per PRN per epoch; null when no valid ephemeris. */
   azimuth: Record<string, (number | null)[]>;
+  /** Sub-satellite latitude (radians) per PRN per epoch. */
+  subLat: Record<string, (number | null)[]>;
+  /** Sub-satellite longitude (radians) per PRN per epoch. */
+  subLon: Record<string, (number | null)[]>;
   /** Number of satellites at or above the mask, per epoch. */
   visibleCount: number[];
   /** PDOP per epoch (null when < 4 satellites above the mask). */
@@ -931,6 +935,31 @@ export interface VisibilityResult {
 }
 
 /**
+ * Build a mask lookup (radians) from a scalar or per-azimuth array of
+ * mask values in degrees. Array entries span 0–360° uniformly and are
+ * linearly interpolated.
+ */
+export function maskRadForAzimuth(
+  maskDeg: number | number[]
+): (azRad: number) => number {
+  if (typeof maskDeg === 'number') {
+    const m = (maskDeg * Math.PI) / 180;
+    return () => m;
+  }
+  const n = maskDeg.length;
+  if (n === 0) return () => 0;
+  return (azRad: number) => {
+    const azDeg = ((((azRad * 180) / Math.PI) % 360) + 360) % 360;
+    const pos = (azDeg / 360) * n;
+    const i = Math.floor(pos) % n;
+    const f = pos - Math.floor(pos);
+    const a = maskDeg[i]!;
+    const b = maskDeg[(i + 1) % n]!;
+    return (((1 - f) * a + f * b) * Math.PI) / 180;
+  };
+}
+
+/**
  * Predict satellite visibility and DOP over a time window for a fixed
  * receiver location.
  *
@@ -939,7 +968,10 @@ export interface VisibilityResult {
  * @param startMs Window start (Unix ms).
  * @param endMs Window end (Unix ms).
  * @param stepSec Sample spacing in seconds (default 300).
- * @param elevationMaskDeg Elevation mask in degrees (default 10).
+ * @param elevationMaskDeg Elevation mask in degrees (default 10) — a
+ *   scalar, or an array of per-azimuth mask values in degrees
+ *   (uniformly spanning 0–360°, e.g. 36 sectors of 10°) describing a
+ *   local horizon/obstruction profile.
  */
 export function computeVisibility(
   ephemerides: Ephemeris[],
@@ -947,17 +979,19 @@ export function computeVisibility(
   startMs: number,
   endMs: number,
   stepSec = 300,
-  elevationMaskDeg = 10
+  elevationMaskDeg: number | number[] = 10
 ): VisibilityResult {
   const stepMs = stepSec * 1000;
   const times: number[] = [];
   for (let t = startMs; t <= endMs; t += stepMs) times.push(t);
 
-  const maskRad = (elevationMaskDeg * Math.PI) / 180;
+  const maskRadFor = maskRadForAzimuth(elevationMaskDeg);
   const all = computeAllPositions(ephemerides, times, rxPos);
 
   const elevation: Record<string, (number | null)[]> = {};
   const azimuth: Record<string, (number | null)[]> = {};
+  const subLat: Record<string, (number | null)[]> = {};
+  const subLon: Record<string, (number | null)[]> = {};
   const visibleCount = new Array<number>(times.length).fill(0);
   const pdop = new Array<number | null>(times.length).fill(null);
   const gdop = new Array<number | null>(times.length).fill(null);
@@ -971,9 +1005,11 @@ export function computeVisibility(
     const series = all.positions[prn]!;
     elevation[prn] = series.map((p) => (p ? p.el : null));
     azimuth[prn] = series.map((p) => (p ? p.az : null));
+    subLat[prn] = series.map((p) => (p ? p.lat : null));
+    subLon[prn] = series.map((p) => (p ? p.lon : null));
     for (let i = 0; i < series.length; i++) {
       const p = series[i];
-      if (p && p.el >= maskRad) {
+      if (p && p.el >= maskRadFor(p.az)) {
         visibleCount[i]!++;
         visiblePerEpoch[i]!.push({ az: p.az, el: p.el });
       }
@@ -997,7 +1033,8 @@ export function computeVisibility(
     let peakTime = 0;
     for (let i = 0; i <= els.length; i++) {
       const el = i < els.length ? els[i] : null;
-      const above = el !== null && el !== undefined && el >= maskRad;
+      const az = all.positions[prn]![i]?.az ?? 0;
+      const above = el !== null && el !== undefined && el >= maskRadFor(az);
       if (above) {
         if (start === -1) {
           start = i;
@@ -1026,6 +1063,8 @@ export function computeVisibility(
     times,
     elevation,
     azimuth,
+    subLat,
+    subLon,
     visibleCount,
     pdop,
     gdop,
