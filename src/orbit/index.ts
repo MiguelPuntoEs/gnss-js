@@ -190,7 +190,10 @@ function gloDerivatives(
   const r5 = r2 * r3;
 
   const mu_r3 = GM_GLO / r3;
-  const j2_term = (1.5 * J2_GLO * AE_GLO * AE_GLO) / r5;
+  // (3/2)·J2·GM·ae²/r⁵ — the GM factor was missing, which reduced the
+  // J2 correction to ~zero and let GLONASS positions drift ~25 m by
+  // the ±15 min edges of each ephemeris interval (½·a_J2·t²).
+  const j2_term = (1.5 * J2_GLO * GM_GLO * AE_GLO * AE_GLO) / r5;
 
   const dvx =
     -mu_r3 * x +

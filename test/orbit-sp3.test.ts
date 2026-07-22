@@ -80,11 +80,13 @@ describe.skipIf(!HAS_DATA)('broadcast orbits vs ESA MGEX SP3', () => {
     for (const prn of ['E07', 'E21', 'E27']) check(prn, 20);
   });
 
-  it('GLONASS satellites within 500 m (regression: was 63 km off)', () => {
-    // computeSatPosition must hand glonassPosition UTC-axis time; the
-    // GPS-axis input used to leak through, displacing every GLONASS
-    // satellite by ~18 s of orbital motion.
-    for (const prn of ['R05', 'R19', 'R04', 'R14']) check(prn, 500);
+  it('GLONASS satellites within 30 m (regressions: 63 km leap, 25 m J2)', () => {
+    // computeSatPosition must hand glonassPosition UTC-axis time (the
+    // GPS-axis input used to displace GLONASS by ~18 s of motion), and
+    // the integrator's J2 term must carry its GM factor (its omission
+    // let positions drift ~25 m by the ±15 min interval edges). The
+    // 500 m band this test started with hid the second bug.
+    for (const prn of ['R05', 'R19', 'R04', 'R14']) check(prn, 30);
   });
 
   it('BDS MEO satellites within 30 m', () => {
