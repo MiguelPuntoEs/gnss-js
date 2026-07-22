@@ -1074,9 +1074,24 @@ export function computeVisibility(
   const stepMs = stepSec * 1000;
   const times: number[] = [];
   for (let t = startMs; t <= endMs; t += stepMs) times.push(t);
+  return computeVisibilityFromPositions(
+    computeAllPositions(ephemerides, times, rxPos),
+    elevationMaskDeg
+  );
+}
 
+/**
+ * Visibility aggregation from precomputed satellite tracks — the same
+ * counting/DOP/pass logic as `computeVisibility`, but source-agnostic:
+ * feed it positions from broadcast ephemerides, TLE/SGP4 propagation,
+ * SP3 interpolation, or anything else shaped like AllPositionsData.
+ */
+export function computeVisibilityFromPositions(
+  all: AllPositionsData,
+  elevationMaskDeg: number | number[] = 10
+): VisibilityResult {
+  const times = all.times;
   const maskRadFor = maskRadForAzimuth(elevationMaskDeg);
-  const all = computeAllPositions(ephemerides, times, rxPos);
 
   const elevation: Record<string, (number | null)[]> = {};
   const azimuth: Record<string, (number | null)[]> = {};

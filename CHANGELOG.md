@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.0
+
+### New features
+
+- **`computeVisibilityFromPositions(all, mask)`** — the visibility aggregation (counts, DOPs, passes, tracks) split out of `computeVisibility` so it works from any position source shaped like `AllPositionsData` (broadcast ephemerides, TLE/SGP4, interpolated SP3). `computeVisibility` is unchanged, now a thin wrapper.
+
 ## 1.12.0
 
 ### New features
