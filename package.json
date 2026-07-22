@@ -30,6 +30,11 @@
       "import": "./dist/rinex.js",
       "require": "./dist/rinex.cjs"
     },
+    "./ubx": {
+      "types": "./dist/ubx.d.ts",
+      "import": "./dist/ubx.js",
+      "require": "./dist/ubx.cjs"
+    },
     "./rtcm3": {
       "types": "./dist/rtcm3.d.ts",
       "import": "./dist/rtcm3.js",

@@ -12,6 +12,7 @@ export default defineConfig({
     constants: './src/constants/index.ts',
     rinex: './src/rinex/index.ts',
     rtcm3: './src/rtcm3/index.ts',
+    ubx: './src/ubx/index.ts',
     orbit: './src/orbit/index.ts',
     ntrip: './src/ntrip/index.ts',
     analysis: './src/analysis/index.ts',
