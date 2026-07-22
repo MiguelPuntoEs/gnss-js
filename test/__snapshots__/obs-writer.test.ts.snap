@@ -1,0 +1,85 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`obs writers (characterization) > RINEX 2.11 output is stable 1`] = `
+"     2.11           OBSERVATION DATA    M                   RINEX VERSION / TYPE
+<PGM LINE>PGM / RUN BY / DATE
+Converted from RINEX 3 by GNSSCalc                          COMMENT             
+TEST00XYZ                                                   MARKER NAME         
+                                                            MARKER NUMBER       
+OBSERVER            AGENCY                                  OBSERVER / AGENCY   
+12345               RCV TYPE            1.0                 REC # / TYPE / VERS 
+999                 ANT TYPE                                ANT # / TYPE        
+  3924687.7039   301132.7618  5001910.7712                  APPROX POSITION XYZ 
+        0.1000        0.0200        0.0030                  ANTENNA: DELTA H/E/N
+     1     1                                                WAVELENGTH FACT L1/2
+     3    C1    L1    S1                                    # / TYPES OF OBSERV 
+  2024     1     1    10     0    0.0000000     GPS         TIME OF FIRST OBS   
+                                                            END OF HEADER       
+ 24  1  1 10  0  0.0000000  0  3G01G07R05
+  20000123.456   105123456.789          45.200  
+  21500000.001                          38.000  
+  19876543.210                          41.500  
+ 24  1  1 10  0 30.0000000  0  3G01G07R05
+  20000130.956   105123456.789          45.200  
+  21500007.501                          38.000  
+  19876550.710                          41.500  
+"
+`;
+
+exports[`obs writers (characterization) > RINEX 3.04 output is stable 1`] = `
+"     3.04           OBSERVATION DATA    M                   RINEX VERSION / TYPE
+<PGM LINE>PGM / RUN BY / DATE
+Merged from multiple RINEX files                            COMMENT             
+TEST00XYZ                                                   MARKER NAME         
+                                                            MARKER NUMBER       
+OBSERVER            AGENCY                                  OBSERVER / AGENCY   
+12345               RCV TYPE            1.0                 REC # / TYPE / VERS 
+999                 ANT TYPE                                ANT # / TYPE        
+  3924687.7039   301132.7618  5001910.7712                  APPROX POSITION XYZ 
+        0.1000        0.0200        0.0030                  ANTENNA: DELTA H/E/N
+G    3 C1C L1C S1C                                          SYS / # / OBS TYPES 
+R    2 C1C S1C                                              SYS / # / OBS TYPES 
+  2024     1     1    10     0    0.0000000     GPS         TIME OF FIRST OBS   
+  2024     1     1    10     0   30.0000000     GPS         TIME OF LAST OBS    
+    30.000                                                  INTERVAL            
+  2 R 5 -1 R12  4                                           GLONASS SLOT / FRQ #
+                                                            END OF HEADER       
+> 2024 01 01 10 00  0.0000000  0  3
+G01  20000123.456   105123456.789          45.200  
+G07  21500000.001                          38.000  
+R05  19876543.210          41.500  
+> 2024 01 01 10 00 30.0000000  0  3
+G01  20000130.956   105123456.789          45.200  
+G07  21500007.501                          38.000  
+R05  19876550.710          41.500  
+"
+`;
+
+exports[`obs writers (characterization) > RINEX 4.01 output is stable 1`] = `
+"     4.01           OBSERVATION DATA    M                   RINEX VERSION / TYPE
+<PGM LINE>PGM / RUN BY / DATE
+Converted to RINEX 4 by GNSSCalc                            COMMENT             
+TEST00XYZ                                                   MARKER NAME         
+                                                            MARKER NUMBER       
+OBSERVER            AGENCY                                  OBSERVER / AGENCY   
+12345               RCV TYPE            1.0                 REC # / TYPE / VERS 
+999                 ANT TYPE                                ANT # / TYPE        
+  3924687.7039   301132.7618  5001910.7712                  APPROX POSITION XYZ 
+        0.1000        0.0200        0.0030                  ANTENNA: DELTA H/E/N
+G    3 C1C L1C S1C                                          SYS / # / OBS TYPES 
+R    2 C1C S1C                                              SYS / # / OBS TYPES 
+  2024     1     1    10     0    0.0000000     GPS         TIME OF FIRST OBS   
+  2024     1     1    10     0   30.0000000     GPS         TIME OF LAST OBS    
+    30.000                                                  INTERVAL            
+  2 R 5 -1 R12  4                                           GLONASS SLOT / FRQ #
+                                                            END OF HEADER       
+> 2024 01 01 10 00  0.0000000  0  3
+G01  20000123.456   105123456.789          45.200  
+G07  21500000.001                          38.000  
+R05  19876543.210          41.500  
+> 2024 01 01 10 00 30.0000000  0  3
+G01  20000130.956   105123456.789          45.200  
+G07  21500007.501                          38.000  
+R05  19876550.710          41.500  
+"
+`;
