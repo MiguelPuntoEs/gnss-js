@@ -914,6 +914,8 @@ export interface VisibilityResult {
   times: number[];
   /** Elevation (radians) per PRN per epoch; null when no valid ephemeris. */
   elevation: Record<string, (number | null)[]>;
+  /** Azimuth (radians) per PRN per epoch; null when no valid ephemeris. */
+  azimuth: Record<string, (number | null)[]>;
   /** Number of satellites at or above the mask, per epoch. */
   visibleCount: number[];
   /** PDOP per epoch (null when < 4 satellites above the mask). */
@@ -955,6 +957,7 @@ export function computeVisibility(
   const all = computeAllPositions(ephemerides, times, rxPos);
 
   const elevation: Record<string, (number | null)[]> = {};
+  const azimuth: Record<string, (number | null)[]> = {};
   const visibleCount = new Array<number>(times.length).fill(0);
   const pdop = new Array<number | null>(times.length).fill(null);
   const gdop = new Array<number | null>(times.length).fill(null);
@@ -967,6 +970,7 @@ export function computeVisibility(
   for (const prn of all.prns) {
     const series = all.positions[prn]!;
     elevation[prn] = series.map((p) => (p ? p.el : null));
+    azimuth[prn] = series.map((p) => (p ? p.az : null));
     for (let i = 0; i < series.length; i++) {
       const p = series[i];
       if (p && p.el >= maskRad) {
@@ -1018,5 +1022,15 @@ export function computeVisibility(
   }
   passes.sort((a, b) => a.rise - b.rise);
 
-  return { times, elevation, visibleCount, pdop, gdop, hdop, vdop, passes };
+  return {
+    times,
+    elevation,
+    azimuth,
+    visibleCount,
+    pdop,
+    gdop,
+    hdop,
+    vdop,
+    passes,
+  };
 }

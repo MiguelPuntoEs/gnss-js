@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0
+
+### New features
+
+- `VisibilityResult` gains per-PRN **`azimuth`** series (radians, same shape as `elevation`) — enables sky plots of a planned window.
+
 ## 1.7.0
 
 ### New features
