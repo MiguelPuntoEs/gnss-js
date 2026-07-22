@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+### New features
+
+- `computeVisibility` now reports **all four DOPs per epoch** (`gdop`, `hdop`, `vdop` join `pdop` on `VisibilityResult`) — they were computed and discarded.
+
 ## 1.6.1
 
 ### Fixed

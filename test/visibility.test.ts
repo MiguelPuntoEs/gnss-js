@@ -27,6 +27,10 @@ describe.skipIf(!HAS_DATA)('computeVisibility (ABMF, 6 h)', () => {
     expect(vis.visibleCount[mid]).toBeGreaterThan(6);
     expect(vis.pdop[mid]).toBeGreaterThan(0.5);
     expect(vis.pdop[mid]).toBeLessThan(10);
+    // GDOP ≥ PDOP ≥ HDOP by construction; VDOP present too
+    expect(vis.gdop[mid]!).toBeGreaterThanOrEqual(vis.pdop[mid]!);
+    expect(vis.pdop[mid]!).toBeGreaterThanOrEqual(vis.hdop[mid]!);
+    expect(vis.vdop[mid]).toBeGreaterThan(0);
   });
 
   it('produces well-formed passes', () => {

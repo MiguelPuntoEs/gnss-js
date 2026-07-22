@@ -918,6 +918,12 @@ export interface VisibilityResult {
   visibleCount: number[];
   /** PDOP per epoch (null when < 4 satellites above the mask). */
   pdop: (number | null)[];
+  /** GDOP per epoch (null when < 4 satellites above the mask). */
+  gdop: (number | null)[];
+  /** HDOP per epoch (null when < 4 satellites above the mask). */
+  hdop: (number | null)[];
+  /** VDOP per epoch (null when < 4 satellites above the mask). */
+  vdop: (number | null)[];
   /** Discrete above-mask passes, sorted by rise time. */
   passes: VisibilityPass[];
 }
@@ -951,6 +957,9 @@ export function computeVisibility(
   const elevation: Record<string, (number | null)[]> = {};
   const visibleCount = new Array<number>(times.length).fill(0);
   const pdop = new Array<number | null>(times.length).fill(null);
+  const gdop = new Array<number | null>(times.length).fill(null);
+  const hdop = new Array<number | null>(times.length).fill(null);
+  const vdop = new Array<number | null>(times.length).fill(null);
 
   // Per-epoch visible az/el for DOP
   const visiblePerEpoch: { az: number; el: number }[][] = times.map(() => []);
@@ -970,6 +979,9 @@ export function computeVisibility(
   for (let i = 0; i < times.length; i++) {
     const dop = computeDop(visiblePerEpoch[i]!);
     pdop[i] = dop ? dop.pdop : null;
+    gdop[i] = dop ? dop.gdop : null;
+    hdop[i] = dop ? dop.hdop : null;
+    vdop[i] = dop ? dop.vdop : null;
   }
 
   // Extract passes: contiguous runs at or above the mask per PRN
@@ -1006,5 +1018,5 @@ export function computeVisibility(
   }
   passes.sort((a, b) => a.rise - b.rise);
 
-  return { times, elevation, visibleCount, pdop, passes };
+  return { times, elevation, visibleCount, pdop, gdop, hdop, vdop, passes };
 }
