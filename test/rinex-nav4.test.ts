@@ -333,16 +333,21 @@ describe('writeRinexNav4', () => {
 describe.skipIf(!existsSync(DLR_FILE))(
   'writeRinexNav4 round trip (brdc_v4_dlr.nav)',
   () => {
-    it('re-parses to identical classic and CNAV records', () => {
-      const r1 = parseNavFile(readFileSync(DLR_FILE, 'utf-8'));
-      expect(r1.ephemerides.length).toBeGreaterThan(10000);
-      // The DLR merged file also carries QZSS CNAV records
-      expect(r1.cnav!.some((c) => c.system === 'J')).toBe(true);
-      expect(r1.cnav!.some((c) => c.system === 'G')).toBe(true);
+    // ~19k records: comfortably over vitest's 5 s default on CI runners.
+    it(
+      're-parses to identical classic and CNAV records',
+      { timeout: 60000 },
+      () => {
+        const r1 = parseNavFile(readFileSync(DLR_FILE, 'utf-8'));
+        expect(r1.ephemerides.length).toBeGreaterThan(10000);
+        // The DLR merged file also carries QZSS CNAV records
+        expect(r1.cnav!.some((c) => c.system === 'J')).toBe(true);
+        expect(r1.cnav!.some((c) => c.system === 'G')).toBe(true);
 
-      const r2 = parseNavFile(writeRinexNav4(r1));
-      expectSameRecords(r1.ephemerides, r2.ephemerides);
-      expectSameRecords(r1.cnav!, r2.cnav!);
-    });
+        const r2 = parseNavFile(writeRinexNav4(r1));
+        expectSameRecords(r1.ephemerides, r2.ephemerides);
+        expectSameRecords(r1.cnav!, r2.cnav!);
+      }
+    );
   }
 );
