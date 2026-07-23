@@ -135,14 +135,39 @@ describe.skipIf(!existsSync(OEM7_FILE))('parseNovatelNav (OEM719)', () => {
 
   it('decodes and de-duplicates the broadcast ephemerides', () => {
     expect(res.badCrc).toBe(0);
-    expect(res.ephemerides.length).toBe(116);
+    expect(res.ephemerides.length).toBe(118);
     expect(res.ephemerides.filter((e) => e.system === 'E').length).toBe(44);
     expect(res.ephemerides.filter((e) => e.system === 'C').length).toBe(72);
+    expect(res.ephemerides.filter((e) => e.system === 'G').length).toBe(2);
+  });
+
+  it('decodes GPSEPHEM (7) — pinned from the IGS BRDC oracle', () => {
+    // The full rover capture decodes 42 GPSEPHEM records; every one
+    // matches the same-day IGS BRDC file (BRDC00IGS_R_2025085/084/060)
+    // by (prn, iode, toc, toe) with worst field rel err 3.75e-12 — an
+    // oracle independent of RTKLIB, which never decodes this message.
+    const g01 = res.ephemerides.find((e) => e.prn === 'G01')!;
+    expect(g01).toBeDefined();
+    expect(g01.system).toBe('G');
+    const k = g01 as KeplerEphemeris;
+    expect(k.iode).toBe(194);
+    expect(k.week).toBe(2359);
+    expect(k.toe).toBe(273600);
+    expect(k.tocDate.getTime()).toBe(Date.UTC(2025, 2, 26, 4));
+    expect(k.svHealth).toBe(0);
+    close(k.sqrtA, 5153.737897872925);
+    close(k.e, 0.0004246990429237485);
+    close(k.af0, 0.0001923772506415844);
+    const g02 = res.ephemerides.find((e) => e.prn === 'G02') as KeplerEphemeris;
+    expect(g02.iode).toBe(16);
+    close(g02.e, 0.01615214324556291);
+    close(g02.af0, -0.00021053338423371315);
   });
 
   it('decodes GALEPHEMERIS into a Galileo I/NAV ephemeris (E02)', () => {
-    const e02 = res.ephemerides[0] as KeplerEphemeris;
-    expect(e02.prn).toBe('E02');
+    // First E02 record in stream order (GPSEPHEM frames precede it).
+    const e02 = res.ephemerides.find((e) => e.prn === 'E02') as KeplerEphemeris;
+    expect(e02).toBeDefined();
 
     // Epoch: 2025-03-25 18:00:00 GPS scale, GAL/GPS week 2359.
     expect(e02.tocDate.getTime()).toBe(Date.UTC(2025, 2, 25, 18));

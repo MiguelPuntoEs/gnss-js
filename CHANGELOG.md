@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.18.0
+
+### New features — modern navigation, phase 1
+
+- **GPS CNAV decoding (L2C + L5)** — new `navbits` CNAV core (CRC-24Q, message types 10/11/30-37, per-satellite assembly with the toe/toc consistency rule) exposed as `parseSbfCnav` (`gnss-js/sbf`, GPSRawL2C/GPSRawL5 blocks) and `parseUbxCnav` (`gnss-js/ubx`, RXM-SFRBX). Emits the new standalone `CnavEphemeris` type (the classic `Ephemeris` union is untouched). RTKLIB has no CNAV decoder — this is a pure IS-GPS-200 §30 implementation, validated against RINEX 4 CNAV records from IGS hourly nav files: 21/21 records, 672 fields, zero disagreements; L2C and L5 assemble bit-identical sets; CRC-24Q passes 100% on both receivers' raw bits; on a 2020 F9P capture CNAV-propagated positions agree with LNAV to < 6 m.
+- **NovAtel GPSEPHEM (7)** — the decoded-fields GPS ephemeris log many captures use instead of RAWEPHEM. No RTKLIB reference exists; validated against same-day IGS BRDC files: 42/42 records field-for-field (worst rel err 3.8e-12), including a parked satellite's stale set matching a three-weeks-earlier file.
+
+### Notes
+
+- `computeSatPosition` does not yet use CNAV's ΔA-dot/Δn0-dot terms (a `CnavEphemeris` consumer must fold them, as the oracle does); CNAV-aware propagation and a RINEX 4 nav writer are the next phase.
+
 ## 1.17.0
 
 ### New features — receiver logs as complete navigation sources

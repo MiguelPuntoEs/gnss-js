@@ -41,6 +41,7 @@ const ID_RAWEPHEM = 41;
 const ID_GLOEPHEMERIS = 723;
 const ID_GALEPHEMERIS = 1122;
 const ID_QZSSEPHEMERIS = 1336;
+const ID_GPSEPHEM = 7;
 const ID_BDSEPHEMERIS = 1696;
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
@@ -282,19 +283,25 @@ function decodeBdsEphemeris(view: DataView, p: number): KeplerEphemeris | null {
 }
 
 /**
- * Decode QZSSEPHEMERIS → QZSS Keplerian ephemeris. No RTKLIB
- * reference exists for this message (RTKLIB decodes the raw-subframe
- * QZSSRAWEPHEM 1331 instead); the layout is the OEM7 manual §3.150,
- * which mirrors GPSEPHEM: the semi-major axis arrives as A in metres
- * (converted to sqrtA here) and toc/toe as doubles. Data-untested —
- * no public capture with this log was found (synthetic tests only).
+ * Decode GPSEPHEM / QZSSEPHEMERIS → Keplerian ephemeris. The two logs
+ * share one layout (OEM7 manual §3.53 GPSEPHEM, §3.150 QZSSEPHEMERIS):
+ * the semi-major axis arrives as A in metres (converted to sqrtA
+ * here), toc/toe as doubles, and the week field is the full
+ * rollover-corrected toe week. No RTKLIB reference exists for either
+ * (RTKLIB decodes only the raw-subframe RAWEPHEM/QZSSRAWEPHEM logs).
+ * GPSEPHEM is data-tested against same-day IGS BRDC records (the
+ * broadcast ephemeris is identical worldwide, so every orbital and
+ * clock field must match exactly); QZSSEPHEMERIS remains data-untested
+ * — no public capture with that log was found (synthetic tests only).
  */
-function decodeQzssEphemeris(
+function decodeGpsQzssEphemeris(
   view: DataView,
-  p: number
+  p: number,
+  sys: 'G' | 'J'
 ): KeplerEphemeris | null {
-  const prn = view.getUint32(p, true); // 193…
-  if (prn < 193 || prn > 202) return null;
+  const prn = view.getUint32(p, true); // G: 1…32, J: 193…202
+  if (sys === 'G' && (prn < 1 || prn > 32)) return null;
+  if (sys === 'J' && (prn < 193 || prn > 202)) return null;
   // p+4: tow R8 (subframe-0 time stamp) — unused
   const health = view.getUint32(p + 12, true) & 0x3f; // 6-bit SIS health
   const iode1 = view.getUint32(p + 16, true);
@@ -308,8 +315,8 @@ function decodeQzssEphemeris(
   const tocDate = new Date(nearWeekMs(toeMs, tocs));
 
   return {
-    system: 'J',
-    prn: `J${String(prn - 192).padStart(2, '0')}`,
+    system: sys,
+    prn: `${sys}${String(sys === 'J' ? prn - 192 : prn).padStart(2, '0')}`,
     toc: sowOf(tocDate.getTime()),
     tocDate,
     af0: view.getFloat64(p + 180, true),
@@ -390,8 +397,13 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
       // still compared here — the pair changes together in practice
       // and convbin emits a record whenever toe/toc move.
       if (eph) pushKepler(eph.prn, eph);
+    } else if (frame.id === ID_GPSEPHEM && frame.msgLen >= 204) {
+      const eph = decodeGpsQzssEphemeris(view, frame.payload, 'G');
+      // Some logs carry both RAWEPHEM and GPSEPHEM: the dedup key is
+      // the PRN, so whichever repeats an unchanged IODE is suppressed.
+      if (eph) pushKepler(eph.prn, eph);
     } else if (frame.id === ID_QZSSEPHEMERIS && frame.msgLen >= 204) {
-      const eph = decodeQzssEphemeris(view, frame.payload);
+      const eph = decodeGpsQzssEphemeris(view, frame.payload, 'J');
       if (eph) pushKepler(eph.prn, eph);
     } else if (frame.id === ID_IONUTC && frame.msgLen >= 108) {
       const p = frame.payload;

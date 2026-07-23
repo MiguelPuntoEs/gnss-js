@@ -21,6 +21,8 @@ export { parseUbxNav } from './nav';
 export type { UbxNavOptions, UbxNavResult } from './nav';
 export { parseUbxIonoUtc } from './iono';
 export type { UbxIonoUtcResult } from './iono';
+export { parseUbxCnav } from './cnav';
+export type { UbxCnavResult } from './cnav';
 
 export interface UbxMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23". */

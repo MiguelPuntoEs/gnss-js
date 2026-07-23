@@ -15,3 +15,5 @@
 !/test-fixtures/dlf2_iono_slice.sbf
 !/test-fixtures/dlf5_iono_slice.sbf
 !/test-fixtures/oem7_nav_slice.gps
+!/test-fixtures/dlf5_cnav_slice.sbf
+!/test-fixtures/f9p_cnav_slice.ubx
