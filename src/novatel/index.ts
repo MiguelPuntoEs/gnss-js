@@ -16,6 +16,13 @@
  * gated by their lock flags.
  */
 
+import { crc32 } from './frame';
+
+export { crc32, OEM4_HLEN, oem4Frames } from './frame';
+export type { Oem4Frame } from './frame';
+export { parseNovatelNav } from './nav';
+export type { NovatelNavResult } from './nav';
+
 export interface NovatelMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23", "J01". */
   prn: string;
@@ -103,18 +110,6 @@ function carrierFreq(sys: string, code: string, gloK: number | null): number {
 /** Sign-extend the low `bits` of v. */
 function exsign(v: number, bits: number): number {
   return v & (1 << (bits - 1)) ? v - 2 ** bits : v;
-}
-
-/** Reflected CRC-32 (poly 0xEDB88320, init 0) — NovAtel "32-bit CRC". */
-function crc32(data: Uint8Array, start: number, len: number): number {
-  let crc = 0;
-  for (let i = start; i < start + len; i++) {
-    crc ^= data[i]!;
-    for (let j = 0; j < 8; j++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return crc >>> 0;
 }
 
 /* (system, signal type) → [system letter, RINEX code] — RTKLIB table */

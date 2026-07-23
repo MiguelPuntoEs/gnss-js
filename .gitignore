@@ -8,3 +8,5 @@
 /test-fixtures/*
 !/test-fixtures/f9p_rawx_slice.ubx
 !/test-fixtures/tudb_meas3_slice.sbf
+!/test-fixtures/tudb_nav_slice.sbf
+!/test-fixtures/dlf2_alm_slice.sbf

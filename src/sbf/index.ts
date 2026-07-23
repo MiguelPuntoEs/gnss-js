@@ -24,6 +24,18 @@
  * fully; the Meas3 bit layout is only public through that decoder).
  */
 
+import { scanSbfFrames, svidToPrn } from './frame';
+
+export {
+  parseSbfNav,
+  parseSbfAlmanac,
+  type SbfNavResult,
+  type SbfAlmanacResult,
+  type SbfAlmanac,
+  type SbfKeplerAlmanac,
+  type SbfGlonassAlmanac,
+} from './nav';
+
 export interface SbfMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23" (SBAS PRN-100). */
   prn: string;
@@ -60,25 +72,6 @@ export interface SbfParseResult {
 const CLIGHT = 299792458.0;
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 const MS_PER_WEEK = 7 * 86400_000;
-
-/* ── CRC16-CCITT (poly 0x1021, init 0) ─────────────────────────── */
-const CRC_TABLE = (() => {
-  const t = new Uint16Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n << 8;
-    for (let k = 0; k < 8; k++)
-      c = c & 0x8000 ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff;
-    t[n] = c;
-  }
-  return t;
-})();
-
-function crc16(data: Uint8Array, start: number, end: number): number {
-  let crc = 0;
-  for (let i = start; i < end; i++)
-    crc = ((crc << 8) ^ CRC_TABLE[((crc >> 8) ^ data[i]!) & 0xff]!) & 0xffff;
-  return crc;
-}
 
 /* ── Constellations and signals ────────────────────────────────── */
 
@@ -174,25 +167,6 @@ function m3Prn(navsys: number, svid: number): string | null {
     default:
       return null;
   }
-}
-
-/** Classic SBF SVID → PRN string ([1] 4.1.9, incl. GLONASS slot split). */
-function svidToPrn(svid: number): string | null {
-  if (svid >= 1 && svid <= 37) return svid <= 32 ? `G${two(svid)}` : null;
-  if (svid <= 61) return svid - 37 <= 27 ? `R${two(svid - 37)}` : null;
-  if (svid <= 62) return null; // GLONASS with unknown slot number
-  if (svid <= 68) return svid - 38 <= 27 ? `R${two(svid - 38)}` : null;
-  if (svid <= 70) return null;
-  if (svid <= 106) return svid - 70 <= 36 ? `E${two(svid - 70)}` : null;
-  if (svid <= 119) return null; // L-band (MSS) satellites
-  if (svid <= 140) return `S${two(svid - 100)}`;
-  if (svid <= 180) return svid - 140 <= 50 ? `C${two(svid - 140)}` : null;
-  if (svid <= 190) return `J${two(svid - 180)}`;
-  if (svid <= 197) return svid - 190 <= 14 ? `I${two(svid - 190)}` : null;
-  if (svid <= 215) return `S${two(svid - 157)}`;
-  if (svid <= 222) return svid - 208 <= 14 ? `I${two(svid - 208)}` : null;
-  if (svid <= 245) return svid - 182 <= 50 ? `C${two(svid - 182)}` : null;
-  return null;
 }
 
 /** Carrier frequency (Hz) for a system letter + RINEX code (+GLONASS FCN). */
@@ -311,7 +285,6 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
   const epochs: SbfMeasEpoch[] = [];
   const messageCounts: Record<string, number> = {};
   const obsCodes: Record<string, string[]> = {};
-  let badCrc = 0;
 
   let ref = freshRefEpoch(-1);
   let curTime = NaN;
@@ -897,25 +870,7 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
   };
 
   /* ── frame scan ──────────────────────────────────────────────── */
-  let i = 0;
-  while (i + 8 <= data.length) {
-    if (data[i] !== 0x24 || data[i + 1] !== 0x40) {
-      i++;
-      continue;
-    }
-    const len = view.getUint16(i + 6, true);
-    if (len < 8 || len % 4 !== 0) {
-      i++;
-      continue;
-    }
-    if (i + len > data.length) break;
-    if (crc16(data, i + 4, i + len) !== view.getUint16(i + 2, true)) {
-      badCrc++;
-      i++;
-      continue;
-    }
-
-    const id = view.getUint16(i + 4, true) & 0x1fff;
+  const badCrc = scanSbfFrames(data, view, (id, i, len) => {
     const key = String(id);
     messageCounts[key] = (messageCounts[key] ?? 0) + 1;
 
@@ -933,8 +888,7 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
         else decodeMeasEpoch(i, len);
       }
     }
-    i += len;
-  }
+  });
   flush();
 
   return { epochs, messageCounts, obsCodes, badCrc };

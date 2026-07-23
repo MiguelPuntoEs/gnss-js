@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.15.0
+
+### New features — navigation and almanacs from receiver logs
+
+- **SBF navigation blocks** — `parseSbfNav` (`gnss-js/sbf`): GPSNav/GLONav/GALNav/BDSNav/QZSNav into the standard `Ephemeris` types. Oracle-validated against convbin on a TU Delft PolaRx file (83 records, 1822 fields, zero disagreements) and independently spot-checked against sbf2rin output.
+- **SBF almanac blocks** — `parseSbfAlmanac`: GPSAlm/GALAlm/GLOAlm/BDSAlm into new almanac types, decoded to absolute orbital elements per the ICDs (fixing an RTKLIB Galileo-almanac TODO and a demo5 week-adjustment sign bug along the way). Physically validated: almanac-propagated positions agree with broadcast ephemerides at almanac accuracy (Galileo 14–21 km, BDS 0.5–2.3 km).
+- **NovAtel navigation** — `parseNovatelNav` (`gnss-js/novatel`): RAWEPHEM (raw LNAV subframes) and full GLOEPHEMERIS. Oracle: 14/14 records vs convbin at the printing quantum.
+- **`gnss-js` internal `navbits`** — generic MSB-first bit readers and a GPS LNAV frame decoder shared by NovAtel today and a future u-blox RXM-SFRBX path.
+
 ## 1.14.1
 
 ### Bug fixes
