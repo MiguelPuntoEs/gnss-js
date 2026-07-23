@@ -387,3 +387,15 @@ export function solveSpp(
     converged,
   };
 }
+
+export { solveDgnss, RtkFloatEngine, toRtkEpoch } from './rtk';
+export type {
+  RtkMeasurement,
+  RtkEpochMeasurements,
+  RawObservation,
+  EphemerisSource,
+  DgnssOptions,
+  DgnssSolution,
+  RtkFloatOptions,
+  RtkFloatSolution,
+} from './rtk';

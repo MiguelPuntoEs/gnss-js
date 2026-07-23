@@ -24,10 +24,17 @@ const GM_GAL = 3.986004418e14; // m³/s² — Galileo
 const GM_BDS = 3.986004418e14; // m³/s² — BeiDou (CGCS2000)
 const GM_GLO = 3.9860044e14; // m³/s² — PZ-90
 
-// BDS GEO detection thresholds (BDS-SIS-ICD-2.1 §5.2): GEO orbits sit
-// at ~42164 km with near-zero inclination; MEO/IGSO are ≥ 0.5 rad.
-const BDS_GEO_MAX_INCLINATION_RAD = 0.1;
-const BDS_GEO_MIN_SEMIMAJOR_AXIS_M = 4.0e7;
+// BDS GEO PRN slots (BDS-SIS-ICD / RTKLIB demo5 convention: C01–C05 and
+// C59–C63). Detection MUST be by PRN, not by broadcast inclination: GEO
+// ephemeris elements are expressed in a frame tilted −5° about the x-axis
+// (recovered by the Rz(ΩE·tk)·Rx(−5°) transform below), so the broadcast
+// i0 is ≈ 5° ± the actual drift inclination. C01 has broadcast records
+// with i0 ≈ 6.3° (0.111 rad), which sat above the previous 0.1 rad
+// "near-zero inclination" threshold and silently fell through to the
+// MEO/IGSO branch — a wrong frame convention that diverged ~850 km per
+// hour of tk between consecutive records (RTKLIB eph2pos on the same
+// records: 0.4 m cross-record consistency via the GEO branch).
+const BDS_GEO_PRNS = new Set([1, 2, 3, 4, 5, 59, 60, 61, 62, 63]);
 const AE_GLO = 6378136.0; // m — Earth equatorial radius (PZ-90)
 const J2_GLO = 1.08263e-3; // J2 zonal harmonic (PZ-90)
 
@@ -139,11 +146,10 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
   const ypDot = drkDot * Math.sin(uk) + rk * ukDot * Math.cos(uk);
 
   // BeiDou GEO satellites use a different ECEF transformation (BDS-SIS-ICD).
-  // GEO sats have near-zero inclination (< 0.1 rad) vs ~0.96 rad for MEO/IGSO.
+  // GEO occupancy is defined by PRN slot — see BDS_GEO_PRNS above for why
+  // an inclination heuristic is unsound here.
   const isBdsGeo =
-    eph.system === 'C' &&
-    Math.abs(eph.i0) < BDS_GEO_MAX_INCLINATION_RAD &&
-    a > BDS_GEO_MIN_SEMIMAJOR_AXIS_M;
+    eph.system === 'C' && BDS_GEO_PRNS.has(Number(eph.prn.slice(1)));
 
   if (isBdsGeo) {
     // GEO node: no Earth rotation subtracted from omegaDot

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.23.0
+
+### New features — RTK stage 1
+
+- **`solveDgnss` + `RtkFloatEngine`** (`gnss-js/positioning`): double-differenced code DGNSS and a carrier-phase float EKF (per-satellite float DD ambiguities, exact reference-satellite re-mapping, lock-time slip resets; GLONASS FDMA with per-channel wavelengths, IFB absorbed into ambiguities). Oracle vs RTKLIB rnx2rtkp on a public OEM719 base/rover pair (1,457 epochs, GPS+GAL+BDS): float agreement 8.6/8.5/10.4 cm RMS; against the dataset's surveyed ground truth our float lands 3.1/3.9/19.8 cm RMS. Ambiguity resolution (LAMBDA) is stage 2 — the filter maintains the joint float covariance it needs.
+
+### Fixed
+
+- **BDS GEO satellites could be propagated with the wrong frame** — the GEO branch was gated on broadcast inclination < 0.1 rad, but GEO elements are broadcast in the −5°-tilted frame, so real GEO records (i0 ≈ 5–6°) could fall through to the MEO/IGSO math: hundreds of km of satellite error, ~100 m double-difference errors. GEO detection is now PRN-based (C01–C05, C59–C63), matching RTKLIB and the BDS ICD; cross-record consistency 852 km → 0.4 m, verified against an RTKLIB C harness. Affects SPP/visibility/monitoring using BDS GEOs whenever the broadcast i0 exceeded the old threshold.
+
 ## 1.22.0
 
 ### New features — u-blox drops become four-constellation nav sources
