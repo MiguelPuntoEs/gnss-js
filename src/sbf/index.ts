@@ -917,3 +917,10 @@ export {
   type SbfBdsNavResult,
   type SbfGloNavResult,
 } from './rawnav-bds';
+
+export {
+  parseSbfHas,
+  type SbfHasResult,
+  type SbfHasMessage,
+  type HasMessage,
+} from './rawnav-has';

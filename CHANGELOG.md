@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.0
+
+### New features — Galileo HAS
+
+- **Galileo High Accuracy Service decoding** — `parseSbfHas` (`gnss-js/sbf`, GALRawCNAV blocks) through a new E6-B C/NAV stack: page CRC-24Q, network-wide message assembly, Reed-Solomon(255,32) erasure recovery (`navbits/rs255`), and full MT1 SSR parsing (satellite/signal masks, orbit RAC + clock corrections, code/phase biases, validity intervals) per the HAS SIS ICD. Validated three ways: 100% page CRC on 10,558 real blocks; **49,630 fields identical to FGI's HASlib reference decoder (0 mismatches)** incl. the RS generator matrix; and physically — applying the corrections heals Galileo broadcast IODNav-switchover discontinuities from 0.115 m to 0.006 m RMS (clock 0.049 → 0.012 m) across 34 switchovers, with the sign-flipped control 2× worse than raw, pinning the ICD convention (X_HAS = X_brdc + R·Δ, opposite of RTCM SSR).
+
 ## 1.20.0
 
 ### New features — raw-frame navigation completes, almanacs propagate
