@@ -3,5 +3,8 @@
 
 .env
 .DS_Store
-# Test fixtures (downloaded separately)
+# Test fixtures (downloaded separately — see scripts/fetch-test-data.sh),
+# except tiny sliced fixtures that have no stable upstream URL.
 /test-fixtures
+!/test-fixtures/f9p_rawx_slice.ubx
+!/test-fixtures/tudb_meas3_slice.sbf

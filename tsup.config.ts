@@ -13,6 +13,8 @@ export default defineConfig({
     rinex: './src/rinex/index.ts',
     rtcm3: './src/rtcm3/index.ts',
     ubx: './src/ubx/index.ts',
+    sbf: './src/sbf/index.ts',
+    novatel: './src/novatel/index.ts',
     orbit: './src/orbit/index.ts',
     ntrip: './src/ntrip/index.ts',
     analysis: './src/analysis/index.ts',

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.14.0
+
+### New features — receiver raw formats
+
+- **u-blox UBX** — `parseUbxRawx` (`gnss-js/ubx`): RXM-RAWX observables with the (gnssId, sigId) → RINEX code tables in the RTKLIB convention. Oracle-validated against RTKLIB convbin on a public F9P dataset: 4521/4521 epochs, ~1M observables at the 0.0005 RINEX printing quantum.
+- **Septentrio SBF** — `parseSbfMeas` (`gnss-js/sbf`): Meas3Ranges reference/delta epochs with master/slave signals, Meas3CN0HiRes, Meas3Doppler, and classic MeasEpoch. Ported from RTKLIB demo5 septentrio.c (BSD-2-Clause) and cross-checked against the mosaic-X5 reference guide; validated against convbin on a TU Delft PolaRx daily file: 328,683 observables at the printing quantum. Two latent indexing quirks in the C original were fixed (documented in the source).
+- **NovAtel OEM4/6/7** — `parseNovatelRange` (`gnss-js/novatel`): RANGE and RANGECMP (compressed) logs, carrier phase reconstructed from the 2^23-cycle rollover, GLONASS FDMA channels recovered from GLOEPHEMERIS. Validated against convbin on RTKLIB's OEMV sample: 4140 observables at the printing quantum.
+
 ## 1.13.0
 
 ### New features

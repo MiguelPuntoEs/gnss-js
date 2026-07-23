@@ -18,6 +18,7 @@ checksum_for() {
     brdc_v2_glo.nav.gz) echo "9f040749e0e0be916743bf47f24b3fe530c11876b2bd9cd80cc362755b8d3aee" ;;
     brdc_v3_igs.nav.gz) echo "e68833b1280a4413fe5cf6cfb537ef406d8a396f9e8331d339272d8c9ee27ebe" ;;
     brdc_v4_dlr.nav.gz) echo "ff11082ccb87c8c678f9aa258487ec5d8e838e330f1c5e92ce289134ef15f805" ;;
+    oemv_rangecmp.gps)  echo "65c4e666c73598fac9a0dc0b915d340a606daa9628dc26cc81f1812f7dfa4d36" ;;
     *)                  echo "" ;;
   esac
 }
@@ -87,6 +88,7 @@ fi
 
 # RINEX 3 mixed nav (2024/001)
 download "https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2024/001/BRDC00IGS_R_20240010000_01D_MN.rnx.gz" "$DIR/BRDC.nav.gz"
+download "https://raw.githubusercontent.com/tomojitakasu/RTKLIB/master/test/data/rcvraw/oemv_200911218.gps" "$DIR/oemv_rangecmp.gps"
 decompress "$DIR/BRDC.nav"
 
 # RINEX 2 GPS nav

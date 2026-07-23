@@ -1,6 +1,6 @@
 {
   "name": "gnss-js",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Comprehensive GNSS library for JavaScript — time scales, coordinates, RINEX parsing, RTCM3 decoding, orbit computation, and signal analysis",
   "type": "module",
   "sideEffects": false,
@@ -34,6 +34,16 @@
       "types": "./dist/ubx.d.ts",
       "import": "./dist/ubx.js",
       "require": "./dist/ubx.cjs"
+    },
+    "./novatel": {
+      "types": "./dist/novatel.d.ts",
+      "import": "./dist/novatel.js",
+      "require": "./dist/novatel.cjs"
+    },
+    "./sbf": {
+      "types": "./dist/sbf.d.ts",
+      "import": "./dist/sbf.js",
+      "require": "./dist/sbf.cjs"
     },
     "./rtcm3": {
       "types": "./dist/rtcm3.d.ts",
