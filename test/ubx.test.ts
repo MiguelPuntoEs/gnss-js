@@ -13,7 +13,11 @@ const FILE = join(__dirname, '../test-fixtures/f9p_rawx_slice.ubx');
  * 0.0005 printing quantum across all 4521 epochs.
  */
 describe.skipIf(!existsSync(FILE))('parseUbxRawx (F9P slice)', () => {
-  const res = parseUbxRawx(new Uint8Array(readFileSync(FILE)));
+  // Guarded read: describe bodies execute even under skipIf, so a
+  // missing fixture must not crash collection.
+  const res = existsSync(FILE)
+    ? parseUbxRawx(new Uint8Array(readFileSync(FILE)))
+    : null!;
 
   it('frames the stream: five RAWX epochs, clean checksums', () => {
     expect(res.epochs.length).toBe(5);

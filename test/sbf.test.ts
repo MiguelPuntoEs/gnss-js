@@ -15,7 +15,11 @@ const FILE = join(__dirname, '../test-fixtures/tudb_meas3_slice.sbf');
  * the 0.0005 RINEX printing quantum.
  */
 describe.skipIf(!existsSync(FILE))('parseSbfMeas (TUDB Meas3 slice)', () => {
-  const res = parseSbfMeas(new Uint8Array(readFileSync(FILE)));
+  // Guarded read: describe bodies execute even under skipIf, so a
+  // missing fixture must not crash collection.
+  const res = existsSync(FILE)
+    ? parseSbfMeas(new Uint8Array(readFileSync(FILE)))
+    : null!;
 
   it('frames the stream: 13 epochs, clean CRCs', () => {
     expect(res.epochs.length).toBe(13);

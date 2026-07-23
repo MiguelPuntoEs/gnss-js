@@ -14,7 +14,11 @@ const FILE = join(__dirname, '../test-fixtures/oemv_rangecmp.gps');
  * printing quantum with CN0 exact.
  */
 describe.skipIf(!existsSync(FILE))('parseNovatelRange (OEMV RANGECMP)', () => {
-  const res = parseNovatelRange(new Uint8Array(readFileSync(FILE)));
+  // Guarded read: describe bodies execute even under skipIf, so a
+  // missing fixture must not crash collection.
+  const res = existsSync(FILE)
+    ? parseNovatelRange(new Uint8Array(readFileSync(FILE)))
+    : null!;
 
   it('frames the stream and decodes every epoch', () => {
     expect(res.epochs.length).toBe(46);
