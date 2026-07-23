@@ -4,6 +4,7 @@ export * from './parser';
 export * from './warnings';
 export * from './nav';
 export * from './nav-writer';
+export * from './nav-writer-v4';
 export * from './ionex';
 export * from './sp3';
 export * from './obs-writer';

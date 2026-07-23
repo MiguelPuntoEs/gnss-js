@@ -1,7 +1,15 @@
 /**
  * RINEX 3.x/4.x navigation file parser.
- * Parses GPS, Galileo, BeiDou (Keplerian), and GLONASS (state vector) ephemerides.
+ * Parses GPS, Galileo, BeiDou (Keplerian), and GLONASS (state vector)
+ * ephemerides, plus GPS/QZSS CNAV records from RINEX 4 files.
  */
+
+import {
+  CNAV_A_REF,
+  CNAV_OMEGA_DOT_REF,
+  type CnavEphemeris,
+} from '../navbits/cnav';
+import { GPS_PI } from '../navbits/index';
 
 /* ================================================================== */
 /*  Public types                                                       */
@@ -108,9 +116,28 @@ export interface GlonassEphemeris {
 
 export type Ephemeris = KeplerEphemeris | GlonassEphemeris;
 
+/**
+ * A GPS or QZSS CNAV ephemeris read from a RINEX 4 `> EPH ... CNAV`
+ * record (RINEX 4.01 Tables A10/A18). Same shape as the
+ * `CnavEphemeris` assembled from raw navigation bits, except that
+ * QZSS records are allowed.
+ *
+ * Fields the RINEX record does not carry are defaulted: `clockMsgType`
+ * is 0 (the record does not say which MT3x supplied the clock), and
+ * `integrityFlag`/`l2cPhasing` are false. `tow` holds the record's
+ * transmission time of message (t_tm) and `wnOp` the ambiguity-resolved
+ * data-predict week from the file. `toe` equals `toc` (RINEX 4.01
+ * Table A10 note 2: per IS-GPS-705 20.3.4.4 only Toc is provided).
+ */
+export type RinexCnavEphemeris = Omit<CnavEphemeris, 'system'> & {
+  system: 'G' | 'J';
+};
+
 export interface NavResult {
   header: NavHeader;
   ephemerides: Ephemeris[];
+  /** GPS/QZSS CNAV ephemerides (RINEX 4 only), present when any were read. */
+  cnav?: RinexCnavEphemeris[];
 }
 
 /* ================================================================== */
@@ -142,20 +169,27 @@ const R4_MSG_LINES: Record<string, number> = {
   SBAS: 4,
   FDMA: 5, // RINEX 4 adds orbit-4 (status flags) vs 3 in RINEX 3
 
-  // EPH types we skip (different field layout)
+  // EPH type parsed into RinexCnavEphemeris for G/J (skipped otherwise)
   CNAV: 9,
+
+  // EPH types we skip (different field layout)
   CNV1: 10,
   CNV2: 10,
   CNV3: 9,
   L1NV: 8,
   L1OC: 9,
   L3OC: 9,
-
-  // Non-EPH records
-  STO: 2,
-  EOP: 3,
-  ION: 3,
 };
+
+/** GPS epoch (1980-01-06T00:00:00) mapped onto the JS epoch. */
+const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
+const SEC_PER_WEEK = 7 * 86400;
+
+/**
+ * QZSS CNAV ΔA reference semi-major axis (m, IS-QZSS-PNT). The GPS
+ * value lives in ../navbits/cnav (CNAV_A_REF).
+ */
+const QZSS_CNAV_A_REF = 42164200;
 
 /** Message types whose field layout matches our Keplerian/state-vector builders. */
 const SUPPORTED_EPH_MSGS = new Set([
@@ -245,6 +279,28 @@ function parseDataLine(line: string, colOffset = 4): number[] {
   return values;
 }
 
+/**
+ * Parse a data line keeping the four 19-char field positions: blank
+ * slots stay `null` instead of collapsing. Needed for CNAV records,
+ * where a blank marks "not available" (RINEX 4.01 Table A18 note 3:
+ * the TGD/ISC do-not-use bit pattern is a blank field).
+ */
+function parseDataLineSlots(line: string): (number | null)[] {
+  const values: (number | null)[] = [];
+  for (let i = 0; i < 4; i++) {
+    const start = 4 + i * 19;
+    const s =
+      start < line.length ? line.substring(start, start + 19).trim() : '';
+    if (s.length === 0) {
+      values.push(null);
+      continue;
+    }
+    const v = parseFloat19(s);
+    values.push(Number.isFinite(v) ? v : null);
+  }
+  return values;
+}
+
 function buildKeplerEphemeris(
   sys: 'G' | 'E' | 'C' | 'J' | 'I',
   prn: string,
@@ -324,6 +380,93 @@ function buildStateVectorEphemeris(
   };
 }
 
+/**
+ * Build a `RinexCnavEphemeris` from a RINEX 4 GPS/QZSS CNAV record
+ * (epoch line + 8 broadcast-orbit lines, RINEX 4.01 Tables A10/A18):
+ *
+ *   orbit-1: ADOT, Crs, Δn0, M0
+ *   orbit-2: Cuc, e, Cus, √A
+ *   orbit-3: t_op, Cic, Ω0, Cis
+ *   orbit-4: i0, Crc, ω, Ω̇
+ *   orbit-5: IDOT, Δn0Dot, URAI_NED0, URAI_NED1
+ *   orbit-6: URAI_ED, SV health, TGD, URAI_NED2
+ *   orbit-7: ISC_L1CA, ISC_L2C, ISC_L5I5, ISC_L5Q5
+ *   orbit-8: t_tm, wn_op
+ *
+ * ΔA and ΔΩ̇ are recovered from √A / Ω̇ using the constellation's
+ * reference values; the GPS week and toc seconds-of-week come from the
+ * epoch date (the record stores only Toc — Toe equals it by the CNAV
+ * consistency rule).
+ */
+function buildCnavEphemeris(
+  sys: 'G' | 'J',
+  prn: string,
+  date: Date,
+  epochVals: number[],
+  d: (number | null)[][]
+): RinexCnavEphemeris {
+  const num = (r: number, c: number): number => d[r]?.[c] ?? 0;
+  const opt = (r: number, c: number): number | null => d[r]?.[c] ?? null;
+
+  const t = (date.getTime() - GPS_EPOCH_MS) / 1000;
+  const week = Math.floor(t / SEC_PER_WEEK);
+  const toc = t - week * SEC_PER_WEEK;
+
+  const sqrtA = num(1, 3);
+  const a = sqrtA * sqrtA;
+  const aRef = sys === 'J' ? QZSS_CNAV_A_REF : CNAV_A_REF;
+  const omegaDot = num(3, 3);
+  const wnOp = d[7]?.[1];
+
+  return {
+    system: sys,
+    prn,
+    week,
+    health: num(5, 1),
+    uraEd: num(5, 0),
+    uraNed0: num(4, 2),
+    uraNed1: num(4, 3),
+    uraNed2: num(5, 3),
+    top: num(2, 0),
+    toe: toc,
+    toeDate: date,
+    a,
+    deltaA: a - aRef,
+    aDot: num(0, 0),
+    deltaN0: num(0, 2),
+    deltaN0Dot: num(4, 1),
+    m0: num(0, 3),
+    e: num(1, 1),
+    omega: num(3, 2),
+    omega0: num(2, 2),
+    i0: num(3, 0),
+    omegaDot,
+    deltaOmegaDot: omegaDot - CNAV_OMEGA_DOT_REF * GPS_PI,
+    i0Dot: num(4, 0),
+    cis: num(2, 3),
+    cic: num(2, 1),
+    crs: num(0, 1),
+    crc: num(3, 1),
+    cus: num(1, 2),
+    cuc: num(1, 0),
+    toc,
+    tocDate: date,
+    af0: epochVals[0] ?? 0,
+    af1: epochVals[1] ?? 0,
+    af2: epochVals[2] ?? 0,
+    clockMsgType: 0, // not recorded in RINEX
+    tgd: opt(5, 2),
+    iscL1ca: opt(6, 0),
+    iscL2c: opt(6, 1),
+    iscL5i5: opt(6, 2),
+    iscL5q5: opt(6, 3),
+    ...(wnOp != null && { wnOp }),
+    integrityFlag: false, // not recorded in RINEX
+    l2cPhasing: false, // not recorded in RINEX
+    tow: num(7, 0),
+  };
+}
+
 export function parseNavFile(text: string): NavResult {
   const lines = text.split('\n');
   const header: NavHeader = {
@@ -333,6 +476,7 @@ export function parseNavFile(text: string): NavResult {
     ionoCorrections: {},
   };
   const ephemerides: Ephemeris[] = [];
+  const cnav: RinexCnavEphemeris[] = [];
 
   let inHeader = true;
   let i = 0;
@@ -410,10 +554,32 @@ export function parseNavFile(text: string): NavResult {
     if (isV4 && line.charAt(0) === '>') {
       const parts = line.substring(2).trim().split(/\s+/);
       const recType = parts[0] ?? ''; // EPH, STO, EOP, ION
+      const svSys = (parts[1] ?? '').charAt(0); // G, R, E, C, J, I, S
       const msgType = parts[2] ?? recType; // LNAV, CNAV, FDMA, etc.
 
-      if (recType !== 'EPH' || !SUPPORTED_EPH_MSGS.has(msgType)) {
-        // Skip unsupported record: advance past all its lines
+      if (recType !== 'EPH') {
+        // STO/EOP/ION records have fixed shapes (RINEX 4.01 Tables
+        // A30-A34); their msgType field (LNAV/CNVX/IFNV/...) names the
+        // source navigation message, not the record length, so it must
+        // not drive the skip. ION is 3 lines for Klobuchar/BDGIM but
+        // 2 for the Galileo NeQuick-G record.
+        const totalLines =
+          recType === 'STO'
+            ? 2
+            : recType === 'EOP'
+              ? 3
+              : recType === 'ION'
+                ? svSys === 'E'
+                  ? 2
+                  : 3
+                : 2;
+        i += totalLines + 1; // +1 for the `>` line itself
+        continue;
+      }
+
+      const isCnav = msgType === 'CNAV' && (svSys === 'G' || svSys === 'J');
+      if (!SUPPORTED_EPH_MSGS.has(msgType) && !isCnav) {
+        // Skip unsupported EPH record: advance past all its lines
         const totalLines = R4_MSG_LINES[msgType] ?? 2;
         i += totalLines + 1; // +1 for the `>` line itself
         continue;
@@ -429,6 +595,23 @@ export function parseNavFile(text: string): NavResult {
       const sys = epochLine.charAt(0);
       const parsed = parseNavEpochV3(epochLine);
       const prn = `${sys}${parsed.prn.substring(1)}`;
+
+      if (isCnav) {
+        // GPS/QZSS CNAV: position-aware fields (blanks = unavailable)
+        const slotLines: (number | null)[][] = [];
+        for (let j = 0; j < numDataLines; j++) {
+          i++;
+          if (i >= lines.length) break;
+          slotLines.push(parseDataLineSlots(lines[i]!));
+        }
+        if (slotLines.length === numDataLines && (sys === 'G' || sys === 'J')) {
+          cnav.push(
+            buildCnavEphemeris(sys, prn, parsed.date, parsed.values, slotLines)
+          );
+        }
+        i++;
+        continue;
+      }
 
       // Read data lines
       const dataLines: number[][] = [];
@@ -528,5 +711,7 @@ export function parseNavFile(text: string): NavResult {
     i++;
   }
 
-  return { header, ephemerides };
+  return cnav.length > 0
+    ? { header, ephemerides, cnav }
+    : { header, ephemerides };
 }

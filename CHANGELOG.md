@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.19.0
+
+### New features — RINEX 4 navigation
+
+- **`writeRinexNav4`** — RINEX 4.01 navigation writer: classic records with per-constellation message labels (LNAV/INAV/D1/D2/FDMA/SBAS), `EPH … CNAV` records from `CnavEphemeris` (Table A10 conventions: √A on the wire, toe ≡ toc, t_op/wn_op, blank = unavailable ISCs), and `ION` records (Klobuchar + NeQuick-G) from header iono corrections.
+- **`parseNavFile` reads v4 CNAV records** (GPS/QZSS) into a new optional `NavResult.cnav`. Round-trip write→parse is field-identical on IGS hourly files, the DLR daily v4 product (19 349 records) and v3→v4 conversions; text agreement with BKG's own records at 2.5e-13.
+
+### Fixed
+
+- **v3 nav writer flipped the GLONASS clock-bias sign** (wrote −tauN where tauN already holds the RINEX-convention value). Exported GLONASS nav records now carry the correct sign.
+- v4 nav parsing skipped ION/EOP records with wrong line counts, silently swallowing the records that followed.
+
 ## 1.18.0
 
 ### New features — modern navigation, phase 1

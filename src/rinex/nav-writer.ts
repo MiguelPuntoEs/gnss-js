@@ -25,16 +25,21 @@ import type {
  *  -1.5e-8    → "-1.500000000000E-08"
  *   5153.71875→ " 5.153718750000E+03"
  */
-function fmtD(val: number): string {
+export function fmtD(val: number): string {
   if (val === 0) return ' 0.000000000000E+00';
 
   const sign = val < 0 ? '-' : ' ';
   const abs = Math.abs(val);
-  const exp = Math.floor(Math.log10(abs));
+  let exp = Math.floor(Math.log10(abs));
   const mantissa = abs / 10 ** exp;
 
   // Format mantissa with 12 decimal digits
-  const mStr = mantissa.toFixed(12);
+  let mStr = mantissa.toFixed(12);
+  if (mStr.length > 14) {
+    // Rounding pushed the mantissa to 10.000…: renormalize
+    exp += 1;
+    mStr = (mantissa / 10).toFixed(12);
+  }
 
   // Exponent sign and two-digit magnitude
   const expSign = exp >= 0 ? '+' : '-';
@@ -164,9 +169,11 @@ function writeKeplerRecord(eph: KeplerEphemeris): string {
 function writeGlonassRecord(eph: GlonassEphemeris): string {
   const lines: string[] = [];
 
-  // SV epoch line: -tauN, +gammaN, messageFrameTime
+  // SV epoch line: SV clock bias (−TauN), +gammaN, messageFrameTime.
+  // `tauN` already holds the raw RINEX field (= −τ_n, the repo-wide
+  // convention — see positioning/index.ts), so it is written verbatim.
   lines.push(
-    `${padL(eph.prn, 3)} ${fmtEpoch(eph.tocDate)}${fmtD(-eph.tauN)}${fmtD(eph.gammaN)}${fmtD(eph.messageFrameTime)}`
+    `${padL(eph.prn, 3)} ${fmtEpoch(eph.tocDate)}${fmtD(eph.tauN)}${fmtD(eph.gammaN)}${fmtD(eph.messageFrameTime)}`
   );
 
   // Broadcast orbit lines 1-3
