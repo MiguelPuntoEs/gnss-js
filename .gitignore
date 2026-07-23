@@ -9,5 +9,9 @@
 !/test-fixtures/f9p_rawx_slice.ubx
 !/test-fixtures/f9p_sfrbx_slice.ubx
 !/test-fixtures/tudb_meas3_slice.sbf
+!/test-fixtures/f9p_iono_slice.ubx
 !/test-fixtures/tudb_nav_slice.sbf
 !/test-fixtures/dlf2_alm_slice.sbf
+!/test-fixtures/dlf2_iono_slice.sbf
+!/test-fixtures/dlf5_iono_slice.sbf
+!/test-fixtures/oem7_nav_slice.gps

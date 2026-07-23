@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { parseUbxNav, parseUbxRawx, ubxFrames } from '../src/ubx';
-import { getBitU, setBitU } from '../src/navbits';
+import {
+  parseUbxNav,
+  parseUbxIonoUtc,
+  parseUbxRawx,
+  ubxFrames,
+} from '../src/ubx';
+import { getBitU, setBitU, setBitS } from '../src/navbits';
 import type { KeplerEphemeris } from '../src/rinex/nav';
 
 const FILE = join(__dirname, '../test-fixtures/f9p_sfrbx_slice.ubx');
+const IONO_FILE = join(__dirname, '../test-fixtures/f9p_iono_slice.ubx');
 
 /** Relative-error assertion at RINEX printing precision. */
 const close = (got: number, pin: number) => {
@@ -269,5 +275,104 @@ describe.skipIf(!existsSync(FILE))('parseUbxNav (F9P slice)', () => {
     const data = new Uint8Array(readFileSync(FILE));
     const forced = parseUbxNav(data, { refWeek: 2137 });
     expect(forced.ephemerides).toEqual(res.ephemerides);
+  });
+});
+
+/* ── iono/UTC: subframe 4 page 18 ──────────────────────────────── */
+
+/**
+ * Parity-stripped LNAV subframe 4 page 18 with the raw (unscaled)
+ * coefficient words at their IS-GPS-200 bit positions.
+ */
+function page18(
+  alpha: number[],
+  beta: number[],
+  dtLs: number,
+  svId56 = 56
+): Uint8Array {
+  const b = new Uint8Array(30);
+  setBitU(b, 0, 8, 0x8b); // TLM preamble
+  setBitU(b, 43, 3, 4); // subframe ID (HOW)
+  setBitU(b, 48, 2, 1); // data ID
+  setBitU(b, 50, 6, svId56); // SV (page) ID
+  alpha.forEach((v, k) => setBitS(b, 56 + 8 * k, 8, v));
+  beta.forEach((v, k) => setBitS(b, 88 + 8 * k, 8, v));
+  setBitS(b, 192, 8, dtLs);
+  return b;
+}
+
+describe('parseUbxIonoUtc (synthetic page 18)', () => {
+  it('applies the IS-GPS-200 scale factors and reads ΔtLS', () => {
+    const res = parseUbxIonoUtc(
+      sfrbx(0, 7, page18([14, 24, -64, -128], [54, 9, -1, -6], 18))
+    );
+    expect(res.ionoCorrections['GPSA']).toEqual([
+      14 * 2 ** -30,
+      24 * 2 ** -27,
+      -64 * 2 ** -24,
+      -128 * 2 ** -24,
+    ]);
+    expect(res.ionoCorrections['GPSB']).toEqual([
+      54 * 2 ** 11,
+      9 * 2 ** 14,
+      -1 * 2 ** 16,
+      -6 * 2 ** 16,
+    ]);
+    expect(res.leapSeconds).toBe(18);
+  });
+
+  it('the latest broadcast wins', () => {
+    const res = parseUbxIonoUtc(
+      concat(
+        sfrbx(0, 7, page18([14, 24, -64, -128], [54, 9, -1, -6], 18)),
+        sfrbx(0, 9, page18([8, 0, 0, 0], [46, 0, 0, 0], 19))
+      )
+    );
+    expect(res.ionoCorrections['GPSA']).toEqual([8 * 2 ** -30, 0, 0, 0]);
+    expect(res.leapSeconds).toBe(19);
+  });
+
+  it('ignores other subframe-4 pages and QZSS satellites', () => {
+    const otherPage = parseUbxIonoUtc(
+      sfrbx(0, 7, page18([14, 24, -64, -128], [54, 9, -1, -6], 18, 63))
+    );
+    expect(otherPage.ionoCorrections).toEqual({});
+    expect(otherPage.leapSeconds).toBeNull();
+
+    const qzss = parseUbxIonoUtc(
+      sfrbx(5, 2, page18([14, 24, -64, -128], [54, 9, -1, -6], 18))
+    );
+    expect(qzss.ionoCorrections).toEqual({});
+  });
+});
+
+/**
+ * f9p_iono_slice.ubx: the RXM-SFRBX frames within ±12 kB of the first
+ * GPS subframe-4 page-18 broadcast in rtklibexplorer's F9P PPP dataset
+ * (rover.ubx, 2020-12-24) — 155 frames, several satellites. Expected
+ * values are pinned from RTKLIB demo5 convbin's RINEX 3.04 nav header
+ * (-oi -ot -ol) for the FULL rover.ubx: each coefficient below rounds
+ * to exactly the %12.4E value convbin printed (GPSA 8.382e-9 ... ,
+ * GPSB 94210 ...) and leapSeconds equals its LEAP SECONDS (18); see
+ * oracle-iono.tmp.mjs (ALL PASS). Raw words are exact multiples of the
+ * scale factors (beta_0 94208 = 46·2^11), so equality is exact.
+ */
+describe.skipIf(!existsSync(IONO_FILE))('parseUbxIonoUtc (F9P slice)', () => {
+  const res = existsSync(IONO_FILE)
+    ? parseUbxIonoUtc(new Uint8Array(readFileSync(IONO_FILE)))
+    : null!;
+
+  it('matches the convbin GPSA/GPSB header coefficients', () => {
+    expect(res.ionoCorrections['GPSA']).toEqual([
+      8.381903171539307e-9, -1.4901161193847656e-8, -5.960464477539063e-8,
+      1.1920928955078125e-7,
+    ]);
+    expect(res.ionoCorrections['GPSB']).toEqual([
+      94208, -131072, -131072, 851968,
+    ]);
+  });
+
+  it('reads ΔtLS = 18 (convbin LEAP SECONDS)', () => {
+    expect(res.leapSeconds).toBe(18);
   });
 });

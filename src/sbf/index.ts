@@ -38,6 +38,8 @@ export {
   type SbfGlonassAlmanac,
 } from './nav';
 
+export { parseSbfIonoUtc, type SbfIonoUtcResult } from './iono';
+
 export interface SbfMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23" (SBAS PRN-100). */
   prn: string;

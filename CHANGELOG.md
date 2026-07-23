@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.17.0
+
+### New features — receiver logs as complete navigation sources
+
+- **NovAtel Galileo/BeiDou/QZSS ephemerides** — GALEPHEMERIS 1122 and BDSEPHEMERIS 1696 in `parseNovatelNav`, oracle-validated 107/107 records against convbin on a public OEM719 capture (WHU RTK-GNSS, MIT). QZSSEPHEMERIS 1336 ported from the OEM7 manual (no RTKLIB decoder and no public capture exists — synthetic-tested, marked data-untested).
+- **Broadcast ionosphere + leap seconds, all three formats** — NovAtel IONUTC 8 (data-tested), SBF `parseSbfIonoUtc` (GPSIon/GALIon/BDSIon/GPSUtc), and u-blox `parseUbxIonoUtc` (GPS LNAV subframe 4 page 18 from RXM-SFRBX). All return the RINEX header `ionoCorrections` shape (GPSA/GPSB/GAL/BDSA/BDSB) + `leapSeconds`. Convergence check: Hans's PolaRx (decoded SBF floats) and a ZED-F9P (raw LNAV bits) yield structurally identical Klobuchar sets; convbin header oracle passes on every capture.
+
 ## 1.16.0
 
 ### New features

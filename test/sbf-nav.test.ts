@@ -1,12 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { parseSbfNav, parseSbfAlmanac } from '../src/sbf';
+import {
+  parseSbfNav,
+  parseSbfAlmanac,
+  parseSbfIonoUtc,
+  sbfCrc16,
+} from '../src/sbf';
 import type { SbfGlonassAlmanac, SbfKeplerAlmanac } from '../src/sbf';
 import type { GlonassEphemeris, KeplerEphemeris } from '../src/rinex/nav';
 
 const NAV_FILE = join(__dirname, '../test-fixtures/tudb_nav_slice.sbf');
 const ALM_FILE = join(__dirname, '../test-fixtures/dlf2_alm_slice.sbf');
+const IONO5_FILE = join(__dirname, '../test-fixtures/dlf5_iono_slice.sbf');
+const IONO2_FILE = join(__dirname, '../test-fixtures/dlf2_iono_slice.sbf');
 
 /** RINEX prints ~13 significant digits; require agreement to that. */
 function relClose(actual: number, expected: number) {
@@ -215,5 +222,145 @@ describe.skipIf(!existsSync(ALM_FILE))('parseSbfAlmanac (DLF2 slice)', () => {
     expect(a.sqrtA).toBeCloseTo(6493.2412109375, 8);
     expect(a.omegaDot).toBeCloseTo(-1.8857928365553228e-9, 20);
     expect(a.af0).toBeCloseTo(0.0002994537353515625, 15);
+  });
+});
+
+/* ================================================================== */
+/*  Iono / UTC blocks                                                 */
+/* ================================================================== */
+
+/** Wrap an SBF payload (starting at TOW) in a framed, CRC'd block. */
+function sbfBlock(id: number, payload: number[]): Uint8Array {
+  const len = 8 + payload.length;
+  const out = new Uint8Array(len);
+  out[0] = 0x24;
+  out[1] = 0x40;
+  const view = new DataView(out.buffer);
+  view.setUint16(4, id, true);
+  view.setUint16(6, len, true);
+  out.set(payload, 8);
+  view.setUint16(2, sbfCrc16(out, 4, len), true);
+  return out;
+}
+
+/** GPSIon/BDSIon payload: TOW, WNc, PRN, then alpha_0..3 + beta_0..3. */
+function ionPayload(coeffs: number[]): number[] {
+  const buf = new Uint8Array(48 - 8);
+  const view = new DataView(buf.buffer);
+  view.setUint32(0, 431997000, true); // TOW
+  view.setUint16(4, 2428, true); // WNc
+  buf[6] = 12; // PRN
+  coeffs.forEach((c, k) => view.setFloat32(8 + 4 * k, c, true));
+  return [...buf];
+}
+
+describe('parseSbfIonoUtc (synthetic blocks)', () => {
+  const ALPHA = [1.30385160446167e-8, 2.2351741790771484e-8, 0, 0];
+  const BETA = [110592, 147456, -65536, -393216];
+
+  it('decodes a GPSIon block into GPSA/GPSB', () => {
+    const res = parseSbfIonoUtc(
+      sbfBlock(5893, ionPayload([...ALPHA, ...BETA]))
+    );
+    expect(res.ionoCorrections).toEqual({ GPSA: ALPHA, GPSB: BETA });
+    expect(res.leapSeconds).toBeNull();
+  });
+
+  it('keys a BDSIon block (same layout) as BDSA/BDSB', () => {
+    const res = parseSbfIonoUtc(
+      sbfBlock(4120, ionPayload([...ALPHA, ...BETA]))
+    );
+    expect(res.ionoCorrections).toEqual({ BDSA: ALPHA, BDSB: BETA });
+  });
+
+  it('the latest block of a repeated type wins', () => {
+    const a = sbfBlock(5893, ionPayload([...ALPHA, ...BETA]));
+    const b = sbfBlock(
+      5893,
+      ionPayload([9.313225746154785e-9, 0, 0, 0, 98304, 0, 0, 0])
+    );
+    const stream = new Uint8Array(a.length + b.length);
+    stream.set(a);
+    stream.set(b, a.length);
+    const res = parseSbfIonoUtc(stream);
+    expect(res.ionoCorrections['GPSA']).toEqual([
+      9.313225746154785e-9, 0, 0, 0,
+    ]);
+    expect(res.ionoCorrections['GPSB']).toEqual([98304, 0, 0, 0]);
+  });
+
+  it('skips blocks carrying the f4 do-not-use value', () => {
+    const good = sbfBlock(5893, ionPayload([...ALPHA, ...BETA]));
+    const dnu = sbfBlock(5893, ionPayload([-2e10, ...ALPHA.slice(1), ...BETA]));
+    const stream = new Uint8Array(good.length + dnu.length);
+    stream.set(good);
+    stream.set(dnu, good.length);
+    const res = parseSbfIonoUtc(stream);
+    expect(res.ionoCorrections['GPSA']).toEqual(ALPHA); // DNU did not stomp
+  });
+});
+
+/**
+ * dlf5_iono_slice.sbf: the first 2 GPSIon + the single GPSUtc block of
+ * the DLF5 mosaic-X5 log dlf5_long.sbf (TU Delft caster, 2026-07-23).
+ * dlf2_iono_slice.sbf: the GPSIon + GALIon + BDSIon blocks of Hans van
+ * der Marel's DLF2 PolaRx5 log DLF2204f.26_.A (2026-07-23).
+ *
+ * Expected values are pinned from RTKLIB demo5 convbin's RINEX 3.04
+ * nav headers (-oi -ot -ol) for the same full files: every GPSA/GPSB/
+ * GAL/BDSA/BDSB coefficient below rounds to exactly the %12.4E value
+ * convbin printed, and leapSeconds equals the LEAP SECONDS field
+ * (oracle-iono.tmp.mjs, ALL PASS). The f4 pass-through is exact: each
+ * pinned coefficient is an exact multiple of its IS-GPS-200/BDS ICD
+ * scale factor (e.g. beta_0 110592 = 54·2^11), confirming SBF stores
+ * the RINEX semicircle-based units unscaled.
+ */
+describe.skipIf(!existsSync(IONO5_FILE))('parseSbfIonoUtc (DLF5 slice)', () => {
+  const res = existsSync(IONO5_FILE)
+    ? parseSbfIonoUtc(new Uint8Array(readFileSync(IONO5_FILE)))
+    : null!;
+
+  it('decodes GPSIon into the convbin GPSA/GPSB coefficients', () => {
+    expect(res.ionoCorrections['GPSA']).toEqual([
+      1.30385160446167e-8, 2.2351741790771484e-8, -5.960464477539063e-8,
+      -1.1920928955078125e-7,
+    ]);
+    expect(res.ionoCorrections['GPSB']).toEqual([
+      110592, 147456, -65536, -393216,
+    ]);
+  });
+
+  it('takes DEL_t_LS from GPSUtc (convbin LEAP SECONDS)', () => {
+    expect(res.leapSeconds).toBe(18);
+  });
+});
+
+describe.skipIf(!existsSync(IONO2_FILE))('parseSbfIonoUtc (DLF2 slice)', () => {
+  const res = existsSync(IONO2_FILE)
+    ? parseSbfIonoUtc(new Uint8Array(readFileSync(IONO2_FILE)))
+    : null!;
+
+  it('decodes GALIon into the RINEX GAL NeQuick-G coefficients', () => {
+    expect(res.ionoCorrections['GAL']).toEqual([
+      114, -0.05859375, 0.020172119140625,
+    ]);
+  });
+
+  it('decodes BDSIon into BDSA/BDSB', () => {
+    expect(res.ionoCorrections['BDSA']).toEqual([
+      2.2351741790771484e-8, 6.705522537231445e-8, -8.344650268554688e-7,
+      1.3113021850585938e-6,
+    ]);
+    expect(res.ionoCorrections['BDSB']).toEqual([
+      155648, -507904, 4063232, -3538944,
+    ]);
+  });
+
+  it('decodes GPSIon and leaves leapSeconds null without GPSUtc', () => {
+    expect(res.ionoCorrections['GPSA']).toEqual([
+      1.30385160446167e-8, 2.2351741790771484e-8, -5.960464477539063e-8,
+      -1.1920928955078125e-7,
+    ]);
+    expect(res.leapSeconds).toBeNull();
   });
 });

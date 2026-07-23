@@ -18,12 +18,14 @@
  *
  * Other constellations in RXM-SFRBX (Galileo I/NAV, BDS D1/D2, GLONASS
  * strings, SBAS) and GPS/QZSS CNAV are out of scope and skipped
- * silently, as are LNAV subframes 4/5 (iono/UTC/almanac pages).
+ * silently. LNAV subframes 4/5 are skipped here except that
+ * `parseUbxIonoUtc` (./iono.ts) decodes the subframe-4 page-18
+ * iono/UTC parameters through the shared `readLnavSubframe` helper.
  */
 
 import { decodeGpsLnavFrame, getBitU, setBitU } from '../navbits';
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
-import { ubxFrames } from './frame';
+import { ubxFrames, type UbxFrame } from './frame';
 
 /** CNAV message preamble (IS-GPS-200 §30.3.3) — flags L2C messages. */
 const PREAMB_CNAV = 0x8b;
@@ -54,6 +56,65 @@ interface SubframeBuffer {
   buf: Uint8Array;
   /** Bitmask of buffered subframes: bit (id − 1) set once id was seen. */
   have: number;
+}
+
+/** One parity-stripped GPS/QZSS LNAV subframe from an RXM-SFRBX frame. */
+export interface LnavSubframe {
+  /** RINEX PRN, e.g. "G07" or "J02". */
+  prn: string;
+  gnssId: number;
+  svId: number;
+  /** Ten 24-bit data words (parity dropped), packed MSB-first. */
+  buff: Uint8Array;
+  /** Subframe ID from the HOW word — NOT validated (0–7 possible). */
+  id: number;
+}
+
+/**
+ * Extract the GPS/QZSS LNAV subframe carried by one RXM-SFRBX frame,
+ * or null when the frame is not a decodable LNAV broadcast (other
+ * constellations, QZSS L1S, CNAV, short payloads). Shared by
+ * `parseUbxNav` (ephemerides) and `parseUbxIonoUtc` (subframe 4).
+ */
+export function readLnavSubframe(
+  view: DataView,
+  f: UbxFrame
+): LnavSubframe | null {
+  const p = f.payload;
+  if (p.length < 8) return null;
+  const gnssId = p[0]!;
+  const svId = p[1]!;
+
+  let prn: string;
+  if (gnssId === 0 && svId >= 1 && svId <= 32) {
+    prn = `G${String(svId).padStart(2, '0')}`;
+  } else if (gnssId === 5 && svId >= 1 && svId <= 10) {
+    // QZSS L1S is delivered as a 44-byte SFRBX payload (RTKLIB:
+    // raw->len==52) and carries an SBAS-format message — skip.
+    if (p.length === 44) return null;
+    prn = `J${String(svId).padStart(2, '0')}`;
+  } else {
+    return null; // other constellations: out of scope, skip silently
+  }
+
+  // GPS/QZSS LNAV needs the full 10 words (RTKLIB len check).
+  if (p.length < 8 + 40) return null;
+  const base = f.payloadStart + 8;
+
+  // CNAV (L2C/L5) shares the message class; its 32-bit packing puts
+  // the 0x8B preamble in the top byte of the first word.
+  if (view.getUint32(base, true) >>> 24 === PREAMB_CNAV) return null;
+
+  // 30-bit LNAV words in the 30 LSBs of each dwrd, polarity already
+  // resolved by the receiver: drop the 6 parity bits, keep 24 data
+  // bits per word (RTKLIB decode_nav — no D30* re-inversion needed).
+  const buff = new Uint8Array(30);
+  for (let k = 0; k < 10; k++) {
+    const dwrd = view.getUint32(base + 4 * k, true);
+    setBitU(buff, 24 * k, 24, (dwrd >>> 6) & 0xffffff);
+  }
+
+  return { prn, gnssId, svId, buff, id: getBitU(buff, 43, 3) };
 }
 
 /**
@@ -93,46 +154,15 @@ export function parseUbxNav(
 
   for (const f of ubxFrames(data)) {
     if (f.msgClass !== 0x02 || f.msgId !== 0x13) continue;
-    const p = f.payload;
-    if (p.length < 8) continue;
-    const gnssId = p[0]!;
-    const svId = p[1]!;
+    const lnav = readLnavSubframe(view, f);
+    if (!lnav) continue;
+    const { prn, gnssId, svId, buff, id } = lnav;
 
-    let prn: string;
-    if (gnssId === 0 && svId >= 1 && svId <= 32) {
-      prn = `G${String(svId).padStart(2, '0')}`;
-    } else if (gnssId === 5 && svId >= 1 && svId <= 10) {
-      // QZSS L1S is delivered as a 44-byte SFRBX payload (RTKLIB:
-      // raw->len==52) and carries an SBAS-format message — skip.
-      if (p.length === 44) continue;
-      prn = `J${String(svId).padStart(2, '0')}`;
-    } else {
-      continue; // other constellations: out of scope, skip silently
-    }
-
-    // GPS/QZSS LNAV needs the full 10 words (RTKLIB len check).
-    if (p.length < 8 + 40) continue;
-    const base = f.payloadStart + 8;
-
-    // CNAV (L2C/L5) shares the message class; its 32-bit packing puts
-    // the 0x8B preamble in the top byte of the first word.
-    if (view.getUint32(base, true) >>> 24 === PREAMB_CNAV) continue;
-
-    // 30-bit LNAV words in the 30 LSBs of each dwrd, polarity already
-    // resolved by the receiver: drop the 6 parity bits, keep 24 data
-    // bits per word (RTKLIB decode_nav — no D30* re-inversion needed).
-    const buff = new Uint8Array(30);
-    for (let k = 0; k < 10; k++) {
-      const dwrd = view.getUint32(base + 4 * k, true);
-      setBitU(buff, 24 * k, 24, (dwrd >>> 6) & 0xffffff);
-    }
-
-    const id = getBitU(buff, 43, 3); // subframe ID in the HOW word
     if (id < 1 || id > 5) {
       badParity++;
       continue;
     }
-    if (id > 3) continue; // subframes 4/5: iono/UTC/almanac, out of scope
+    if (id > 3) continue; // subframes 4/5: handled by parseUbxIonoUtc
 
     const key = gnssId * 256 + svId;
     let sf = subframes.get(key);
