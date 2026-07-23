@@ -26,6 +26,8 @@
 
 import { scanSbfFrames, svidToPrn } from './frame';
 
+export { scanSbfFrames, crc16 as sbfCrc16 } from './frame';
+
 export {
   parseSbfNav,
   parseSbfAlmanac,

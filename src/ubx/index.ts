@@ -13,6 +13,13 @@
  * facto reference: GPS L2 CL/CM as 2X, Galileo E1 as 1X, E5b as 7X).
  */
 
+import { ubxFrames } from './frame';
+
+export { ubxFrames } from './frame';
+export type { UbxFrame } from './frame';
+export { parseUbxNav } from './nav';
+export type { UbxNavOptions, UbxNavResult } from './nav';
+
 export interface UbxMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23". */
   prn: string;
@@ -95,40 +102,18 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
   const epochs: UbxRawxEpoch[] = [];
   const messageCounts: Record<string, number> = {};
   const obsCodes: Record<string, string[]> = {};
-  let badChecksums = 0;
+  const stats = { badChecksums: 0 };
 
-  let i = 0;
-  while (i + 8 <= data.length) {
-    if (data[i] !== 0xb5 || data[i + 1] !== 0x62) {
-      i++;
-      continue;
-    }
-    const cls = data[i + 2]!;
-    const id = data[i + 3]!;
-    const len = data[i + 4]! | (data[i + 5]! << 8);
-    const end = i + 6 + len + 2;
-    if (end > data.length) break;
-
-    // Fletcher-8 over class..payload
-    let ckA = 0;
-    let ckB = 0;
-    for (let j = i + 2; j < i + 6 + len; j++) {
-      ckA = (ckA + data[j]!) & 0xff;
-      ckB = (ckB + ckA) & 0xff;
-    }
-    if (ckA !== data[i + 6 + len] || ckB !== data[i + 7 + len]) {
-      badChecksums++;
-      i++;
-      continue;
-    }
-
+  for (const frame of ubxFrames(data, stats)) {
+    const { msgClass: cls, msgId: id } = frame;
+    const len = frame.payload.length;
     const key = `${cls.toString(16).padStart(2, '0')}-${id
       .toString(16)
       .padStart(2, '0')}`;
     messageCounts[key] = (messageCounts[key] ?? 0) + 1;
 
     if (cls === 0x02 && id === 0x15 && len >= 16) {
-      const p = i + 6;
+      const p = frame.payloadStart;
       const rcvTow = view.getFloat64(p, true); // s of GPS week
       const week = view.getUint16(p + 8, true);
       const leapS = view.getInt8(p + 10);
@@ -174,8 +159,7 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
         meas,
       });
     }
-    i = end;
   }
 
-  return { epochs, messageCounts, obsCodes, badChecksums };
+  return { epochs, messageCounts, obsCodes, badChecksums: stats.badChecksums };
 }

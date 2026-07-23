@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.16.0
+
+### New features
+
+- **u-blox navigation from raw subframes** — `parseUbxNav` (`gnss-js/ubx`): GPS and QZSS broadcast ephemerides assembled from RXM-SFRBX LNAV subframes (per-satellite subframe 1-3 assembly, IODC/IODE consistency gating, week resolved from RXM-RAWX in the same stream or a `refWeek` option — never the system clock). Oracle: 22/22 GPS records on a full ZED-F9P capture vs convbin at the printing quantum. UBX logs now carry their own nav like SBF and NovAtel.
+- **`ubxFrames`** public framing iterator (Fletcher-8-checked), mirroring `oem4Frames`; `parseUbxRawx` rebuilt on it.
+- **`scanSbfFrames`** re-exported from `gnss-js/sbf` for external frame-level tooling.
+
 ## 1.15.0
 
 ### New features — navigation and almanacs from receiver logs
