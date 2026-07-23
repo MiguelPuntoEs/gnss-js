@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.22.0
+
+### New features — u-blox drops become four-constellation nav sources
+
+- **`parseUbxRawNav`** (`gnss-js/ubx`): Galileo I/NAV (E1B+E5b), BeiDou D1/D2 and GLONASS strings decoded from RXM-SFRBX through the shared navbits assemblers — the u-blox counterpart of the SBF raw-frame suite. Oracle vs RTKLIB convbin on a full 75-minute ZED-F9P capture: **62/62 Galileo, 17/17 BeiDou, 37/37 GLONASS records**, worst rel err 4.7e-12, zero missed. BeiDou words get a real BCH(15,11,1) parity check (RTKLIB checks none on this path); GLONASS time reference from interleaved RXM-RAWX, never the system clock.
+
 ## 1.21.0
 
 ### New features — Galileo HAS

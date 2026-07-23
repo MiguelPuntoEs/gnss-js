@@ -167,3 +167,6 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
 
   return { epochs, messageCounts, obsCodes, badChecksums: stats.badChecksums };
 }
+
+export { parseUbxRawNav } from './rawnav';
+export type { UbxRawNavOptions, UbxRawNavResult } from './rawnav';
