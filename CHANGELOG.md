@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.24.0
+
+### New features — RTK stage 2: integer ambiguity resolution
+
+- **MLAMBDA** (`gnss-js/positioning`): LtDL decorrelation + shrinking-ellipsoid integer search (RTKLIB lambda.c port, brute-force-verified on classic problems), exposed as `lambdaSearch`/`lambdaReduction`.
+- **`RtkFloatEngine` fixes integers**: opt-in `ambiguityResolution: 'instant'` conditions the position on validated integer ambiguities (ratio test, elevation-ordered partial fixing with a half-set floor against cold-start false fixes). Oracle vs RTKLIB rnx2rtkp on the WHU base/rover pair: 99.3% vs 100% fix rate (all misses = first 40 s warm-up), commonly-fixed baselines agree at 2-3 cm, **1.05 cm horizontal RMS vs the surveyed truth, 0 wrong fixes in 1,447 epochs**. Default stays 'off' — stage-1 behavior untouched.
+
 ## 1.23.0
 
 ### New features — RTK stage 1

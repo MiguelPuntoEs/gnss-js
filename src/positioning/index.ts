@@ -399,3 +399,6 @@ export type {
   RtkFloatOptions,
   RtkFloatSolution,
 } from './rtk';
+
+export { lambdaSearch, lambdaReduction } from './lambda';
+export type { LambdaResult } from './lambda';
