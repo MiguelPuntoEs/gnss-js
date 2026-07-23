@@ -484,3 +484,32 @@ describe('msmEpochToDate BDS convention', () => {
     expect(bds.getTime()).toBe(gps.getTime());
   });
 });
+
+describe('msmEpochToDate — GPS-scale convention', () => {
+  // Real DELF00NLD0 capture, cross-checked against RTKLIB convbin:
+  // GPS tow 355229000 ms in week 2427+? tagged 2026-07-23 02:40:29 GPS.
+  // The old implementation subtracted leap seconds (returning UTC),
+  // which put every downstream satellite position 18 s early.
+  it('maps a GPS MSM epoch to the GPS clock face, not UTC', () => {
+    const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
+    const d = msmEpochToDate('G', 355229000, ref);
+    expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
+  });
+
+  it('keeps GLONASS on the same scale (UTC+3h day time + leap)', () => {
+    // GLONASS epoch for the same instant: GPS 02:40:29 = UTC 02:40:11
+    // = Moscow 05:40:11 on Thursday (dow 4).
+    const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
+    const msOfDay = ((5 * 60 + 40) * 60 + 11) * 1000;
+    const epochMs = (4 << 27) | msOfDay;
+    const d = msmEpochToDate('R', epochMs, ref);
+    expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
+  });
+
+  it('keeps BDS on the same scale (BDT = GPS − 14 s)', () => {
+    // Same instant in BDS SOW: GPS tow 355229 s − 14 s = 355215 s
+    const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
+    const d = msmEpochToDate('C', 355215000, ref);
+    expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
+  });
+});

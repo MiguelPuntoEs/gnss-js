@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.1
+
+### Bug fixes
+
+- **`msmEpochToDate` returned UTC instead of GPS-scale time** — every consumer of epoch milliseconds in this library (satellite propagation, SPP, RINEX epoch tags) uses the GPS clock-face convention, so the 18-leap-second offset put satellite positions ±14 km wrong per satellite. Live SPP from an NTRIP stream scattered by kilometres; RINEX files recorded from streams carried epoch tags 18 s off. All three time branches (GPS-scale, GLONASS UTC+3h, BDS) now return the same GPS-scale instant, pinned by regression tests against an RTKLIB-verified capture. End-to-end validation on a real caster stream: single-frequency SPP now lands at 1.1/1.0/4.8 m E/N/U RMS against the station's surveyed position.
+
 ## 1.14.0
 
 ### New features — receiver raw formats

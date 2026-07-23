@@ -9,6 +9,7 @@
  */
 
 import { BitReader, reportDecodeError } from './decoder';
+import { getGpsLeap } from '../time/utc';
 import type { Rtcm3Frame } from './decoder';
 import {
   C_LIGHT,
@@ -644,6 +645,14 @@ const MS_PER_WEEK = MILLISECONDS_IN_WEEK;
  *
  * Requires an approximate reference time to resolve the current week.
  */
+/**
+ * NOTE: returns a GPS-scale Date — the clock-face convention used by
+ * the RINEX parser and every consumer of epoch milliseconds in this
+ * library (satellite propagation, SPP, RINEX epoch tags). It is NOT
+ * UTC: converting to UTC here put every downstream satellite position
+ * 18 s (the current leap-second count) off — a ±14 km per-satellite
+ * range error that scattered live SPP solutions by kilometres.
+ */
 export function msmEpochToDate(
   sys: string,
   epochMs: number,
@@ -664,7 +673,8 @@ export function msmEpochToDate(
     // Clamp to within ±3 days of ref
     while (t - refMs > 3 * dayMs) t -= 7 * dayMs;
     while (refMs - t > 3 * dayMs) t += 7 * dayMs;
-    return new Date(t);
+    // GLONASS runs on UTC — lift onto the GPS scale
+    return new Date(t + getGpsLeap(new Date(t)) * 1000);
   }
 
   if (sys === 'C') {
@@ -676,8 +686,7 @@ export function msmEpochToDate(
     // Adjust if more than half a week off
     if (t - refMs > MS_PER_WEEK / 2) t -= MS_PER_WEEK;
     else if (refMs - t > MS_PER_WEEK / 2) t += MS_PER_WEEK;
-    t -= 18000; // GPS scale → UTC (current leap seconds)
-    return new Date(t);
+    return new Date(t); // already on the GPS-scale axis
   }
 
   // GPS / Galileo / QZSS / SBAS / NavIC
@@ -686,9 +695,7 @@ export function msmEpochToDate(
   // Adjust for week rollover
   if (t - refMs > MS_PER_WEEK / 2) t -= MS_PER_WEEK;
   else if (refMs - t > MS_PER_WEEK / 2) t += MS_PER_WEEK;
-  // GPS time is currently 18s ahead of UTC (leap seconds since 1980)
-  t -= 18000;
-  return new Date(t);
+  return new Date(t); // GPS scale — no leap adjustment
 }
 
 /**
