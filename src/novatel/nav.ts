@@ -28,6 +28,7 @@
  */
 
 import { decodeGpsLnavFrame } from '../navbits';
+import { CnavAssembler, cnavCrcOk, type CnavEphemeris } from '../navbits/cnav';
 import type {
   Ephemeris,
   GlonassEphemeris,
@@ -37,6 +38,7 @@ import { getUtcDate } from '../time/utc';
 import { oem4Frames } from './frame';
 
 const ID_IONUTC = 8;
+const ID_RAWCNAVFRAME = 1066;
 const ID_RAWEPHEM = 41;
 const ID_GLOEPHEMERIS = 723;
 const ID_GALEPHEMERIS = 1122;
@@ -80,6 +82,13 @@ export interface NovatelNavResult {
   ionoCorrections: Record<string, number[]>;
   /** GPS−UTC leap seconds (Δt_LS) from IONUTC, null when unseen. */
   leapSeconds: number | null;
+  /**
+   * GPS CNAV ephemerides assembled from RAWCNAVFRAME (1066) raw
+   * L2C/L5 messages, repeats suppressed by the shared assembler.
+   */
+  cnav: CnavEphemeris[];
+  /** RAWCNAVFRAME messages whose CRC-24Q check failed (dropped). */
+  cnavBadCrc: number;
   /** Frames whose CRC failed (corruption indicator). */
   badCrc: number;
 }
@@ -359,6 +368,9 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
   const ephemerides: Ephemeris[] = [];
   const ionoCorrections: Record<string, number[]> = {};
   let leapSeconds: number | null = null;
+  const cnav: CnavEphemeris[] = [];
+  const cnavAssembler = new CnavAssembler();
+  let cnavBadCrc = 0;
   // Last Keplerian record per dedup key ("G07", "J01", "C11",
   // "E12:inav"/"E12:fnav" — Galileo dedups per data source, RTKLIB's
   // MAXSAT*set slots).
@@ -405,6 +417,19 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
     } else if (frame.id === ID_QZSSEPHEMERIS && frame.msgLen >= 204) {
       const eph = decodeGpsQzssEphemeris(view, frame.payload, 'J');
       if (eph) pushKepler(eph.prn, eph);
+    } else if (frame.id === ID_RAWCNAVFRAME && frame.msgLen >= 50) {
+      // OEM7 manual §3.165: signal channel u4, PRN u4, frame ID u4,
+      // then the 300-bit CNAV message in 38 bytes. Same payload the
+      // SBF/UBX paths carry — one shared assembler; the message's own
+      // PRN field governs (QZSS frames fall outside its 1-32 range
+      // and are ignored, like the SBF path).
+      const msg = data.subarray(frame.payload + 12, frame.payload + 50);
+      if (!cnavCrcOk(msg)) {
+        cnavBadCrc++;
+      } else {
+        const eph = cnavAssembler.push(msg);
+        if (eph) cnav.push(eph);
+      }
     } else if (frame.id === ID_IONUTC && frame.msgLen >= 108) {
       const p = frame.payload;
       const alpha: number[] = [];
@@ -432,5 +457,12 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
     }
   }
 
-  return { ephemerides, ionoCorrections, leapSeconds, badCrc: stats.badCrc };
+  return {
+    ephemerides,
+    ionoCorrections,
+    leapSeconds,
+    cnav,
+    cnavBadCrc,
+    badCrc: stats.badCrc,
+  };
 }

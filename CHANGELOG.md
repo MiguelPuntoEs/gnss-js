@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.20.0
+
+### New features — raw-frame navigation completes, almanacs propagate
+
+- **Galileo I/NAV + F/NAV from raw pages** — `parseSbfGalNav` (GALRawINAV/GALRawFNAV): 34/34 records vs RTKLIB convbin at 4e-12; I/NAV-vs-F/NAV clock-set semantics per the OS ICD; raw-vs-receiver-decoded agreement at 2e-15.
+- **BeiDou D1/D2 + GLONASS strings from raw frames** — `parseSbfBdsNav`/`parseSbfGloNav` (BDSRaw/GLORawCA): 15/15 + 11/11 vs convbin; own BCH(15,11,1) and Hamming-KX checks (matching the receiver's CRC verdicts on all 7,456 BDS blocks); fixes RTKLIB's inverted BDS week fold near rollovers (documented).
+- **NovAtel RAWCNAVFRAME (1066)** — GPS CNAV via the shared assembler; validated by wrapping real oracle-validated L2C messages in synthetic containers.
+- **Almanac propagation, all constellations** — `almanacSatPosition` (GPS/GAL/BDS Kepler almanacs, BDS-GEO frame, unfolded multi-day offsets) and `glonassAlmanacPosition` (GLONASS ICD A.3.2 algorithm incl. C20 corrections; the ICD's worked example reproduced to 0.14 m — and a 278 km misprint in the English edition identified). Real-data: PolaRx almanacs propagated 2 days land 1.2-2.6 km (GAL) and ≤6.4 km (GLO, 24/24 slots) from broadcast ephemerides.
+
 ## 1.19.0
 
 ### New features — RINEX 4 navigation

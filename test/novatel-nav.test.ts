@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { crc32, parseNovatelNav } from '../src/novatel';
+import { parseSbfCnav, scanSbfFrames } from '../src/sbf';
+import { getBitU } from '../src/navbits';
 import type { GlonassEphemeris, KeplerEphemeris } from '../src/rinex/nav';
 
 const FILE = join(__dirname, '../test-fixtures/oemv_rangecmp.gps');
 const OEM7_FILE = join(__dirname, '../test-fixtures/oem7_nav_slice.gps');
+const SBF_CNAV_FILE = join(__dirname, '../test-fixtures/dlf5_cnav_slice.sbf');
 
 /** Relative-error assertion at RINEX printing precision. */
 const close = (got: number, pin: number) => {
@@ -676,3 +679,116 @@ describe('parseNovatelNav (synthetic frames)', () => {
     expect(res.leapSeconds).toBe(18);
   });
 });
+
+/**
+ * RAWCNAVFRAME (1066) has no public capture; the container layout is
+ * the OEM7 manual §3.165 (signal channel U4, PRN U4, frame ID U4,
+ * 38-byte raw CNAV message). Rather than synthesizing field values,
+ * these tests wrap the REAL oracle-validated L2C messages from the
+ * committed SBF fixture in synthetic NovAtel frames: the payload is
+ * genuine broadcast data, only the container is constructed, and the
+ * decode must equal parseSbfCnav's output for the same bits.
+ */
+describe.skipIf(!existsSync(SBF_CNAV_FILE))(
+  'parseNovatelNav RAWCNAVFRAME (real payload, synthetic container)',
+  () => {
+    const buildFrame = (payload: Uint8Array): Uint8Array => {
+      const frame = new Uint8Array(28 + payload.length + 4);
+      const dv = new DataView(frame.buffer);
+      frame.set([0xaa, 0x44, 0x12, 28]);
+      dv.setUint16(4, 1066, true);
+      frame[6] = 0x00; // binary format
+      dv.setUint16(8, payload.length, true);
+      dv.setUint16(14, 2428, true);
+      dv.setUint32(16, 355_200_000, true);
+      frame.set(payload, 28);
+      dv.setUint32(
+        28 + payload.length,
+        crc32(frame, 0, 28 + payload.length),
+        true
+      );
+      return frame;
+    };
+
+    const sbfBytes = existsSync(SBF_CNAV_FILE)
+      ? new Uint8Array(readFileSync(SBF_CNAV_FILE))
+      : new Uint8Array(0);
+
+    // Extract the raw 300-bit L2C messages from the SBF blocks the
+    // same way src/sbf/rawnav.ts does, then wrap each in a 1066 frame.
+    const messages: Uint8Array[] = [];
+    if (sbfBytes.length > 0) {
+      const view = new DataView(
+        sbfBytes.buffer,
+        sbfBytes.byteOffset,
+        sbfBytes.byteLength
+      );
+      scanSbfFrames(sbfBytes, view, (id, b, len) => {
+        if (id !== 4018 || len < 60) return; // GPSRawL2C only
+        const msg = new Uint8Array(38);
+        for (let k = 0; k < 10; k++) {
+          const w = view.getUint32(b + 20 + 4 * k, true);
+          for (let j = 0; j < 4; j++) {
+            const idx = 4 * k + (3 - j);
+            if (idx < 38) msg[idx] = (w >>> (8 * j)) & 0xff;
+          }
+        }
+        messages.push(msg);
+      });
+    }
+
+    it('assembles the same ephemerides as the SBF path from the same bits', () => {
+      expect(messages.length).toBeGreaterThan(10);
+      const stream = new Uint8Array(
+        messages.reduce((a, m) => a + 28 + 50 + 4 - 38 + m.length, 0)
+      );
+      let o = 0;
+      for (const msg of messages) {
+        const payload = new Uint8Array(50);
+        const pdv = new DataView(payload.buffer);
+        pdv.setUint32(0, 0, true); // signal channel
+        pdv.setUint32(4, getBitU(msg, 8, 6), true); // PRN
+        pdv.setUint32(8, getBitU(msg, 14, 6), true); // frame/message type
+        payload.set(msg, 12);
+        const f = buildFrame(payload);
+        stream.set(f, o);
+        o += f.length;
+      }
+
+      const nov = parseNovatelNav(stream.subarray(0, o));
+      expect(nov.badCrc).toBe(0);
+      expect(nov.cnavBadCrc).toBe(0);
+
+      const sbf = parseSbfCnav(sbfBytes).ephemerides.filter(
+        (e) => e.signal === 'L2C'
+      );
+      expect(nov.cnav.length).toBe(sbf.length);
+      for (let i = 0; i < sbf.length; i++) {
+        const a = nov.cnav[i]! as unknown as Record<string, unknown>;
+        const b = sbf[i]! as unknown as Record<string, unknown>;
+        for (const k of Object.keys(a)) {
+          if (k === 'signal') continue;
+          const va = a[k];
+          const vb = b[k];
+          if (va instanceof Date) {
+            expect((vb as Date).getTime(), k).toBe(va.getTime());
+          } else {
+            expect(vb, `${sbf[i]!.prn} ${k}`).toStrictEqual(va);
+          }
+        }
+      }
+    });
+
+    it('counts and drops corrupted messages via CRC-24Q', () => {
+      const msg = messages[0]!;
+      const bad = new Uint8Array(msg);
+      bad[20] ^= 0x40;
+      const payload = new Uint8Array(50);
+      new DataView(payload.buffer).setUint32(4, getBitU(bad, 8, 6), true);
+      payload.set(bad, 12);
+      const res = parseNovatelNav(buildFrame(payload));
+      expect(res.cnavBadCrc).toBe(1);
+      expect(res.cnav.length).toBe(0);
+    });
+  }
+);

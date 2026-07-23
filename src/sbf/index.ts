@@ -904,3 +904,16 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
 
   return { epochs, messageCounts, obsCodes, badCrc };
 }
+
+export {
+  parseSbfGalNav,
+  type SbfGalNavResult,
+  type SbfGalEphemeris,
+} from './rawnav-gal';
+
+export {
+  parseSbfBdsNav,
+  parseSbfGloNav,
+  type SbfBdsNavResult,
+  type SbfGloNavResult,
+} from './rawnav-bds';
