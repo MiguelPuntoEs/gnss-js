@@ -24,3 +24,4 @@
 !/test-fixtures/f9p_rawnav_slice.ubx
 !/test-fixtures/oem719_rtk_base.gps
 !/test-fixtures/oem719_rtk_rover.gps
+!/test-fixtures/dlf100_rt27_slice.t02
