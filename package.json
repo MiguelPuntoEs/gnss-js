@@ -45,6 +45,11 @@
       "import": "./dist/sbf.js",
       "require": "./dist/sbf.cjs"
     },
+    "./binex": {
+      "types": "./dist/binex.d.ts",
+      "import": "./dist/binex.js",
+      "require": "./dist/binex.cjs"
+    },
     "./rtcm3": {
       "types": "./dist/rtcm3.d.ts",
       "import": "./dist/rtcm3.js",

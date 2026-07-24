@@ -25,3 +25,14 @@
 !/test-fixtures/oem719_rtk_base.gps
 !/test-fixtures/oem719_rtk_rover.gps
 !/test-fixtures/dlf100_rt27_slice.t02
+# BINEX record test vectors from EarthScope gnsstools (Apache-2.0),
+# with teqc-generated RINEX oracles for the GPS/GLONASS records.
+!/test-fixtures/binex_gps_eph.bnx
+!/test-fixtures/binex_gps_eph.rnx
+!/test-fixtures/binex_glo_eph.bnx
+!/test-fixtures/binex_glo_eph.rnx
+!/test-fixtures/binex_sbas_eph.bnx
+!/test-fixtures/binex_gal_eph.bnx
+!/test-fixtures/binex_bds_eph.bnx
+!/test-fixtures/binex_qzss_eph.bnx
+!/test-fixtures/binex_obs_7f05.bnx
