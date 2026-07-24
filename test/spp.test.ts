@@ -1,14 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { parseRinexStream, parseNavFile } from '../src/rinex';
+import { parseRinexStream, parseNavFile, parseIonex } from '../src/rinex';
 import type { Ephemeris } from '../src/rinex/nav';
 import { solveSpp, ionoFree, satClockCorrection } from '../src/positioning';
+import { ecefToGeodetic, getEnuDifference } from '../src/coordinates';
 import { FREQ } from '../src/constants/gnss';
 
 const DIR = join(__dirname, '../test-fixtures');
 const HAS_DATA =
   existsSync(join(DIR, 'ABMF.crx')) && existsSync(join(DIR, 'BRDC.nav'));
+const GIM_FILE = join(DIR, 'ESA_GIM_2024001.inx');
+const HAS_GIM = HAS_DATA && existsSync(GIM_FILE);
+
+/** Vertical (up) error against the known ground truth, in metres. */
+function upError(
+  p: [number, number, number],
+  approx: [number, number, number]
+): number {
+  const [lat, lon] = ecefToGeodetic(approx[0], approx[1], approx[2]);
+  const enu = getEnuDifference(
+    p[0],
+    p[1],
+    p[2],
+    approx[0],
+    approx[1],
+    approx[2],
+    lat,
+    lon
+  );
+  return Math.abs(enu[2]);
+}
 
 function fileFrom(buf: Buffer, name: string): File {
   return new File([new Uint8Array(buf)], name);
@@ -108,6 +130,33 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
     expect(sol!.dop?.pdop).toBeGreaterThan(0.5);
     expect(sol!.dop?.pdop).toBeLessThan(6);
   });
+
+  it.skipIf(!HAS_GIM)(
+    'GIM ionosphere beats broadcast Klobuchar on the vertical',
+    async () => {
+      const { single, ephMap, approx } = await load();
+      const nav = parseNavFile(readFileSync(join(DIR, 'BRDC.nav'), 'utf-8'));
+      const iono = {
+        alpha: nav.header.ionoCorrections['GPSA']!,
+        beta: nav.header.ionoCorrections['GPSB']!,
+      };
+      const gim = parseIonex(readFileSync(GIM_FILE, 'utf-8'));
+
+      const none = solveSpp(single, ephMap, TARGET_MS)!;
+      const klob = solveSpp(single, ephMap, TARGET_MS, { iono })!;
+      const withGim = solveSpp(single, ephMap, TARGET_MS, { gim })!;
+
+      const uNone = upError(none.position, approx);
+      const uKlob = upError(klob.position, approx);
+      const uGim = upError(withGim.position, approx);
+
+      // Modelling iono helps; the GIM helps most on the height component.
+      expect(uKlob).toBeLessThan(uNone);
+      expect(uGim).toBeLessThan(uKlob);
+      // ABMF (tropical) measured: none 8.3 → Klobuchar 3.2 → GIM 1.1 m.
+      expect(uGim).toBeLessThan(2.0);
+    }
+  );
 
   it('solves iono-free GPS within 10 m', async () => {
     const { dual, ephMap, approx } = await load();

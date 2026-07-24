@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.25.0
+
+### Improved — single-point positioning accuracy (troposphere + ionosphere)
+
+Two model upgrades to `solveSpp`, both aimed at the height component where a single-frequency solution is weakest. Measured on the ABMF (Guadeloupe) ground-truth oracle, single-frequency multi-GNSS, mid-day:
+
+| iono model | vertical error |
+| --- | --- |
+| none | 8.3 m |
+| broadcast Klobuchar | 3.2 m |
+| **GIM** | **1.1 m** |
+
+- **Saastamoinen troposphere** replaces the previous fixed 2.47 m zenith delay. Standard-atmosphere hydrostatic + wet terms, station-height- and latitude-dependent, mapped by 1/sin(el) — a port of RTKLIB's `tropmodel` (humidity 0.7), so results stay directly comparable with the rnx2rtkp oracle. Removes the residual vertical bias a constant zenith delay leaves behind.
+- **GIM (IONEX) ionosphere** — new `gim` option on `solveSpp` accepts a parsed `IonexGrid` (`parseIonex`) and takes precedence over broadcast `iono`, backfilling from Klobuchar only in a map time gap. Global maps capture ~80–90% of the true ionosphere versus Klobuchar's ~50%, cutting the ABMF vertical error ~3× (3.2 → 1.1 m). New exports: `gimSlantIonoDelayL1`, `gimVerticalTec`, `IONO_L1_M_PER_TECU` (`gnss-js/positioning`). The thin-shell evaluator (pierce point at 450 km, bilinear-in-space / linear-in-time TEC, obliquity mapping, TEC→L1 delay) is validated end-to-end against a real ESA rapid GIM in the SPP oracle.
+
+No API changes to existing calls — `troposphere` default unchanged (on); `iono` still works as before. RTK double-differencing keeps its own differential tropo term (short-baseline self-cancelling).
+
 ## 1.24.0
 
 ### New features — RTK stage 2: integer ambiguity resolution

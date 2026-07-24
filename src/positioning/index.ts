@@ -6,7 +6,7 @@
  * constellation (absorbing inter-system time offsets), satellite clock
  * polynomial + relativistic correction, broadcast group delay
  * (TGD/BGD), Sagnac (Earth-rotation) correction, elevation
- * masking/weighting, and a simple tropospheric model. Ionospheric
+ * masking/weighting, and a Saastamoinen tropospheric model. Ionospheric
  * delay can be modelled from the broadcast Klobuchar coefficients
  * (`iono` option) for single-frequency measurements; for metre-level
  * results prefer the iono-free combination (ionoFree helper) with
@@ -20,9 +20,16 @@ import { C_LIGHT, OMEGA_E } from '../constants/gnss';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { klobucharDelay } from './klobuchar';
 import type { KlobucharCoeffs } from './klobuchar';
+import { gimSlantIonoDelayL1 } from './gim';
+import type { IonexGrid } from '../rinex/ionex';
 
 export { klobucharDelay } from './klobuchar';
 export type { KlobucharCoeffs } from './klobuchar';
+export {
+  gimSlantIonoDelayL1,
+  gimVerticalTec,
+  IONO_L1_M_PER_TECU,
+} from './gim';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -31,7 +38,7 @@ export type { KlobucharCoeffs } from './klobuchar';
 export interface SppOptions {
   /** Elevation mask in degrees (applied after the first pass). Default 10. */
   elevationMaskDeg?: number;
-  /** Apply the simple tropospheric model. Default true. */
+  /** Apply the Saastamoinen tropospheric model. Default true. */
   troposphere?: boolean;
   /** Maximum Gauss-Newton iterations. Default 15. */
   maxIterations?: number;
@@ -45,6 +52,15 @@ export interface SppOptions {
    * iono-free combinations.
    */
   iono?: KlobucharCoeffs;
+  /**
+   * Global Ionosphere Map (IONEX/GIM, from `parseIonex`). When given it
+   * takes precedence over `iono`: the slant delay is read from the map
+   * (~80–90% of the true ionosphere vs Klobuchar's ~50%), falling back
+   * to `iono` — if also supplied — only where the map has no value for
+   * an epoch/cell (a time gap; global maps always cover space). Omit for
+   * iono-free input.
+   */
+  gim?: IonexGrid;
   /**
    * Apply the broadcast group-delay correction (GPS TGD, Galileo
    * BGD E5a/E1, BeiDou TGD1) to the satellite clock. Correct for
@@ -139,10 +155,34 @@ const PRIMARY_FREQ_HZ: Record<string, number> = {
 };
 const F_L1 = 1575.42e6;
 
-/** Simple tropospheric zenith-delay model mapped by elevation (m). */
-function tropoDelay(elevationRad: number): number {
-  const sinEl = Math.sin(elevationRad);
-  return 2.47 / (sinEl + 0.0121);
+/**
+ * Saastamoinen tropospheric delay (m) with a standard atmosphere,
+ * mapped by 1/sin(el).
+ *
+ * Matches RTKLIB's `tropmodel` (relative humidity 0.7) so single-point
+ * results stay directly comparable with the rnx2rtkp oracle. Unlike a
+ * fixed zenith value, the hydrostatic term is pressure- (i.e. station
+ * height-) and latitude-dependent and the wet term is modelled
+ * separately — which is what removes the residual vertical bias a
+ * constant zenith delay leaves behind.
+ */
+function tropoDelay(
+  elevationRad: number,
+  latRad: number,
+  heightM: number
+): number {
+  if (elevationRad <= 0) return 0;
+  // Clamp to the model's valid band (sea level … 10 km), as RTKLIB does.
+  const h = heightM < 0 ? 0 : heightM > 1e4 ? 1e4 : heightM;
+  const humi = 0.7; // relative humidity assumed absent live met data
+  const pres = 1013.25 * Math.pow(1 - 2.2557e-5 * h, 5.2568);
+  const temp = 15.0 - 6.5e-3 * h + 273.16; // K, 15 °C at sea level
+  const e = 6.108 * humi * Math.exp((17.15 * temp - 4684.0) / (temp - 38.45));
+  const zhd =
+    (0.0022768 * pres) /
+    (1 - 0.00266 * Math.cos(2 * latRad) - 0.00028 * (h / 1e3));
+  const zwd = 0.002277 * (1255.0 / temp + 0.05) * e;
+  return (zhd + zwd) / Math.sin(elevationRad);
 }
 
 /** Rotate an ECEF position by the Earth rotation during signal travel. */
@@ -203,6 +243,7 @@ export function solveSpp(
     convergenceM = 1e-4,
     tgd = true,
     iono,
+    gim,
   } = opts;
   const gpsTow = ((timeMs - GPS_EPOCH_MS_SPP) / 1000) % 604800;
 
@@ -242,9 +283,9 @@ export function solveSpp(
       for (const k of Object.keys(residuals)) delete residuals[k];
 
       const positionSaneIter = x * x + y * y + z * z > 1e12; // > 1000 km
-      const [rxLat, rxLon] = positionSaneIter
+      const [rxLat, rxLon, rxHgt] = positionSaneIter
         ? ecefToGeodetic(x, y, z)
-        : [0, 0];
+        : [0, 0, 0];
 
       for (const prn of prns) {
         const psr = pseudoranges.get(prn)!;
@@ -286,14 +327,22 @@ export function solveSpp(
           weight = sinEl * sinEl;
         }
 
-        const tropo = troposphere && positionSane ? tropoDelay(elev) : 0;
+        const tropo =
+          troposphere && positionSane ? tropoDelay(elev, rxLat, rxHgt) : 0;
         let ionoM = 0;
-        if (iono && positionSane) {
-          const f = PRIMARY_FREQ_HZ[sys] ?? F_L1;
-          ionoM =
-            C_LIGHT *
-            klobucharDelay(iono, rxLat, rxLon, azim, elev, gpsTow) *
-            ((F_L1 / f) * (F_L1 / f));
+        if ((gim || iono) && positionSane) {
+          // L1 slant delay from the GIM (preferred), else broadcast
+          // Klobuchar; the GIM returns null only in a time gap / no-value
+          // cell, in which case Klobuchar backfills when supplied.
+          let l1M: number | null = null;
+          if (gim) l1M = gimSlantIonoDelayL1(gim, rxLat, rxLon, azim, elev, timeMs);
+          if (l1M === null && iono) {
+            l1M = C_LIGHT * klobucharDelay(iono, rxLat, rxLon, azim, elev, gpsTow);
+          }
+          if (l1M !== null) {
+            const f = PRIMARY_FREQ_HZ[sys] ?? F_L1;
+            ionoM = l1M * ((F_L1 / f) * (F_L1 / f));
+          }
         }
         const predicted = rho + clk - C_LIGHT * dts + tropo + ionoM;
         const v = psr - predicted;

@@ -14,6 +14,7 @@ checksum_for() {
     ABMF.crx.gz)        echo "34d26113d18fb1409c91404609497b2fc0c15aeb0c0961bcc13174d67a77ce09" ;;
     ESA_MGEX.sp3.gz)    echo "bfb9bb94c99c6844fa646b64cf062c9a32c060d0c944a6e3d4b4f9453729fc9c" ;;
     ESA_GIM.inx.gz)     echo "1d74ba5c1a9ba1bbd8cb2a31db4db2d388be10311af96aa55b1fa27c3fae992c" ;;
+    ESA_GIM_2024001.inx.gz) echo "a164e253ad315d28d186c5d1df129038fca6d2a0991506b7c51361ab2004d050" ;;
     brdc_v2.nav.gz)     echo "b6aeae1dc03c65c94dd93cefd4796e0d5566760d3e564241a989544cc8ba0d91" ;;
     brdc_v2_glo.nav.gz) echo "9f040749e0e0be916743bf47f24b3fe530c11876b2bd9cd80cc362755b8d3aee" ;;
     brdc_v3_igs.nav.gz) echo "e68833b1280a4413fe5cf6cfb537ef406d8a396f9e8331d339272d8c9ee27ebe" ;;
@@ -84,6 +85,14 @@ if download "https://navigation-office.esa.int/products/gnss-products/2428/ESA0O
   decompress "$DIR/ESA_GIM.inx"
 else
   echo "  ⚠ ESA GIM unavailable — the IONEX tests will skip" >&2
+fi
+
+# ESA rapid GIM for day 2024/001 — pairs with the ABMF/BRDC SPP oracle
+# so solveSpp can be validated with a real ionosphere map.
+if download "https://navigation-office.esa.int/products/gnss-products/2295/ESA0OPSRAP_20240010000_01D_01H_GIM.INX.gz" "$DIR/ESA_GIM_2024001.inx.gz"; then
+  decompress "$DIR/ESA_GIM_2024001.inx"
+else
+  echo "  ⚠ ESA GIM 2024/001 unavailable — the SPP GIM test will skip" >&2
 fi
 
 # RINEX 3 mixed nav (2024/001)
