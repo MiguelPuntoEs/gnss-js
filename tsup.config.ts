@@ -15,6 +15,7 @@ export default defineConfig({
     ubx: './src/ubx/index.ts',
     sbf: './src/sbf/index.ts',
     novatel: './src/novatel/index.ts',
+    binex: './src/binex/index.ts',
     orbit: './src/orbit/index.ts',
     ntrip: './src/ntrip/index.ts',
     analysis: './src/analysis/index.ts',
