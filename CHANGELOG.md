@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.26.0
+
+### New features — two more receiver formats
+
+- **Trimble RT17/RT27** (`gnss-js/trimble`): `parseTrimble` decodes Trimble RAWDATA **record 27** — the multi-GNSS raw-measurement format streamed by ALLOY/NetR9 receivers (e.g. TU Delft's DLF100NLD1) — into pseudorange / carrier phase / Doppler / C/N0 / cycle-slip across GPS, GLONASS, Galileo, BeiDou and SBAS, with multi-page reassembly; plus `parseTrimbleNav` (GPS ephemeris + ION/UTC). Framing and GPS-eph are ported from RTKLIB `rt17.c`; record 27 — which RTKLIB does **not** implement (it decodes only records 17/29) — was decoded from Trimble's ICD and verified byte-for-byte on a live 60 s DLF100NLD1 capture: 59 epochs, 11,766 observations, carrier phase reconstructs pseudorange to **~1 ppm** on every signal. Deferred: legacy RT17 records 17/29 and non-GPS RETSVDATA ephemeris subtypes.
+- **BINEX** (`gnss-js/binex`): `parseBinex` decodes the open UNAVCO/EarthScope binary exchange format — forward records in both byte orders, XOR-8/CRC16/CRC32, `ubnxi` variable-length integers — with record **0x7f-05** multi-GNSS observations and record **0x01** ephemeris (GPS/GLONASS/SBAS/Galileo/BeiDou/QZSS). Ported from RTKLIB `binex.c`, with EarthScope's reference decoder resolving two places RTKLIB is wrong for these files; GPS and GLONASS ephemeris validated **field-for-field against teqc RINEX oracles**. Deferred: reverse-readable records, MD5-checksum (≥1 MB) records, and site-metadata/prototype record types.
+
+Both slot into the same receiver pipeline as SBF/UBX/NovAtel (observation epochs + `Ephemeris`), exported as `gnss-js/trimble` and `gnss-js/binex`.
+
 ## 1.25.0
 
 ### Improved — single-point positioning accuracy (troposphere + ionosphere)
