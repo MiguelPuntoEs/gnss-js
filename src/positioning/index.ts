@@ -25,11 +25,7 @@ import type { IonexGrid } from '../rinex/ionex';
 
 export { klobucharDelay } from './klobuchar';
 export type { KlobucharCoeffs } from './klobuchar';
-export {
-  gimSlantIonoDelayL1,
-  gimVerticalTec,
-  IONO_L1_M_PER_TECU,
-} from './gim';
+export { gimSlantIonoDelayL1, gimVerticalTec, IONO_L1_M_PER_TECU } from './gim';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -335,9 +331,11 @@ export function solveSpp(
           // Klobuchar; the GIM returns null only in a time gap / no-value
           // cell, in which case Klobuchar backfills when supplied.
           let l1M: number | null = null;
-          if (gim) l1M = gimSlantIonoDelayL1(gim, rxLat, rxLon, azim, elev, timeMs);
+          if (gim)
+            l1M = gimSlantIonoDelayL1(gim, rxLat, rxLon, azim, elev, timeMs);
           if (l1M === null && iono) {
-            l1M = C_LIGHT * klobucharDelay(iono, rxLat, rxLon, azim, elev, gpsTow);
+            l1M =
+              C_LIGHT * klobucharDelay(iono, rxLat, rxLon, azim, elev, gpsTow);
           }
           if (l1M !== null) {
             const f = PRIMARY_FREQ_HZ[sys] ?? F_L1;
@@ -451,3 +449,25 @@ export type {
 
 export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
+
+export { solvePpp } from './ppp';
+export type {
+  PppSatObs,
+  PppEpoch,
+  PppOptions,
+  PppEpochResult,
+  PppSolution,
+} from './ppp';
+export { niellMapping } from './ppp-tropo';
+export type { TropoMapping } from './ppp-tropo';
+export { createPppCorrections } from './ppp-corrections';
+export type {
+  SatGeom,
+  PppEpochContext,
+  CorrectionResult,
+  PppCorrections,
+  PppCorrectionConfig,
+} from './ppp-corrections';
+export { buildPppAntenna } from './ppp-antenna';
+export type { PppAntennaModel, AntennaOffset } from './ppp-antenna';
+export { sunEcef, moonEcef, solidEarthTide, gmst } from './ppp-astro';

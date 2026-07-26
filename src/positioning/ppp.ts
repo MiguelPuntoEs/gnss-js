@@ -1,0 +1,630 @@
+/**
+ * Static float Precise Point Positioning (PPP).
+ *
+ * Dual-frequency ionosphere-free code + carrier phase, precise satellite
+ * orbits and clocks (SP3), a forward Extended Kalman Filter estimating
+ * [position, receiver clock, zenith wet troposphere, one float ambiguity
+ * per satellite arc]. No base station — absolute cm–dm coordinates from a
+ * single observation file.
+ *
+ * Corrections applied (see PppOptions to toggle the optional ones):
+ *  - precise satellite orbit + clock (SP3, Lagrange / linear)
+ *  - periodic relativistic satellite-clock term (−2·r·v/c²)
+ *  - Earth-rotation (Sagnac) during signal transit
+ *  - dry troposphere (Saastamoinen ZHD, a priori) + estimated wet ZWD,
+ *    mapped by the Niell mapping function
+ *  - elevation-dependent weighting, cycle-slip re-initialisation
+ *  - (optional, added by the caller supplying products) satellite &
+ *    receiver antenna phase-centre offsets, phase wind-up, solid-earth tides
+ *
+ * The ionosphere-free combination removes the first-order ionosphere; the
+ * float ambiguity absorbs the phase biases and the integer cycles.
+ */
+
+import { C_LIGHT, OMEGA_E } from '../constants/gnss';
+import { ecefToGeodetic, getEnuDifference, getAer } from '../coordinates/ecef';
+import { sp3Position, type Sp3File } from '../rinex/sp3';
+import { niellMapping } from './ppp-tropo';
+import {
+  type PppCorrections,
+  applyCorrections,
+  type SatGeom,
+} from './ppp-corrections';
+
+/* ================================================================== */
+/*  Public types                                                       */
+/* ================================================================== */
+
+/** One satellite's dual-frequency observation at an epoch. */
+export interface PppSatObs {
+  prn: string;
+  /** Band-1 / band-2 centre frequencies (Hz). */
+  f1: number;
+  f2: number;
+  /** Pseudorange on band 1 / band 2 (metres). */
+  c1: number;
+  c2: number;
+  /** Carrier phase on band 1 / band 2 (cycles). */
+  l1: number;
+  l2: number;
+  /** ANTEX frequency codes for the two bands (e.g. 'G01','G02'). Used by
+   * the antenna corrections; optional if corrections are off. */
+  band1?: string;
+  band2?: string;
+  /** True if a cycle slip is flagged on either band (LLI or detected). */
+  slip: boolean;
+}
+
+export interface PppEpoch {
+  /** GPS-scale epoch time (ms). */
+  timeMs: number;
+  obs: PppSatObs[];
+}
+
+export interface PppOptions {
+  /** A priori receiver ECEF position (m). Required — from the RINEX header
+   * approx position or an SPP solution. */
+  aprioriPos: [number, number, number];
+  /** Ground-truth ECEF (m) for reporting ENU error in the series. */
+  groundTruth?: [number, number, number];
+  /** Elevation cutoff (deg). Default 10. */
+  elevationMaskDeg?: number;
+  /** Optional corrections (antenna PCO/PCV, wind-up, tides). */
+  corrections?: PppCorrections;
+  /** IF code σ at zenith (m). Default 3.0 (already IF-inflated). */
+  codeSigma?: number;
+  /** IF phase σ at zenith (m). Default 0.01. */
+  phaseSigma?: number;
+  /** Wet-troposphere random-walk process noise (m²/epoch). Default 1e-8. */
+  ztdProcessNoise?: number;
+  /** Model + estimate the troposphere. Default true. */
+  troposphere?: boolean;
+}
+
+export interface PppEpochResult {
+  timeMs: number;
+  /** ENU error vs ground truth (m), if truth given. */
+  enu: [number, number, number] | null;
+  /** 3D error vs ground truth (m), if truth given. */
+  error3d: number | null;
+  position: [number, number, number];
+  nSats: number;
+  /** Estimated zenith wet delay (m). */
+  ztdWet: number;
+  /** RMS of post-fit phase residuals this epoch (m). */
+  phaseResRms: number;
+}
+
+export interface PppSolution {
+  /** Final estimated ECEF position (m). */
+  position: [number, number, number];
+  /** Final geodetic [latDeg, lonDeg, heightM]. */
+  llh: [number, number, number];
+  /** Per-epoch series (convergence). */
+  series: PppEpochResult[];
+  /** Estimated zenith wet delay at the end (m). */
+  ztdWet: number;
+  /** Epochs processed. */
+  epochsUsed: number;
+  /** Seconds from first epoch until 3D error first stays < 0.1 m
+   * (null if never, or no ground truth). */
+  convergenceSec: number | null;
+  /** Final 3D error vs ground truth (m), if given. */
+  finalError3d: number | null;
+}
+
+/* ================================================================== */
+/*  Small dense linear algebra (state ~ 5 + #ambiguities)              */
+/* ================================================================== */
+
+function matVec(P: number[][], h: number[]): number[] {
+  const n = P.length;
+  const out = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    const Pi = P[i]!;
+    for (let j = 0; j < n; j++) s += Pi[j]! * h[j]!;
+    out[i] = s;
+  }
+  return out;
+}
+
+/**
+ * Sequential (scalar) EKF measurement update — process one measurement at
+ * a time; avoids inverting the innovation matrix and stays numerically
+ * stable with a freely-varying receiver clock and many ambiguities.
+ */
+function ekfUpdateScalar(
+  x: number[],
+  P: number[][],
+  h: number[],
+  innovation: number,
+  r: number,
+  /** Reject the measurement if innovation² > (rejectK·√S)². 0 = no gate. */
+  rejectK = 0
+): boolean {
+  const n = x.length;
+  const Ph = matVec(P, h); // P·hᵀ  (n)
+  let hPh = 0;
+  for (let i = 0; i < n; i++) hPh += h[i]! * Ph[i]!;
+  const s = hPh + r;
+  if (s <= 0) return false;
+  if (rejectK > 0 && innovation * innovation > rejectK * rejectK * s) {
+    return false; // outlier — skip
+  }
+  // Kalman gain K = P·hᵀ / s
+  const K = Ph.map((v) => v / s);
+  // State update x += K·innovation
+  for (let i = 0; i < n; i++) x[i]! += K[i]! * innovation;
+  // Covariance Joseph-free form P = (I − K·h)·P, symmetrised.
+  // P_new = P − K·(hᵀP) = P − K·(Ph)ᵀ  (since P symmetric, hᵀP = (P·hᵀ)ᵀ = Ph)
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      P[i]![j]! -= K[i]! * Ph[j]!;
+    }
+  }
+  // Force symmetry to curb round-off.
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const m = 0.5 * (P[i]![j]! + P[j]![i]!);
+      P[i]![j]! = m;
+      P[j]![i]! = m;
+    }
+  }
+  return true;
+}
+
+/* ================================================================== */
+/*  Iono-free helpers                                                  */
+/* ================================================================== */
+
+/** Iono-free combination coefficients for two frequencies. */
+function ifCoeffs(f1: number, f2: number): { g: number; lambdaIf: number } {
+  const g = (f1 * f1) / (f1 * f1 - f2 * f2);
+  // Iono-free wavelength (for reference; ambiguity kept in metres).
+  const lambdaIf = C_LIGHT / (f1 + f2);
+  return { g, lambdaIf };
+}
+
+/* ================================================================== */
+/*  Satellite state (position, velocity, clock) at emission            */
+/* ================================================================== */
+
+interface SatState {
+  x: number;
+  y: number;
+  z: number;
+  clkM: number; // c·(dt_sat + relativistic), metres
+}
+
+/** Rotate an ECEF vector by Earth rotation during signal travel (Sagnac). */
+function sagnacRotate(
+  x: number,
+  y: number,
+  z: number,
+  travelS: number
+): [number, number, number] {
+  const theta = OMEGA_E * travelS;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  return [x * c + y * s, -x * s + y * c, z];
+}
+
+/**
+ * Satellite ECEF position at reception frame, plus clock (incl. periodic
+ * relativistic term). Returns null if outside the SP3 span or clock
+ * missing. `travelS` in/out via the returned geometry range.
+ */
+function satStateAtEmission(
+  sp3: Sp3File,
+  prn: string,
+  recvTimeMs: number,
+  rcv: [number, number, number]
+): { state: SatState; travelS: number } | null {
+  let travelS = 0.075; // ~ 20000 km / c initial guess
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  let clkS: number | null = null;
+  let velDotPos = 0;
+  for (let iter = 0; iter < 3; iter++) {
+    const tEmit = recvTimeMs - travelS * 1000;
+    const p = sp3Position(sp3, prn, tEmit);
+    if (!p || p.clk == null) return null;
+    // Velocity by central finite difference (0.5 s) for relativity.
+    const pPlus = sp3Position(sp3, prn, tEmit + 500);
+    const pMinus = sp3Position(sp3, prn, tEmit - 500);
+    if (pPlus && pMinus) {
+      const vx = (pPlus.x - pMinus.x) / 1.0;
+      const vy = (pPlus.y - pMinus.y) / 1.0;
+      const vz = (pPlus.z - pMinus.z) / 1.0;
+      velDotPos = p.x * vx + p.y * vy + p.z * vz;
+    }
+    clkS = p.clk;
+    const [rx, ry, rz] = sagnacRotate(p.x, p.y, p.z, travelS);
+    sx = rx;
+    sy = ry;
+    sz = rz;
+    const dx = sx - rcv[0];
+    const dy = sy - rcv[1];
+    const dz = sz - rcv[2];
+    const range = Math.hypot(dx, dy, dz);
+    travelS = range / C_LIGHT;
+  }
+  if (clkS == null) return null;
+  // Periodic relativistic correction −2·(r·v)/c²  (seconds).
+  const relS = (-2 * velDotPos) / (C_LIGHT * C_LIGHT);
+  const clkM = C_LIGHT * (clkS + relS);
+  return { state: { x: sx, y: sy, z: sz, clkM }, travelS };
+}
+
+/* ================================================================== */
+/*  Static float PPP solver (forward EKF over all epochs)              */
+/* ================================================================== */
+
+const IDX_X = 0;
+const IDX_Y = 1;
+const IDX_Z = 2;
+const IDX_CLK = 3;
+const IDX_ZWD = 4;
+const NBASE = 5; // position(3) + clock(1) + zwd(1)
+
+export function solvePpp(
+  epochs: PppEpoch[],
+  sp3: Sp3File,
+  opts: PppOptions
+): PppSolution {
+  const elevMask = ((opts.elevationMaskDeg ?? 10) * Math.PI) / 180;
+  const codeSigma = opts.codeSigma ?? 3.0;
+  const phaseSigma = opts.phaseSigma ?? 0.01;
+  const ztdQ = opts.ztdProcessNoise ?? 1e-8;
+  const corrections = opts.corrections;
+
+  // State vector and covariance. Position is estimated absolutely (metres).
+  const x: number[] = [
+    opts.aprioriPos[0],
+    opts.aprioriPos[1],
+    opts.aprioriPos[2],
+    0, // receiver clock (m)
+    0.1, // zenith wet delay (m) a priori
+  ];
+  const P: number[][] = [];
+  for (let i = 0; i < NBASE; i++) {
+    P.push(new Array<number>(NBASE).fill(0));
+  }
+  P[IDX_X]![IDX_X] = 100 * 100; // 100 m a priori position σ
+  P[IDX_Y]![IDX_Y] = 100 * 100;
+  P[IDX_Z]![IDX_Z] = 100 * 100;
+  P[IDX_CLK]![IDX_CLK] = 1e10;
+  P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
+
+  // Ambiguity bookkeeping: prn → state index; last-seen epoch index.
+  const ambIdx = new Map<string, number>();
+  const lastSeen = new Map<string, number>();
+  // Melbourne–Wübbena running mean per satellite for cycle-slip detection
+  // (ionosphere-free + geometry-free, so it does not drift with the
+  // ionosphere — unlike a geometry-free test, which is unusable at
+  // equatorial stations).
+  const mwState = new Map<
+    string,
+    { mean: number; n: number; lastEi: number }
+  >();
+
+  /** Detect a cycle slip via the Melbourne–Wübbena wide-lane ambiguity. */
+  const detectSlip = (o: PppSatObs, ei: number): boolean => {
+    const lamW = C_LIGHT / (o.f1 - o.f2);
+    const lw = o.l1 - o.l2; // wide-lane phase (cycles)
+    const pn = (o.f1 * o.c1 + o.f2 * o.c2) / (o.f1 + o.f2); // narrow-lane code (m)
+    const mw = lw - pn / lamW; // wide-lane ambiguity (cycles)
+    const st = mwState.get(o.prn);
+    let slip = o.slip;
+    if (!st || ei - st.lastEi > 2)
+      slip = true; // new arc / gap
+    else if (Math.abs(mw - st.mean) > 4) slip = true; // > 4 WL cycles jump
+    if (slip) mwState.set(o.prn, { mean: mw, n: 1, lastEi: ei });
+    else {
+      const n = st!.n + 1;
+      mwState.set(o.prn, {
+        mean: st!.mean + (mw - st!.mean) / Math.min(n, 100),
+        n,
+        lastEi: ei,
+      });
+    }
+    return slip;
+  };
+
+  const growState = (initVal: number, initVar: number): number => {
+    const idx = x.length;
+    x.push(initVal);
+    for (const row of P) row.push(0);
+    P.push(new Array<number>(x.length).fill(0));
+    P[idx]![idx] = initVar;
+    return idx;
+  };
+
+  const dropState = (idx: number) => {
+    x.splice(idx, 1);
+    P.splice(idx, 1);
+    for (const row of P) row.splice(idx, 1);
+    // Reindex ambiguities above the dropped slot.
+    for (const [prn, i] of ambIdx) {
+      if (i === idx) ambIdx.delete(prn);
+      else if (i > idx) ambIdx.set(prn, i - 1);
+    }
+  };
+
+  let clockSeeded = false;
+  const series: PppEpochResult[] = [];
+  const truth = opts.groundTruth;
+  const t0 = epochs[0]?.timeMs ?? 0;
+  let convergenceSec: number | null = null;
+  let convergedStreak = 0;
+
+  for (let ei = 0; ei < epochs.length; ei++) {
+    const epoch = epochs[ei]!;
+
+    // ── Time update ──
+    // Position: static (no process noise). Receiver clock: white noise —
+    // reset its variance so it is freely re-estimated each epoch.
+    P[IDX_CLK]![IDX_CLK] = 1e10;
+    // Zenith wet delay: random walk.
+    P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
+
+    const rcv: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
+    const [latDeg, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
+    const latRad = (latDeg * Math.PI) / 180;
+
+    // Sun/Moon-dependent corrections computed once per epoch.
+    const epochCtx = corrections?.epochContext?.(epoch.timeMs, rcv) ?? null;
+
+    // ── Pass 1: geometry, iono-free obs, tropo, corrections per satellite ──
+    interface Vis {
+      prn: string;
+      e: [number, number, number]; // LOS unit rcv→sat
+      elRad: number;
+      pIf: number;
+      lIf: number;
+      satClkM: number;
+      range: number;
+      tropoFixed: number; // zhd·mh (+ range corrections)
+      mw: number;
+      windupM: number;
+      slip: boolean;
+    }
+    const vis: Vis[] = [];
+    for (const o of epoch.obs) {
+      if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
+      const slip = detectSlip(o, ei);
+      const sat = satStateAtEmission(sp3, o.prn, epoch.timeMs, rcv);
+      if (!sat) continue;
+      const [elRad, azRad] = getAer(
+        sat.state.x,
+        sat.state.y,
+        sat.state.z,
+        rcv[0],
+        rcv[1],
+        rcv[2]
+      );
+      if (elRad < elevMask) continue;
+
+      const dx = sat.state.x - rcv[0];
+      const dy = sat.state.y - rcv[1];
+      const dz = sat.state.z - rcv[2];
+      const range = Math.hypot(dx, dy, dz);
+      const e: [number, number, number] = [dx / range, dy / range, dz / range];
+
+      const { g } = ifCoeffs(o.f1, o.f2);
+      const lam1 = C_LIGHT / o.f1;
+      const lam2 = C_LIGHT / o.f2;
+      if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
+      const pIf = g * o.c1 - (g - 1) * o.c2;
+      const lIf = g * (o.l1 * lam1) - (g - 1) * (o.l2 * lam2);
+      if (!Number.isFinite(pIf) || !Number.isFinite(lIf)) continue;
+
+      const trop =
+        (opts.troposphere ?? true)
+          ? niellMapping(elRad, latRad, heightM, epoch.timeMs)
+          : { zhd: 0, mh: 0, mw: 0 };
+      const { zhd, mh, mw } = trop;
+
+      const geom: SatGeom = {
+        prn: o.prn,
+        satEcef: [sat.state.x, sat.state.y, sat.state.z],
+        rcvEcef: rcv,
+        los: e,
+        elRad,
+        azRad,
+        f1: o.f1,
+        f2: o.f2,
+        band1: o.band1,
+        band2: o.band2,
+        g,
+      };
+      const corr = corrections
+        ? applyCorrections(corrections, geom, epochCtx)
+        : { rangeM: 0, phaseWindupM: 0 };
+
+      vis.push({
+        prn: o.prn,
+        e,
+        elRad,
+        pIf,
+        lIf,
+        satClkM: sat.state.clkM,
+        range,
+        tropoFixed: zhd * mh + corr.rangeM,
+        mw,
+        windupM: corr.phaseWindupM,
+        slip,
+      });
+    }
+
+    // ── Receiver clock: a white-noise state, jointly estimated with
+    // position by the EKF (not crudely pre-fixed, which would couple with
+    // position through the asymmetric equatorial geometry and bias the
+    // horizontal). The variance is reset large every epoch so the filter
+    // freely re-estimates it and absorbs the receiver's clock jumps (up to
+    // ~ms = hundreds of km) — the S-based outlier gate stays loose while the
+    // clock is uncertain, then tightens once it is pinned by the code. On
+    // the very first usable epoch the clock is seeded from the median code
+    // residual so it starts in range. ──
+    const zwd0 = x[IDX_ZWD]!;
+    if (vis.length > 0) {
+      if (!clockSeeded) {
+        const s = vis
+          .map(
+            (v) => v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw)
+          )
+          .sort((a, b) => a - b);
+        x[IDX_CLK] = s[Math.floor(s.length / 2)]!;
+        clockSeeded = true;
+      }
+      P[IDX_CLK]![IDX_CLK] = 1e10; // σ ≈ 100 km — white noise, absorbs jumps
+    }
+
+    // ── Pass 2: EKF measurement updates ──
+    let nSats = 0;
+    let sumPhaseResSq = 0;
+    let nPhaseRes = 0;
+    for (const v of vis) {
+      const common =
+        v.range + x[IDX_CLK]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+
+      // Ambiguity state — create/reset on first sight or cycle slip.
+      let ai = ambIdx.get(v.prn);
+      if (ai === undefined || v.slip) {
+        const bInit = v.lIf - (common + v.windupM);
+        if (ai === undefined) {
+          ai = growState(bInit, 100 * 100);
+        } else {
+          x[ai] = bInit;
+          for (let j = 0; j < P.length; j++) {
+            P[ai]![j] = 0;
+            P[j]![ai] = 0;
+          }
+          P[ai]![ai] = 100 * 100;
+        }
+        ambIdx.set(v.prn, ai);
+      }
+
+      const n = x.length;
+      const sinEl = Math.max(Math.sin(v.elRad), 0.1);
+      const rCode = (codeSigma / sinEl) ** 2;
+      const rPhase = (phaseSigma / sinEl) ** 2;
+
+      // Code update (with gross-outlier gate).
+      {
+        const h = new Array<number>(n).fill(0);
+        h[IDX_X] = -v.e[0];
+        h[IDX_Y] = -v.e[1];
+        h[IDX_Z] = -v.e[2];
+        h[IDX_CLK] = 1;
+        h[IDX_ZWD] = v.mw;
+        const innov = v.pIf - common;
+        // Loose absolute bound (clock jumps up to ~ms); the S-based reject
+        // gate (rejectK) does the real outlier screening once the clock is
+        // pinned.
+        if (Math.abs(innov) < 1e6) ekfUpdateScalar(x, P, h, innov, rCode, 4);
+      }
+      // Phase update (recompute the common term after the code update moved
+      // the state), including the ambiguity partial.
+      {
+        const commonPh =
+          v.range + x[IDX_CLK]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+        const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
+        // A large phase innovation on a converged filter is an undetected
+        // cycle slip → re-initialise this ambiguity rather than corrupt the
+        // state; small innovations get a normal (gated) update.
+        if (Math.abs(innov) > 0.15) {
+          x[ai] = v.lIf - (commonPh + v.windupM);
+          for (let j = 0; j < P.length; j++) {
+            P[ai]![j] = 0;
+            P[j]![ai] = 0;
+          }
+          P[ai]![ai] = 100 * 100;
+        } else {
+          const h = new Array<number>(n).fill(0);
+          h[IDX_X] = -v.e[0];
+          h[IDX_Y] = -v.e[1];
+          h[IDX_Z] = -v.e[2];
+          h[IDX_CLK] = 1;
+          h[IDX_ZWD] = v.mw;
+          h[ai] = 1;
+          if (ekfUpdateScalar(x, P, h, innov, rPhase, 4)) {
+            sumPhaseResSq += innov * innov;
+            nPhaseRes++;
+          }
+        }
+      }
+      lastSeen.set(v.prn, ei);
+      nSats++;
+    }
+
+    // Drop ambiguities of satellites unseen for > 20 epochs.
+    for (const [prn, seen] of [...lastSeen]) {
+      if (ei - seen > 20) {
+        const idx = ambIdx.get(prn);
+        if (idx !== undefined) dropState(idx);
+        lastSeen.delete(prn);
+      }
+    }
+
+    const pos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
+    let enu: [number, number, number] | null = null;
+    let error3d: number | null = null;
+    if (truth) {
+      enu = getEnuDifference(
+        pos[0],
+        pos[1],
+        pos[2],
+        truth[0],
+        truth[1],
+        truth[2]
+      );
+      error3d = Math.hypot(
+        pos[0] - truth[0],
+        pos[1] - truth[1],
+        pos[2] - truth[2]
+      );
+      if (error3d < 0.1) {
+        convergedStreak++;
+        if (convergedStreak >= 10 && convergenceSec == null) {
+          convergenceSec = (epoch.timeMs - t0) / 1000;
+        }
+      } else {
+        convergedStreak = 0;
+        convergenceSec = null;
+      }
+    }
+
+    series.push({
+      timeMs: epoch.timeMs,
+      enu,
+      error3d,
+      position: pos,
+      nSats,
+      ztdWet: x[IDX_ZWD]!,
+      phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
+    });
+  }
+
+  const finalPos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
+  const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+  const finalError3d = truth
+    ? Math.hypot(
+        finalPos[0] - truth[0],
+        finalPos[1] - truth[1],
+        finalPos[2] - truth[2]
+      )
+    : null;
+
+  return {
+    position: finalPos,
+    llh,
+    series,
+    ztdWet: x[IDX_ZWD]!,
+    epochsUsed: epochs.length,
+    convergenceSec,
+    finalError3d,
+  };
+}
