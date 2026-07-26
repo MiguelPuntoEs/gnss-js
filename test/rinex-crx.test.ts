@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRinexStream } from '../src/rinex';
+import { parseRinexStream, writeCrx } from '../src/rinex';
 
 /** Helper: create a File from a string. */
 function fileFrom(content: string, name = 'test.obs'): File {
@@ -348,6 +348,98 @@ describe('CRX 1.0 parser', () => {
     expect(result.epochs[1]!.snrPerSat['G01']).toBeCloseTo(43.1, 1);
     // G03 S1C: 38100 + (-200) = 37900 → 37.9
     expect(result.epochs[1]!.snrPerSat['G03']).toBeCloseTo(37.9, 1);
+  });
+});
+
+/* ---------- writeCrx (Hatanaka compression) ---------- */
+
+describe('writeCrx (RINEX → Compact RINEX)', () => {
+  it('emits a CRINEX 3.0 header for RINEX 3.x', () => {
+    const crx = writeCrx(RINEX3_HEADER + RINEX3_EPOCH1);
+    const lines = crx.split('\n');
+    expect(lines[0]).toContain('COMPACT RINEX FORMAT');
+    expect(lines[0]).toContain('CRINEX VERS   / TYPE');
+    expect(lines[0]!.startsWith('3.0')).toBe(true);
+    expect(lines[1]).toContain('CRINEX PROG / DATE');
+    // RINEX header is copied verbatim from line 3 onward.
+    expect(lines[2]).toBe(RINEX3_HEADER.split('\n')[0]);
+  });
+
+  it('emits a CRINEX 1.0 header for RINEX 2.x', () => {
+    const crx = writeCrx(RINEX2_HEADER + RINEX2_EPOCH);
+    expect(crx.split('\n')[0]!.startsWith('1.0')).toBe(true);
+  });
+
+  it('round-trips RINEX 3.x through the decoder (SNR + sat counts)', async () => {
+    // Column-perfect obs (F14.3 + LLI + SS = 16 chars); the compressor
+    // parses strict RINEX columns like the reference rnx2crx does.
+    const o = (v: string) => v.padStart(14) + '  ';
+    const hdr = `     3.03           OBSERVATION DATA    M                   RINEX VERSION / TYPE
+TEST                                                        MARKER NAME
+     1.000                                                  INTERVAL
+G    3 C1C L1C S1C                                          SYS / # / OBS TYPES
+R    2 C1C S1C                                              SYS / # / OBS TYPES
+  2016     3    10    16    55    31.0000000     GPS         TIME OF FIRST OBS
+                                                            END OF HEADER
+`;
+    const ep = (s: string, g1: string[], g3: string[] | null, r1: string[]) => {
+      let e = `> 2016  3 10 16 55 ${s}  0  ${g3 ? 3 : 2}\n`;
+      e += 'G01' + g1.map(o).join('') + '\n';
+      if (g3) e += 'G03' + g3.map(o).join('') + '\n';
+      e += 'R01' + r1.map(o).join('') + '\n';
+      return e;
+    };
+    const rinex =
+      hdr +
+      ep(
+        '31.0000000',
+        ['23456789.123', '123456789.123', '42.300'],
+        ['23456790.456', '123456790.456', '38.100'],
+        ['24000000.000', '35.500']
+      ) +
+      ep('32.0000000', ['23456789.200', '123456789.200', '43.100'], null, [
+        '24000001.000',
+        '36.200',
+      ]);
+    const original = await parseRinexStream(fileFrom(rinex));
+    const roundtrip = await parseRinexStream(
+      fileFrom(writeCrx(rinex), 'test.crx')
+    );
+
+    expect(roundtrip.epochs).toHaveLength(original.epochs.length);
+    expect(roundtrip.stats.uniqueSatellites).toBe(
+      original.stats.uniqueSatellites
+    );
+    for (let i = 0; i < original.epochs.length; i++) {
+      expect(roundtrip.epochs[i]!.totalSats).toBe(
+        original.epochs[i]!.totalSats
+      );
+      expect(roundtrip.epochs[i]!.meanSnr).toBeCloseTo(
+        original.epochs[i]!.meanSnr,
+        3
+      );
+    }
+  });
+
+  it('round-trips RINEX 2.x through the decoder', async () => {
+    const rinex = RINEX2_HEADER + RINEX2_EPOCH;
+    const original = await parseRinexStream(fileFrom(rinex));
+    const roundtrip = await parseRinexStream(
+      fileFrom(writeCrx(rinex), 'test.crx')
+    );
+    expect(roundtrip.epochs[0]!.totalSats).toBe(original.epochs[0]!.totalSats);
+    expect(roundtrip.epochs[0]!.meanSnr).toBeCloseTo(
+      original.epochs[0]!.meanSnr,
+      3
+    );
+  });
+
+  it('rejects non-observation RINEX', () => {
+    expect(() =>
+      writeCrx(
+        '     3.04           NAVIGATION DATA     M                   RINEX VERSION / TYPE\n'
+      )
+    ).toThrow();
   });
 });
 

@@ -1,4 +1,5 @@
 export * from './crx';
+export * from './crx-writer';
 export * from './format';
 export * from './parser';
 export * from './warnings';
