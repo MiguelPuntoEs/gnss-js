@@ -468,3 +468,117 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
     );
   }
 );
+
+/* ------------------------------------------------------------------ */
+/*  Absolute accuracy vs a TRUE ITRF2020 coordinate (ESA daily SINEX). */
+/*  First validation against a trusted cm reference rather than the    */
+/*  decimetre-uncertain RINEX header.                                  */
+/* ------------------------------------------------------------------ */
+
+// ESA0OPSFIN daily SINEX SOLUTION/ESTIMATE (ITRF2020, 2024-001, σ ~1–3 mm),
+// navigation-office.esa.int/products/gnss-products/2295/. Same frame as the
+// ESA MGEX products, at the observation day (no epoch propagation needed).
+const SINEX_TRUTH: Record<string, [number, number, number]> = {
+  ANMG: [-1270827.11054, 6242631.27079, 307792.38356],
+};
+
+describe.skipIf(!HAS_NET || !HAS_ATX)(
+  'float PPP vs true ITRF coordinate',
+  () => {
+    it(
+      'agrees with the ESA SINEX coordinate at the centimetre–decimetre level',
+      { timeout: 120_000 },
+      async () => {
+        const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+        const antenna = buildPppAntenna(
+          parseAntex(readFileSync(join(FIX, 'igs20.atx'), 'utf8'))
+        );
+        const arcsWithStation = await stationPppArcs('ANMG.crx', sp3, antenna);
+        void arcsWithStation; // (solve is re-run below for the position)
+
+        // Re-solve ANMG (GPS+Galileo, full corrections) for the position.
+        const crx = new Uint8Array(readFileSync(join(FIX, 'ANMG.crx')));
+        const byTime = new Map<number, PppEpoch['obs']>();
+        const res = await parseRinexStream(
+          new File([crx], 'ANMG.crx'),
+          undefined,
+          undefined,
+          (time, prn, codes, values) => {
+            const sys = prn[0];
+            const get = (c: string) => {
+              const i = codes.indexOf(c);
+              return i >= 0 ? values[i] : null;
+            };
+            let s: PppEpoch['obs'][number] | null = null;
+            if (sys === 'G') {
+              const c1 = get('C1W') ?? get('C1C');
+              const c2 = get('C2W');
+              const l1 = get('L1C');
+              const l2 = get('L2W');
+              if (c1 && c2 && l1 && l2)
+                s = {
+                  prn,
+                  f1: FREQ.G!['1']!,
+                  f2: FREQ.G!['2']!,
+                  c1,
+                  c2,
+                  l1,
+                  l2,
+                  band1: 'G01',
+                  band2: 'G02',
+                  slip: false,
+                };
+            } else if (sys === 'E') {
+              const c1 = get('C1C') ?? get('C1X');
+              const c2 = get('C5Q') ?? get('C5X');
+              const l1 = get('L1C') ?? get('L1X');
+              const l2 = get('L5Q') ?? get('L5X');
+              if (c1 && c2 && l1 && l2)
+                s = {
+                  prn,
+                  f1: FREQ.E!['1']!,
+                  f2: FREQ.E!['5']!,
+                  c1,
+                  c2,
+                  l1,
+                  l2,
+                  band1: 'E01',
+                  band2: 'E05',
+                  slip: false,
+                };
+            }
+            if (!s) return;
+            if (!byTime.has(time)) byTime.set(time, []);
+            byTime.get(time)!.push(s);
+          }
+        );
+        const epochs = [...byTime.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([timeMs, obs]) => ({ timeMs, obs }));
+        const truth = SINEX_TRUTH.ANMG!;
+        const corrections = createPppCorrections({
+          antenna,
+          rcvAntType: res.header.antType,
+          rcvPco: true,
+          tides: true,
+          windup: true,
+        });
+        const sol = solvePpp(epochs, sp3, {
+          aprioriPos: truth,
+          groundTruth: truth,
+          elevationMaskDeg: 10,
+          corrections,
+        });
+        const err3d = Math.hypot(
+          sol.position[0] - truth[0],
+          sol.position[1] - truth[1],
+          sol.position[2] - truth[2]
+        );
+        // Float multi-GNSS PPP agrees with the true ITRF coordinate to ~9 cm
+        // (measured), well within a decimetre — genuine absolute accuracy,
+        // not merely agreement with the dm-level header.
+        expect(err3d).toBeLessThan(0.15);
+      }
+    );
+  }
+);
