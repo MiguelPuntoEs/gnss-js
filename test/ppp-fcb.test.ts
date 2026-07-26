@@ -156,28 +156,33 @@ async function stationArcs(station: string, file: string): Promise<WlArc[]> {
 }
 
 describe.skipIf(!HAS_NET)('wide-lane FCB on a real self-built network', () => {
-  it('fixes ABMF GPS + Galileo wide-lanes with no external bias product', async () => {
-    const all: WlArc[] = [];
-    for (const [name, file] of Object.entries(NET)) {
-      all.push(...(await stationArcs(name, file)));
-    }
-    // Estimate FCBs per constellation (receiver WL bias is system-specific).
-    for (const sys of ['G', 'E'] as const) {
-      const arcs = all.filter((a) => a.prn[0] === sys);
-      expect(arcs.length).toBeGreaterThan(100);
-      const r = estimateWidelaneFcb(arcs, { fixWindow: 0.15 });
-      // Apply the network FCBs to ABMF and measure its wide-lane fix rate.
-      const abmf = arcs.filter((a) => a.station === 'ABMF');
-      let fixed = 0;
-      for (const a of abmf) {
-        const fcb = r.satFcb.get(a.prn);
-        if (fcb === undefined) continue;
-        const resid = wrap(a.wlFloat - r.rcvBias.get('ABMF')! - fcb);
-        if (Math.abs(resid) < 0.15) fixed++;
+  // Parsing six full-day CRX files takes several seconds — raise the timeout.
+  it(
+    'fixes ABMF GPS + Galileo wide-lanes with no external bias product',
+    { timeout: 60_000 },
+    async () => {
+      const all: WlArc[] = [];
+      for (const [name, file] of Object.entries(NET)) {
+        all.push(...(await stationArcs(name, file)));
       }
-      // >90% of ABMF wide-lanes snap to integers (GPS ~98%, Galileo ~95%).
-      expect(fixed / abmf.length).toBeGreaterThan(0.9);
-      expect(r.residRms).toBeLessThan(0.15);
+      // Estimate FCBs per constellation (receiver WL bias is system-specific).
+      for (const sys of ['G', 'E'] as const) {
+        const arcs = all.filter((a) => a.prn[0] === sys);
+        expect(arcs.length).toBeGreaterThan(100);
+        const r = estimateWidelaneFcb(arcs, { fixWindow: 0.15 });
+        // Apply the network FCBs to ABMF and measure its wide-lane fix rate.
+        const abmf = arcs.filter((a) => a.station === 'ABMF');
+        let fixed = 0;
+        for (const a of abmf) {
+          const fcb = r.satFcb.get(a.prn);
+          if (fcb === undefined) continue;
+          const resid = wrap(a.wlFloat - r.rcvBias.get('ABMF')! - fcb);
+          if (Math.abs(resid) < 0.15) fixed++;
+        }
+        // >90% of ABMF wide-lanes snap to integers (GPS ~98%, Galileo ~95%).
+        expect(fixed / abmf.length).toBeGreaterThan(0.9);
+        expect(r.residRms).toBeLessThan(0.15);
+      }
     }
-  });
+  );
 });
