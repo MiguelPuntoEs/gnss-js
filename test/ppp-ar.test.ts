@@ -8,8 +8,11 @@ import {
 } from '../src/rinex/bias-sinex';
 import {
   resolvePppAmbiguities,
+  fixPppPosition,
   nlWavelength,
+  wlWavelength,
   type ArSat,
+  type PppFixState,
 } from '../src/positioning';
 import { FREQ } from '../src/constants/gnss';
 
@@ -170,5 +173,96 @@ describe('PPP-AR resolver', () => {
     const r = resolvePppAmbiguities(sats, Q);
     expect(r.fixed).toBe(true);
     expect(r.rejectedWl.length).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Ambiguity-fixed position (covariance conditioning)                 */
+/* ------------------------------------------------------------------ */
+
+describe('fixPppPosition', () => {
+  const lamNl = nlWavelength(F1, F2);
+  const lamWl = wlWavelength(F1, F2);
+  const factor = F2 / (F1 - F2);
+  void lamWl;
+
+  /** IF ambiguity (m) implied by integer N1 / N_WL (zero FCBs). */
+  const aif = (n1: number, nWl: number) => lamNl * n1 + lamNl * factor * nWl;
+
+  const TRUTH = [
+    { prn: 'G05', n1: 8, nWl: -2, elevDeg: 70 },
+    { prn: 'G13', n1: -4, nWl: 3, elevDeg: 50 },
+    { prn: 'G20', n1: 2, nWl: 1, elevDeg: 35 },
+  ];
+
+  /** Build a fix-state: position + 3 ambiguities, block-diagonal-ish PD cov. */
+  function state(offsets: number[]): PppFixState {
+    const nAmb = TRUTH.length;
+    const n = 3 + nAmb; // [X,Y,Z, amb...]
+    const P: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+    // Position covariance (m²) and ambiguity covariance (m²), with a small
+    // position↔ambiguity cross-correlation so a fixed ambiguity moves position.
+    for (let i = 0; i < 3; i++) P[i]![i] = 0.04; // 20 cm
+    for (let a = 0; a < nAmb; a++) {
+      const i = 3 + a;
+      P[i]![i] = 0.02 * 0.02; // 2 cm ambiguity σ
+      for (let r = 0; r < 3; r++) {
+        // Satellite-dependent position↔ambiguity cross-cov (different geometry
+        // per satellite) so between-satellite differences don't cancel it.
+        P[r]![i] = P[i]![r] = 1e-3 * (a + 1) * (1 + 0.1 * r);
+      }
+    }
+    return {
+      position: [1000, 2000, 3000],
+      covariance: P,
+      ambiguities: TRUTH.map((t, a) => ({
+        prn: t.prn,
+        index: 3 + a,
+        aIF: aif(t.n1, t.nWl) + (offsets[a] ?? 0),
+        mwCyc: t.nWl, // zero FCB ⇒ rounds to nWl
+        f1: F1,
+        f2: F2,
+        elevDeg: t.elevDeg,
+      })),
+    };
+  }
+
+  const zeroFcb = {
+    satWlFcb: new Map<string, number>(),
+    satNlFcb: new Map<string, number>(),
+  };
+
+  it('fixes and leaves the position unchanged when floats are on integers', () => {
+    const r = fixPppPosition(state([0, 0, 0]), zeroFcb, { ratioThreshold: 2 });
+    expect(r.fixed).toBe(true);
+    expect(r.refPrn).toBe('G05'); // highest elevation
+    expect(r.nFixed).toBe(2); // 3 kept − 1 reference
+    // z = 0 ⇒ no correction.
+    expect(Math.hypot(...r.shift)).toBeLessThan(1e-9);
+    expect(r.position).toEqual([1000, 2000, 3000]);
+  });
+
+  it('shifts the position toward the fixed integers when floats are offset', () => {
+    // Offset one satellite's ambiguity by +3 cm (< half a narrow-lane, so it
+    // still rounds to the same integer) — the fix must pull the position.
+    const r = fixPppPosition(state([0, 0.03, 0]), zeroFcb, {
+      ratioThreshold: 2,
+    });
+    expect(r.fixed).toBe(true);
+    const mag = Math.hypot(...r.shift);
+    expect(mag).toBeGreaterThan(0);
+    expect(mag).toBeLessThan(0.03); // bounded by the ambiguity offset
+    // The fixed position differs from the float by exactly `shift`.
+    expect(r.position[1] - r.floatPosition[1]).toBeCloseTo(r.shift[1], 12);
+  });
+
+  it('returns the float position unchanged when it cannot fix', () => {
+    // Put the single-difference ambiguity on a half-integer ⇒ ratio ≈ 1.
+    const r = fixPppPosition(state([0, 0.5 * lamNl, 0]), zeroFcb, {
+      ratioThreshold: 3,
+    });
+    expect(r.fixed).toBe(false);
+    expect(r.position).toEqual(r.floatPosition);
+    expect(Math.hypot(...r.shift)).toBe(0);
   });
 });

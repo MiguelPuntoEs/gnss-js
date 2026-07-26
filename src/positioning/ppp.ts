@@ -80,6 +80,9 @@ export interface PppOptions {
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
   troposphere?: boolean;
+  /** Expose the final EKF state (position + ambiguities + covariance) in the
+   * solution for ambiguity-resolved positioning. Default false. */
+  exposeState?: boolean;
   /** High-rate precise satellite clocks (RINEX CLOCK, typically 30 s). When
    * given, satellite clock offsets come from this by linear interpolation
    * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
@@ -120,6 +123,32 @@ export interface PppSolution {
   /** Per-arc converged float ambiguities — one per continuous satellite
    * tracking arc — the raw material for ambiguity resolution (PPP-AR). */
   arcs: PppArc[];
+  /** Final EKF state (position + active ambiguities + full covariance) for
+   * ambiguity-resolved (fixed) positioning. Present only when
+   * `PppOptions.exposeState` is set. */
+  finalState?: PppFixState;
+}
+
+/** Final float state exposed for PPP-AR position fixing (`fixPppPosition`). */
+export interface PppFixState {
+  /** Float position (m); rows 0–2 of the covariance. */
+  position: [number, number, number];
+  /** Full EKF covariance (n×n). State order: X,Y,Z,ZWD, clocks…, ambiguities. */
+  covariance: number[][];
+  /** Active ambiguities at the final epoch. */
+  ambiguities: {
+    prn: string;
+    /** Row/column of this ambiguity in `covariance`. */
+    index: number;
+    /** Float ionosphere-free ambiguity (m). */
+    aIF: number;
+    /** Arc-averaged Melbourne–Wübbena wide-lane (cycles). */
+    mwCyc: number;
+    f1: number;
+    f2: number;
+    /** Mean satellite elevation over the arc (deg). */
+    elevDeg: number;
+  }[];
 }
 
 /** A converged carrier-phase arc: the float ionosphere-free ambiguity plus
@@ -758,6 +787,31 @@ export function solvePpp(
     });
   }
 
+  // Capture the final EKF state for ambiguity resolution before flushing the
+  // open arcs (arcSnap still holds each active satellite's f1/f2/MW/elevation).
+  let finalState: PppFixState | undefined;
+  if (opts.exposeState) {
+    const ambs: PppFixState['ambiguities'] = [];
+    for (const [prn, index] of ambIdx) {
+      const s = arcSnap.get(prn);
+      if (!s || s.nEpochs < 10) continue;
+      ambs.push({
+        prn,
+        index,
+        aIF: x[index]!,
+        mwCyc: mwState.get(prn)?.mean ?? s.mwCyc,
+        f1: s.f1,
+        f2: s.f2,
+        elevDeg: s.elevSum / s.nEpochs,
+      });
+    }
+    finalState = {
+      position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+      covariance: P.map((row) => row.slice()),
+      ambiguities: ambs,
+    };
+  }
+
   // Flush the still-open arcs at the end of the run.
   for (const prn of [...arcSnap.keys()]) flushArc(prn);
 
@@ -780,5 +834,6 @@ export function solvePpp(
     convergenceSec,
     finalError3d,
     arcs,
+    finalState,
   };
 }

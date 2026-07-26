@@ -26,6 +26,7 @@
 
 import { C_LIGHT } from '../constants/gnss';
 import { lambdaSearch } from './lambda';
+import type { PppFixState } from './ppp';
 
 /** Wide-lane wavelength c/(f1−f2) (m). */
 export function wlWavelength(f1: number, f2: number): number {
@@ -200,5 +201,168 @@ export function resolvePppAmbiguities(
     refPrn: sats[kept[ref]!]!.prn,
     sats: outSats,
     rejectedWl,
+  };
+}
+
+/** Solve A·x = b for a small symmetric positive-definite A (Cholesky). */
+function solveSpd(A: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const L: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let s = A[i]![j]!;
+      for (let k = 0; k < j; k++) s -= L[i]![k]! * L[j]![k]!;
+      if (i === j) {
+        if (s <= 0) return null; // not positive definite
+        L[i]![j] = Math.sqrt(s);
+      } else {
+        L[i]![j] = s / L[j]![j]!;
+      }
+    }
+  }
+  // Forward solve L·y = b, then back solve Lᵀ·x = y.
+  const y = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    let s = b[i]!;
+    for (let k = 0; k < i; k++) s -= L[i]![k]! * y[k]!;
+    y[i] = s / L[i]![i]!;
+  }
+  const x = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    let s = y[i]!;
+    for (let k = i + 1; k < n; k++) s -= L[k]![i]! * x[k]!;
+    x[i] = s / L[i]![i]!;
+  }
+  return x;
+}
+
+export interface FixedPositionResult {
+  /** Whether the narrow-lane fix passed the ratio test. */
+  fixed: boolean;
+  /** Ambiguity-fixed position (m); equals `floatPosition` when not fixed. */
+  position: [number, number, number];
+  /** The input float position (m). */
+  floatPosition: [number, number, number];
+  /** Displacement fixed − float (m), ENU-agnostic ECEF. */
+  shift: [number, number, number];
+  /** Satellites whose ambiguities were fixed (excl. the SD reference). */
+  nFixed: number;
+  ratio: number;
+  refPrn: string | null;
+}
+
+/**
+ * Ambiguity-fixed (PPP-AR) position from a float `solvePpp` final state and
+ * the satellite fractional-cycle biases (from `estimateNetworkFcbs`).
+ *
+ * Resolves the integers (`resolvePppAmbiguities`), then **conditions the
+ * float position on the fixed between-satellite ambiguities** — the standard
+ * constrained solution
+ *   x_fixed = x_float − Q_xz · Q_zz⁻¹ · (z_float − ẑ),
+ * where z = D·a are the single-differenced ambiguities (D removes the
+ * reference satellite, cancelling the receiver term), Q_zz = D·Q_aa·Dᵀ and
+ * Q_xz = Q_xa·Dᵀ come from the EKF covariance. Only satellite-to-satellite
+ * integers constrain the position; the reference (and the receiver clock it
+ * absorbs) stays free. Returns the float position unchanged if the fix fails.
+ */
+export function fixPppPosition(
+  state: PppFixState,
+  fcb: { satWlFcb: Map<string, number>; satNlFcb: Map<string, number> },
+  opts: ArOptions = {}
+): FixedPositionResult {
+  const floatPos = state.position;
+  const noFix: FixedPositionResult = {
+    fixed: false,
+    position: floatPos,
+    floatPosition: floatPos,
+    shift: [0, 0, 0],
+    nFixed: 0,
+    ratio: 0,
+    refPrn: null,
+  };
+
+  const amb = state.ambiguities;
+  if (amb.length < 3) return noFix;
+
+  // Resolve integers over the active ambiguities.
+  const sats: ArSat[] = amb.map((a) => ({
+    prn: a.prn,
+    aIF: a.aIF,
+    mwCyc: a.mwCyc,
+    f1: a.f1,
+    f2: a.f2,
+    wlBiasCyc: fcb.satWlFcb.get(a.prn) ?? 0,
+    nlBiasCyc: fcb.satNlFcb.get(a.prn) ?? 0,
+    elevDeg: a.elevDeg,
+  }));
+  const n = sats.length;
+  const Qaif = new Float64Array(n * n);
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++)
+      Qaif[i * n + j] = state.covariance[amb[i]!.index]![amb[j]!.index]!;
+
+  const res = resolvePppAmbiguities(sats, Qaif, opts);
+  if (!res.fixed || res.refPrn === null) {
+    return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
+  }
+
+  // Kept satellites (WL-fixed) in the resolver's order, mapped to EKF indices
+  // and their float / fixed IF ambiguities.
+  const idxOfPrn = new Map(amb.map((a) => [a.prn, a.index]));
+  const floatOfPrn = new Map(amb.map((a) => [a.prn, a.aIF]));
+  const kept = res.sats.filter((s) => idxOfPrn.has(s.prn));
+  const refPos = kept.findIndex((s) => s.prn === res.refPrn);
+  if (refPos < 0 || kept.length < 2) {
+    return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
+  }
+
+  const ambIdx = kept.map((s) => idxOfPrn.get(s.prn)!);
+  const aFloat = kept.map((s) => floatOfPrn.get(s.prn)!);
+  const aFixed = kept.map((s) => s.aIF);
+  const others = kept.map((_, i) => i).filter((i) => i !== refPos);
+  const m = others.length;
+
+  // Q_aa (kept×kept) and Q_xa (3×kept) from the EKF covariance.
+  const P = state.covariance;
+  const qAA = (i: number, j: number) => P[ambIdx[i]!]![ambIdx[j]!]!;
+  const qXA = (r: number, i: number) => P[r]![ambIdx[i]!]!;
+
+  // z = D·a (single differences vs the reference): Q_zz and Q_xz.
+  const Qzz: number[][] = Array.from({ length: m }, () => new Array(m).fill(0));
+  const z: number[] = new Array(m).fill(0);
+  for (let a = 0; a < m; a++) {
+    const ia = others[a]!;
+    z[a] = aFloat[ia]! - aFloat[refPos]! - (aFixed[ia]! - aFixed[refPos]!);
+    for (let b = 0; b < m; b++) {
+      const ib = others[b]!;
+      Qzz[a]![b] =
+        qAA(ia, ib) - qAA(ia, refPos) - qAA(refPos, ib) + qAA(refPos, refPos);
+    }
+  }
+  const Qxz: number[][] = [0, 1, 2].map((r) =>
+    others.map((ia) => qXA(r, ia) - qXA(r, refPos))
+  );
+
+  // x_fixed = x_float − Q_xz · Q_zz⁻¹ · z.
+  const y = solveSpd(Qzz, z);
+  if (!y) return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
+  const shift: [number, number, number] = [0, 0, 0];
+  for (let r = 0; r < 3; r++) {
+    let s = 0;
+    for (let a = 0; a < m; a++) s += Qxz[r]![a]! * y[a]!;
+    shift[r] = -s;
+  }
+  return {
+    fixed: true,
+    position: [
+      floatPos[0] + shift[0],
+      floatPos[1] + shift[1],
+      floatPos[2] + shift[2],
+    ],
+    floatPosition: floatPos,
+    shift,
+    nFixed: m,
+    ratio: res.ratio,
+    refPrn: res.refPrn,
   };
 }

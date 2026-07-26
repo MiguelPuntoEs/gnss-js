@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.36.0
+
+### New — ambiguity-fixed position (`fixPppPosition`): the float→fixed loop closed
+
+- `solvePpp` gained `exposeState` — when set, the solution carries `finalState` (float position + active-ambiguity floats + the full EKF covariance), the material needed to condition a fixed position.
+- Added `fixPppPosition` — takes that state plus the satellite FCBs (from `estimateNetworkFcbs`), resolves the integers (`resolvePppAmbiguities`, LAMBDA on between-satellite single differences), and **conditions the float position on the fixed ambiguities**: `x_fixed = x_float − Q_xz·Q_zz⁻¹·(z_float − ẑ)` via a Cholesky solve, with the reference satellite (and the receiver clock it absorbs) left free. Returns the fixed position, the fixed−float shift, and the ratio. This closes the loop from float PPP to an ambiguity-**fixed** coordinate — previously the resolver was validated only in isolation and never driven from a real solve.
+- The conditioning arithmetic is covered by synthetic tests (zero shift when floats already sit on integers; a bounded position pull when offset; float returned unchanged when the ratio test fails).
+
+  **Honest scope:** `fixPppPosition` fixes the ambiguities **active at the final epoch**. Most instantaneously-tracked arcs are not fully converged, so few pass the ratio test and the fixed−float shift is sub-centimetre (the float is already close). A large demonstrated centimetre gain needs session-cumulative (per-arc) ambiguity fixing rather than a single-epoch snapshot, and a trustworthy centimetre ground truth to measure against — both still open. The mechanism and its maths are now in place and validated; the coverage and the final cm _proof_ are the remaining work.
+
 ## 1.35.0
 
 ### New — multi-GNSS PPP-AR network calibration (`estimateNetworkFcbs`)
