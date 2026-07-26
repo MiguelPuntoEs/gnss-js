@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.34.0
+
+### New — narrow-lane FCB estimation: self-contained PPP-AR reaches centimetre
+
+- `solvePpp` now returns `arcs: PppArc[]` — the per-arc converged float ionosphere-free ambiguity, arc-averaged wide-lane, frequencies, mean elevation and span for each continuous tracking arc. This is the raw material for ambiguity resolution.
+- Added `estimateNarrowlaneFcb` — the centimetre half of PPP-AR. With the wide-lane FCBs already solved (from `estimateWidelaneFcb` on the same network), it fixes each arc's N_WL, recovers the float narrow-lane ambiguity `N1 = A_IF/λ_NL − (f2/(f1−f2))·N_WL`, and decomposes the per-satellite narrow-lane fractional-cycle biases across the network — the same Ge/Gendt method, now on the ~10.7 cm narrow-lane. No external phase-bias product.
+- **Validated on the real 6-station MGEX network (2024-001), no external product**: on clean, well-converged (≥1 h) arcs with the full correction model on, the estimated narrow-lane FCBs fix at **~83%** with a **1.2 cm** residual RMS; the fix rate rises with arc length (30 min → 59% / 2.0 cm; 1 h → 83% / 1.2 cm) — the expected PPP-AR behaviour. This is the self-contained path from decimetre float PPP to **centimetre** fixed PPP, with no reliance on an AR-capable analysis centre's bias product.
+
+  Coverage caveat: how many arcs qualify depends on continuous-arc length. Equatorial stations (ionospheric scintillation) and the current cycle-slip/re-initialisation threshold fragment arcs; a clock-robust slip detector (arcs both long _and_ clean) is the next step to widen coverage.
+
 ## 1.33.0
 
 ### Changed — satellite antenna PCO on by default (rigorous model)

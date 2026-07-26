@@ -140,48 +140,56 @@ function circMean(vals: number[], weights: number[]): number {
   return wrapHalf(Math.atan2(s, c) / (2 * Math.PI));
 }
 
+/** One float ambiguity (cycles) at a station: value = integer + b_rcv + b_sat. */
+interface FcbEntry {
+  station: string;
+  sat: string;
+  value: number;
+  weight: number;
+}
+
 /**
- * Estimate per-satellite wide-lane FCBs from a network of stations' arc
- * wide-lane floats. Needs ≥2 stations sharing satellites to break the
- * integer/bias entanglement.
+ * Generic Ge/Gendt fractional-cycle-bias decomposition: given float
+ * ambiguities `value = N(integer) + b_rcv(station) + b_sat(satellite)` across
+ * a network, alternate integer rounding with circular-mean bias updates,
+ * pinning a reference station's bias to fix the datum. Shared by the wide-
+ * and narrow-lane estimators.
  */
-export function estimateWidelaneFcb(
-  arcs: WlArc[],
+function decomposeFcb(
+  entries: FcbEntry[],
   opts: WlFcbOptions = {}
 ): WlFcbResult {
   const maxIter = opts.maxIter ?? 50;
   const tol = opts.tol ?? 1e-4;
   const fixWindow = opts.fixWindow ?? 0.25;
 
-  const sats = [...new Set(arcs.map((a) => a.prn))].sort();
-  const stations = [...new Set(arcs.map((a) => a.station))].sort();
+  const sats = [...new Set(entries.map((e) => e.sat))].sort();
+  const stations = [...new Set(entries.map((e) => e.station))].sort();
   const refStation = stations[0] ?? '';
 
   const satFcb = new Map<string, number>(sats.map((s) => [s, 0]));
   const rcvBias = new Map<string, number>(stations.map((s) => [s, 0]));
-  const nInt = new Array(arcs.length).fill(0);
+  const nInt = new Array(entries.length).fill(0);
 
   let iterations = 0;
   for (let it = 0; it < maxIter; it++) {
     iterations = it + 1;
-    // 1. Integers given current biases.
-    for (let i = 0; i < arcs.length; i++) {
-      const a = arcs[i]!;
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!;
       nInt[i] = Math.round(
-        a.wlFloat - rcvBias.get(a.station)! - satFcb.get(a.prn)!
+        e.value - rcvBias.get(e.station)! - satFcb.get(e.sat)!
       );
     }
 
-    // 2. Satellite FCBs: circular mean of (Ñ − N − b_rcv) over stations.
     let maxChange = 0;
     for (const s of sats) {
       const vals: number[] = [];
       const w: number[] = [];
-      for (let i = 0; i < arcs.length; i++) {
-        const a = arcs[i]!;
-        if (a.prn !== s) continue;
-        vals.push(a.wlFloat - nInt[i] - rcvBias.get(a.station)!);
-        w.push(a.nObs);
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]!;
+        if (e.sat !== s) continue;
+        vals.push(e.value - nInt[i] - rcvBias.get(e.station)!);
+        w.push(e.weight);
       }
       if (!vals.length) continue;
       const nv = circMean(vals, w);
@@ -189,21 +197,19 @@ export function estimateWidelaneFcb(
       satFcb.set(s, nv);
     }
 
-    // 3. Receiver biases: circular mean of (Ñ − N − b_sat) over satellites.
     for (const r of stations) {
       const vals: number[] = [];
       const w: number[] = [];
-      for (let i = 0; i < arcs.length; i++) {
-        const a = arcs[i]!;
-        if (a.station !== r) continue;
-        vals.push(a.wlFloat - nInt[i] - satFcb.get(a.prn)!);
-        w.push(a.nObs);
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]!;
+        if (e.station !== r) continue;
+        vals.push(e.value - nInt[i] - satFcb.get(e.sat)!);
+        w.push(e.weight);
       }
       if (!vals.length) continue;
       rcvBias.set(r, circMean(vals, w));
     }
 
-    // 4. Datum: pin the reference receiver bias to 0 (shift into satFcb).
     const shift = rcvBias.get(refStation)!;
     if (shift !== 0) {
       for (const r of stations)
@@ -214,19 +220,104 @@ export function estimateWidelaneFcb(
     if (maxChange < tol) break;
   }
 
-  // Post-fit residuals + fix rate.
   let sumSq = 0;
   let fixed = 0;
-  for (let i = 0; i < arcs.length; i++) {
-    const a = arcs[i]!;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
     const resid = wrapHalf(
-      a.wlFloat - nInt[i] - rcvBias.get(a.station)! - satFcb.get(a.prn)!
+      e.value - nInt[i] - rcvBias.get(e.station)! - satFcb.get(e.sat)!
     );
     sumSq += resid * resid;
     if (Math.abs(resid) <= fixWindow) fixed++;
   }
-  const residRms = arcs.length ? Math.sqrt(sumSq / arcs.length) : 0;
-  const fixRate = arcs.length ? fixed / arcs.length : 0;
+  const residRms = entries.length ? Math.sqrt(sumSq / entries.length) : 0;
+  const fixRate = entries.length ? fixed / entries.length : 0;
 
   return { satFcb, rcvBias, residRms, fixRate, refStation, iterations };
+}
+
+/**
+ * Estimate per-satellite wide-lane FCBs from a network of stations' arc
+ * wide-lane floats. Needs ≥2 stations sharing satellites to break the
+ * integer/bias entanglement.
+ */
+export function estimateWidelaneFcb(
+  arcs: WlArc[],
+  opts: WlFcbOptions = {}
+): WlFcbResult {
+  return decomposeFcb(
+    arcs.map((a) => ({
+      station: a.station,
+      sat: a.prn,
+      value: a.wlFloat,
+      weight: a.nObs,
+    })),
+    opts
+  );
+}
+
+/** One converged arc (from `solvePpp`) tagged with its station, for NL FCB. */
+export interface NlArc {
+  station: string;
+  prn: string;
+  /** Float ionosphere-free ambiguity (m). */
+  aIF: number;
+  /** Arc-averaged Melbourne–Wübbena wide-lane (cycles). */
+  mwCyc: number;
+  f1: number;
+  f2: number;
+  nEpochs: number;
+}
+
+export interface NlFcbResult extends WlFcbResult {
+  /** Arcs whose wide-lane fixed and were used in the narrow-lane estimation. */
+  usedArcs: number;
+  /** Arcs dropped because the wide-lane did not round confidently. */
+  wlRejected: number;
+}
+
+const C = 299792458;
+
+/**
+ * Estimate per-satellite **narrow-lane** FCBs — the centimetre half of
+ * PPP-AR. Needs the wide-lane FCBs already solved (`wl`, from the same
+ * network) to fix each arc's N_WL, from which the float narrow-lane
+ * ambiguity is recovered:
+ *
+ *   A_IF = λ_NL·N1 + λ_NL·(f2/(f1−f2))·N_WL
+ *   ⇒ N1_float = A_IF/λ_NL − (f2/(f1−f2))·N_WL,   λ_NL = c/(f1+f2)
+ *
+ * then decomposed across the network exactly like the wide-lane. The
+ * narrow-lane wavelength is ~10.7 cm, so this is far more sensitive to
+ * residual orbit/clock/troposphere/position error than the ~86 cm wide-lane
+ * — the fix rate is the honest measure of how close the network is to cm.
+ */
+export function estimateNarrowlaneFcb(
+  arcs: NlArc[],
+  wl: WlFcbResult,
+  opts: WlFcbOptions = {}
+): NlFcbResult {
+  const entries: FcbEntry[] = [];
+  let wlRejected = 0;
+  for (const a of arcs) {
+    const satWl = wl.satFcb.get(a.prn);
+    const rcvWl = wl.rcvBias.get(a.station);
+    if (satWl === undefined || rcvWl === undefined) continue;
+    const wlFloat = a.mwCyc - satWl - rcvWl;
+    const nWl = Math.round(wlFloat);
+    if (Math.abs(wlFloat - nWl) > (opts.fixWindow ?? 0.25)) {
+      wlRejected++;
+      continue; // wide-lane not confidently fixed → can't form the narrow-lane
+    }
+    const lamNl = C / (a.f1 + a.f2);
+    const n1Float = a.aIF / lamNl - (a.f2 / (a.f1 - a.f2)) * nWl;
+    entries.push({
+      station: a.station,
+      sat: a.prn,
+      value: n1Float,
+      weight: a.nEpochs,
+    });
+  }
+  const res = decomposeFcb(entries, { fixWindow: 0.15, ...opts });
+  return { ...res, usedArcs: entries.length, wlRejected };
 }

@@ -457,6 +457,7 @@ export type {
   PppOptions,
   PppEpochResult,
   PppSolution,
+  PppArc,
 } from './ppp';
 export { niellMapping } from './ppp-tropo';
 export type { TropoMapping } from './ppp-tropo';
@@ -473,5 +474,16 @@ export type { PppAntennaModel, AntennaOffset } from './ppp-antenna';
 export { sunEcef, moonEcef, solidEarthTide, gmst } from './ppp-astro';
 export { resolvePppAmbiguities, wlWavelength, nlWavelength } from './ppp-ar';
 export type { ArSat, ArOptions, ArResult, ArFixedSat } from './ppp-ar';
-export { estimateWidelaneFcb, extractWidelaneArcs } from './ppp-fcb';
-export type { WlArc, WlObs, WlFcbOptions, WlFcbResult } from './ppp-fcb';
+export {
+  estimateWidelaneFcb,
+  estimateNarrowlaneFcb,
+  extractWidelaneArcs,
+} from './ppp-fcb';
+export type {
+  WlArc,
+  WlObs,
+  WlFcbOptions,
+  WlFcbResult,
+  NlArc,
+  NlFcbResult,
+} from './ppp-fcb';

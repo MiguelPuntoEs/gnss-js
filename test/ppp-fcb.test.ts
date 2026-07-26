@@ -3,9 +3,12 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import {
   estimateWidelaneFcb,
+  estimateNarrowlaneFcb,
   extractWidelaneArcs,
   type WlArc,
   type WlObs,
+  type WlFcbResult,
+  type NlArc,
 } from '../src/positioning';
 import { parseRinexStream } from '../src/rinex';
 import { FREQ } from '../src/constants/gnss';
@@ -106,6 +109,78 @@ describe('wide-lane FCB estimation', () => {
       const got = wrap(r.satFcb.get(`G0${i + 1}`)! - r.satFcb.get('G01')!);
       const truth = wrap(SAT[i]! - SAT[0]!);
       expect(Math.abs(wrap(got - truth))).toBeLessThan(0.05);
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Narrow-lane FCB estimation (synthetic, known-integer)              */
+/* ------------------------------------------------------------------ */
+
+describe('narrow-lane FCB estimation', () => {
+  const F1 = FREQ.G!['1']!;
+  const F2 = FREQ.G!['2']!;
+  const C = 299792458;
+  const lamNl = C / (F1 + F2);
+  const factor = F2 / (F1 - F2);
+  const NLFCB = [0.15, -0.28, 0.4, -0.11, 0.33]; // per-satellite NL FCB (cyc)
+  const NLRCV = [0.06, -0.19, 0.27, -0.3]; // per-station NL receiver bias
+
+  // A trivial wide-lane solution (biases zero) so mwCyc = N_WL rounds exactly.
+  const wl: WlFcbResult = {
+    satFcb: new Map(
+      NLFCB.map((_, s) => [`G${String(s + 1).padStart(2, '0')}`, 0])
+    ),
+    rcvBias: new Map(NLRCV.map((_, r) => [`ST${r}`, 0])),
+    residRms: 0,
+    fixRate: 1,
+    refStation: 'ST0',
+    iterations: 0,
+  };
+
+  function nlNetwork(noiseCyc = 0): NlArc[] {
+    const arcs: NlArc[] = [];
+    for (let r = 0; r < NLRCV.length; r++) {
+      for (let s = 0; s < NLFCB.length; s++) {
+        const n1 = ((r * 5 + s * 3) % 9) - 4; // deterministic integer
+        const nWl = ((r + s) % 7) - 3;
+        const noise = noiseCyc * Math.sin(r * 2.1 + s * 1.3);
+        const n1Float = n1 + NLRCV[r]! + NLFCB[s]! + noise;
+        const aIF = lamNl * n1Float + lamNl * factor * nWl;
+        arcs.push({
+          station: `ST${r}`,
+          prn: `G${String(s + 1).padStart(2, '0')}`,
+          aIF,
+          mwCyc: nWl, // WL biases are zero here → rounds to nWl
+          f1: F1,
+          f2: F2,
+          nEpochs: 200,
+        });
+      }
+    }
+    return arcs;
+  }
+
+  it('recovers narrow-lane FCBs (up to datum) from clean arcs', () => {
+    const r = estimateNarrowlaneFcb(nlNetwork(0), wl, { fixWindow: 0.15 });
+    expect(r.wlRejected).toBe(0);
+    expect(r.usedArcs).toBe(NLFCB.length * NLRCV.length);
+    expect(r.fixRate).toBe(1);
+    expect(r.residRms).toBeLessThan(1e-6);
+    for (let i = 1; i < NLFCB.length; i++) {
+      const got = wrap(r.satFcb.get(`G0${i + 1}`)! - r.satFcb.get('G01')!);
+      const truth = wrap(NLFCB[i]! - NLFCB[0]!);
+      expect(wrap(got - truth)).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('stays robust under ~0.03-cycle narrow-lane noise', () => {
+    const r = estimateNarrowlaneFcb(nlNetwork(0.03), wl, { fixWindow: 0.15 });
+    expect(r.fixRate).toBe(1);
+    for (let i = 1; i < NLFCB.length; i++) {
+      const got = wrap(r.satFcb.get(`G0${i + 1}`)! - r.satFcb.get('G01')!);
+      const truth = wrap(NLFCB[i]! - NLFCB[0]!);
+      expect(Math.abs(wrap(got - truth))).toBeLessThan(0.02);
     }
   });
 });
