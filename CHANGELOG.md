@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.31.0
+
+### New — PPP-AR building blocks (Bias-SINEX + integer resolver)
+
+- Added a **Bias-SINEX (`.BIA`) parser** (`parseBiasSinex` / `findSatBias` / `biasMetres`) for the code (**DSB**) and observable-specific (**OSB**) biases the IGS analysis centres publish. The satellite _phase_ OSBs are the fractional-cycle biases PPP-AR needs; the code DSBs are also directly useful for SPP/ionosphere DCB corrections. Validated against the real ESA operational bias file.
+- Added a **PPP integer ambiguity resolver** (`resolvePppAmbiguities`) implementing the classic decomposition: Melbourne–Wübbena **wide-lane** rounding, then **narrow-lane** resolution with the existing LAMBDA search on **between-satellite single differences** (which cancel the receiver phase bias), gated by the ratio test. Satellite WL/NL fractional-cycle biases are inputs (from a Bias-SINEX OSB). Helpers `wlWavelength` / `nlWavelength` exported.
+
+  The resolver's algorithm is validated on synthetic known-integer data (exact recovery noise-free, robust under sub-decimetre noise, correct decline when the floats sit on half-integers, wide-lane outlier rejection, phase-bias de-biasing). **End-to-end centimetre PPP-AR on real data additionally requires an AR-capable satellite phase-bias product (e.g. CNES/CODE OSB)** wired into the product-fetch path — the ESA products currently used for `/ppp` are float-clock (no phase OSB). This release ships the tested resolution machinery; connecting it to `solvePpp`'s float ambiguities + a phase-bias product is the remaining step.
+
 ## 1.30.0
 
 ### New feature — 30 s precise clocks for PPP (`parseClk`)
