@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.33.0
+
+### Changed — satellite antenna PCO on by default (rigorous model)
+
+- `createPppCorrections` now defaults `satPco` to **true**. Investigation confirmed the satellite-PCO path is correct (body-frame z toward geocenter, right-handed frame, correct ANTEX selection, correct LOS sign) and **consistent** with the precise products: enabling it slightly _reduces_ the post-fit phase residual on ABMF (34.0 → 32.7 mm) rather than corrupting it. The earlier "it swings the solution" caution was a misread — the metre-scale offset is mostly absorbed by the float ambiguities, and the few-cm position shift is within the reference-coordinate uncertainty, not a modelling error. Pass `satPco: false` to disable. The products' ANTEX must match the one supplied (igs20.atx for the 2024 IGS/MGEX products).
+
 ## 1.32.1
 
 ### Fixed — honest post-fit phase-residual QC (`phaseResRms`)

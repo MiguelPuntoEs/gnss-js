@@ -96,11 +96,14 @@ export interface PppCorrectionConfig {
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
 export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
-  // Satellite antenna PCO defaults OFF: for float PPP its slowly-varying
-  // per-satellite offset is largely absorbed by the float ambiguities, and
-  // applying the full body-frame offset can degrade a decimetre-level float
-  // solution. Opt in with satPco:true for the rigorous model.
-  const useSat = cfg.satPco ?? false;
+  // Satellite antenna PCO defaults ON: it is part of the rigorous model that
+  // the precise orbit/clock products (SP3 = centre of mass, clocks referenced
+  // to the ionosphere-free antenna phase centre) are consistent with. The
+  // ~2 m body-frame offset is mostly absorbed by the float ambiguities; the
+  // slowly-varying remainder is real and, on the ABMF validation, slightly
+  // reduces the post-fit phase residual — confirming the offset is applied
+  // consistently. (The products' ANTEX must match this one — igs20.atx here.)
+  const useSat = cfg.satPco ?? true;
   const useRcv = cfg.rcvPco ?? true;
   const useTides = cfg.tides ?? true;
   const useWindup = cfg.windup ?? true;
