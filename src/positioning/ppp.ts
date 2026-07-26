@@ -514,8 +514,6 @@ export function solvePpp(
 
     // ── Pass 2: EKF measurement updates ──
     let nSats = 0;
-    let sumPhaseResSq = 0;
-    let nPhaseRes = 0;
     for (const v of vis) {
       const ci = clockOf(v.prn[0]!);
       const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
@@ -580,14 +578,46 @@ export function solvePpp(
           h[ci] = 1;
           h[IDX_ZWD] = v.mw;
           h[ai] = 1;
-          if (ekfUpdateScalar(x, P, h, innov, rPhase, 4)) {
-            sumPhaseResSq += innov * innov;
-            nPhaseRes++;
-          }
+          ekfUpdateScalar(x, P, h, innov, rPhase, 4);
         }
       }
       lastSeen.set(v.prn, ei);
       nSats++;
+    }
+
+    // Post-fit phase residuals: re-evaluate every satellite against the
+    // epoch's FINAL state (position, per-system clock, ZWD, ambiguity), then
+    // project out the receiver clock by removing the per-system mean. The
+    // clock is a free per-epoch parameter, so its best estimate is exactly
+    // that mean; without this, satellites processed early in the sequential
+    // update (before the carrier phase pins the clock) leave a large common
+    // offset that has nothing to do with phase precision. Gross outliers
+    // (undetected slips) are excluded — this is the honest phase-QC number.
+    let sumPhaseResSq = 0;
+    let nPhaseRes = 0;
+    {
+      const bySysRes = new Map<string, number[]>();
+      for (const v of vis) {
+        const ai = ambIdx.get(v.prn);
+        if (ai === undefined) continue;
+        const sys = v.prn[0]!;
+        const ci = clockOf(sys);
+        const commonPh =
+          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+        const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
+        if (Math.abs(innov) >= 0.15) continue; // undetected slip / gross outlier
+        const arr = bySysRes.get(sys);
+        if (arr) arr.push(innov);
+        else bySysRes.set(sys, [innov]);
+      }
+      for (const res of bySysRes.values()) {
+        const mean = res.reduce((a, b) => a + b, 0) / res.length;
+        for (const r of res) {
+          const d = r - mean;
+          sumPhaseResSq += d * d;
+          nPhaseRes++;
+        }
+      }
     }
 
     // Drop ambiguities of satellites unseen for > 20 epochs.

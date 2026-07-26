@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.32.1
+
+### Fixed — honest post-fit phase-residual QC (`phaseResRms`)
+
+- `phaseResRms` is now a **post-fit** residual (each satellite re-evaluated against the epoch's final state) with the **receiver clock projected out** (per-system mean removed), instead of the pre-fit innovation. The pre-fit number was inflated by satellites processed early in the sequential update — before the carrier phase pins the per-epoch clock — which is a filter-ordering artifact, not carrier-phase noise. On ABMF this drops the reported RMS from ~63 mm to ~33 mm; the well-behaved satellites sit at ~5–12 mm (the residual RMS is dominated by a minority of short-arc / just-reinitialised satellites each epoch). No change to the position solution — this is a QC-metric correctness fix.
+
 ## 1.32.0
 
 ### New — self-contained wide-lane FCB estimation (PPP-AR without a product)
