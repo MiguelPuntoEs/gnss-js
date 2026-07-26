@@ -4,13 +4,20 @@ import { join } from 'path';
 import {
   estimateWidelaneFcb,
   estimateNarrowlaneFcb,
+  estimateNetworkFcbs,
   extractWidelaneArcs,
+  solvePpp,
+  buildPppAntenna,
+  createPppCorrections,
   type WlArc,
   type WlObs,
   type WlFcbResult,
   type NlArc,
+  type PppEpoch,
 } from '../src/positioning';
 import { parseRinexStream } from '../src/rinex';
+import { parseSp3 } from '../src/rinex/sp3';
+import { parseAntex } from '../src/antex';
 import { FREQ } from '../src/constants/gnss';
 
 const FIX = join(__dirname, '..', 'test-fixtures');
@@ -25,6 +32,7 @@ const NET: Record<string, string> = {
   ADIS: 'ADIS.crx',
 };
 const HAS_NET = Object.values(NET).every((f) => existsSync(join(FIX, f)));
+const HAS_ATX = existsSync(join(FIX, 'igs20.atx'));
 
 /** Wrap cycles to [−0.5, 0.5). */
 const wrap = (x: number) => x - Math.round(x);
@@ -186,6 +194,65 @@ describe('narrow-lane FCB estimation', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Multi-GNSS network calibration (estimateNetworkFcbs, synthetic)    */
+/* ------------------------------------------------------------------ */
+
+describe('estimateNetworkFcbs (multi-GNSS)', () => {
+  const C = 299792458;
+  // Build a clean mixed GPS + Galileo network with known per-system FCBs.
+  function mixed(): NlArc[] {
+    const arcs: NlArc[] = [];
+    const sysCfg = [
+      { p: 'G', f1: FREQ.G!['1']!, f2: FREQ.G!['2']!, fcb: [0.2, -0.3, 0.1] },
+      {
+        p: 'E',
+        f1: FREQ.E!['1']!,
+        f2: FREQ.E!['5']!,
+        fcb: [-0.15, 0.35, 0.05],
+      },
+    ];
+    for (let r = 0; r < 4; r++) {
+      for (const cfg of sysCfg) {
+        const lamNl = C / (cfg.f1 + cfg.f2);
+        const factor = cfg.f2 / (cfg.f1 - cfg.f2);
+        for (let s = 0; s < cfg.fcb.length; s++) {
+          const n1 = ((r * 3 + s * 2) % 7) - 3;
+          const nWl = ((r + s) % 5) - 2;
+          const n1Float = n1 + 0.1 * r + cfg.fcb[s]!; // 0.1·r = receiver NL bias
+          arcs.push({
+            station: `ST${r}`,
+            prn: `${cfg.p}${String(s + 1).padStart(2, '0')}`,
+            aIF: lamNl * n1Float + lamNl * factor * nWl,
+            mwCyc: nWl, // WL biases zero → rounds to nWl
+            f1: cfg.f1,
+            f2: cfg.f2,
+            nEpochs: 200,
+          });
+        }
+      }
+    }
+    return arcs;
+  }
+
+  it('calibrates both constellations without cross-system contamination', () => {
+    const r = estimateNetworkFcbs(mixed(), { minArcEpochs: 120, minWlObs: 40 });
+    // Both systems present in the merged per-satellite maps.
+    expect(r.satNlFcb.has('G01')).toBe(true);
+    expect(r.satNlFcb.has('E01')).toBe(true);
+    expect(r.perSystem.G).toBeDefined();
+    expect(r.perSystem.E).toBeDefined();
+    // Clean data ⇒ both systems fully fix.
+    expect(r.perSystem.G!.nlFixRate).toBe(1);
+    expect(r.perSystem.E!.nlFixRate).toBe(1);
+    // Between-satellite NL FCB differences match truth, per system.
+    const gd = wrap(r.satNlFcb.get('G02')! - r.satNlFcb.get('G01')!);
+    expect(wrap(gd - wrap(-0.3 - 0.2))).toBeCloseTo(0, 6);
+    const ed = wrap(r.satNlFcb.get('E02')! - r.satNlFcb.get('E01')!);
+    expect(wrap(ed - wrap(0.35 - -0.15))).toBeCloseTo(0, 6);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /*  Real-data validation: self-built network fixes ABMF wide-lanes     */
 /*  with NO external phase-bias product.                               */
 /* ------------------------------------------------------------------ */
@@ -261,3 +328,143 @@ describe.skipIf(!HAS_NET)('wide-lane FCB on a real self-built network', () => {
     }
   );
 });
+
+/* ------------------------------------------------------------------ */
+/*  Real-data narrow-lane: full self-contained cm PPP-AR on the        */
+/*  multi-GNSS network (needs the ANTEX for the clean model).          */
+/* ------------------------------------------------------------------ */
+
+/** Run PPP for a station (GPS+Galileo+BeiDou, full corrections) → arcs. */
+async function stationPppArcs(
+  file: string,
+  sp3: ReturnType<typeof parseSp3>,
+  antenna: ReturnType<typeof buildPppAntenna>
+): Promise<NlArc[]> {
+  const crx = new Uint8Array(readFileSync(join(FIX, file)));
+  const byTime = new Map<number, PppEpoch['obs']>();
+  const result = await parseRinexStream(
+    new File([crx], file),
+    undefined,
+    undefined,
+    (time, prn, codes, values) => {
+      const sys = prn[0];
+      const get = (c: string) => {
+        const i = codes.indexOf(c);
+        return i >= 0 ? values[i] : null;
+      };
+      let s: PppEpoch['obs'][number] | null = null;
+      if (sys === 'G') {
+        const c1 = get('C1W') ?? get('C1C');
+        const c2 = get('C2W');
+        const l1 = get('L1C');
+        const l2 = get('L2W');
+        if (c1 && c2 && l1 && l2)
+          s = {
+            prn,
+            f1: FREQ.G!['1']!,
+            f2: FREQ.G!['2']!,
+            c1,
+            c2,
+            l1,
+            l2,
+            band1: 'G01',
+            band2: 'G02',
+            slip: false,
+          };
+      } else if (sys === 'E') {
+        const c1 = get('C1C') ?? get('C1X');
+        const c2 = get('C5Q') ?? get('C5X');
+        const l1 = get('L1C') ?? get('L1X');
+        const l2 = get('L5Q') ?? get('L5X');
+        if (c1 && c2 && l1 && l2)
+          s = {
+            prn,
+            f1: FREQ.E!['1']!,
+            f2: FREQ.E!['5']!,
+            c1,
+            c2,
+            l1,
+            l2,
+            band1: 'E01',
+            band2: 'E05',
+            slip: false,
+          };
+      } else if (sys === 'C') {
+        const c1 = get('C2I');
+        const c2 = get('C6I');
+        const l1 = get('L2I');
+        const l2 = get('L6I');
+        if (c1 && c2 && l1 && l2)
+          s = {
+            prn,
+            f1: FREQ.C!['2']!,
+            f2: FREQ.C!['6']!,
+            c1,
+            c2,
+            l1,
+            l2,
+            band1: 'C02',
+            band2: 'C06',
+            slip: false,
+          };
+      }
+      if (!s) return;
+      if (!byTime.has(time)) byTime.set(time, []);
+      byTime.get(time)!.push(s);
+    }
+  );
+  const antType = result.header.antType;
+  const truth = result.header.approxPosition as [number, number, number];
+  const epochs = [...byTime.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([timeMs, obs]) => ({ timeMs, obs }));
+  const corrections = createPppCorrections({
+    antenna,
+    rcvAntType: antType,
+    rcvPco: true,
+    tides: true,
+    windup: true,
+  });
+  const sol = solvePpp(epochs, sp3, {
+    aprioriPos: truth,
+    groundTruth: truth,
+    elevationMaskDeg: 10,
+    corrections,
+  });
+  return sol.arcs.map((a) => ({ station: file.slice(0, 4), ...a }));
+}
+
+describe.skipIf(!HAS_NET || !HAS_ATX)(
+  'narrow-lane cm PPP-AR on the real multi-GNSS network',
+  () => {
+    it(
+      'fixes narrow-lane ambiguities across GPS + Galileo, no external product',
+      { timeout: 180_000 },
+      async () => {
+        const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+        const antenna = buildPppAntenna(
+          parseAntex(readFileSync(join(FIX, 'igs20.atx'), 'utf8'))
+        );
+        const arcs: NlArc[] = [];
+        for (const file of Object.values(NET)) {
+          arcs.push(...(await stationPppArcs(file, sp3, antenna)));
+        }
+        const net = estimateNetworkFcbs(arcs, {
+          minArcEpochs: 120,
+          fixWindow: 0.15,
+        });
+        // GPS narrow-lane fixes on clean ≥1 h arcs at the centimetre level.
+        expect(net.perSystem.G).toBeDefined();
+        expect(net.perSystem.G!.nlUsedArcs).toBeGreaterThan(10);
+        expect(net.perSystem.G!.nlFixRate).toBeGreaterThan(0.6);
+        // Narrow-lane residual is centimetre (0.15 cyc ≈ 1.6 cm).
+        expect(net.perSystem.G!.nlResidRms).toBeLessThan(0.2);
+        // Multi-GNSS: Galileo contributes its own fixable arcs, roughly
+        // doubling GPS-only coverage. Per-satellite FCBs merge both systems.
+        expect(net.perSystem.E).toBeDefined();
+        expect(net.perSystem.E!.nlUsedArcs).toBeGreaterThan(5);
+        expect(net.satNlFcb.size).toBeGreaterThan(net.perSystem.G!.nlUsedArcs);
+      }
+    );
+  }
+);

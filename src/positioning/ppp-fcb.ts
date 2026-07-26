@@ -321,3 +321,75 @@ export function estimateNarrowlaneFcb(
   const res = decomposeFcb(entries, { fixWindow: 0.15, ...opts });
   return { ...res, usedArcs: entries.length, wlRejected };
 }
+
+export interface NetworkFcbSummary {
+  wlFixRate: number;
+  wlResidRms: number;
+  nlUsedArcs: number;
+  nlFixRate: number;
+  nlResidRms: number;
+  wlRejected: number;
+}
+
+export interface NetworkFcbResult {
+  /** Per-satellite wide-lane FCB (cycles), all constellations merged. */
+  satWlFcb: Map<string, number>;
+  /** Per-satellite narrow-lane FCB (cycles), all constellations merged. */
+  satNlFcb: Map<string, number>;
+  /** Per-constellation fix-rate / residual summary, keyed by system letter. */
+  perSystem: Record<string, NetworkFcbSummary>;
+}
+
+/**
+ * Full network FCB calibration for PPP-AR from a set of `solvePpp` arcs (each
+ * tagged with its station), **per constellation** — the receiver wide- and
+ * narrow-lane biases are system-specific, so lumping GPS/Galileo/BeiDou under
+ * one datum corrupts the fit. Runs the wide-lane then narrow-lane
+ * decomposition for each system and merges the per-satellite biases.
+ *
+ * The satellite FCBs (`satWlFcb`/`satNlFcb`) are the reusable product: a rover
+ * applies them and solves only its own receiver bias. Multi-GNSS input
+ * multiplies the fixable arcs (Galileo roughly doubles GPS-only) without
+ * changing per-arc behaviour — each satellite's arc length is independent of
+ * how many constellations are present.
+ */
+export function estimateNetworkFcbs(
+  arcs: NlArc[],
+  opts: { minArcEpochs?: number; minWlObs?: number; fixWindow?: number } = {}
+): NetworkFcbResult {
+  const minArcEpochs = opts.minArcEpochs ?? 120;
+  const minWlObs = opts.minWlObs ?? 40;
+  const fixWindow = opts.fixWindow ?? 0.15;
+
+  const satWlFcb = new Map<string, number>();
+  const satNlFcb = new Map<string, number>();
+  const perSystem: Record<string, NetworkFcbSummary> = {};
+
+  const systems = [...new Set(arcs.map((a) => a.prn[0]!))].sort();
+  for (const sys of systems) {
+    const sysArcs = arcs.filter((a) => a.prn[0] === sys);
+    const wlArcs: WlArc[] = sysArcs
+      .filter((a) => a.nEpochs >= minWlObs)
+      .map((a) => ({
+        station: a.station,
+        prn: a.prn,
+        wlFloat: a.mwCyc,
+        nObs: a.nEpochs,
+      }));
+    if (wlArcs.length < 3) continue; // too little to separate biases
+    const wl = estimateWidelaneFcb(wlArcs, { fixWindow });
+    const nlInput = sysArcs.filter((a) => a.nEpochs >= minArcEpochs);
+    const nl = estimateNarrowlaneFcb(nlInput, wl, { fixWindow });
+    for (const [prn, v] of wl.satFcb) satWlFcb.set(prn, v);
+    for (const [prn, v] of nl.satFcb) satNlFcb.set(prn, v);
+    perSystem[sys] = {
+      wlFixRate: wl.fixRate,
+      wlResidRms: wl.residRms,
+      nlUsedArcs: nl.usedArcs,
+      nlFixRate: nl.fixRate,
+      nlResidRms: nl.residRms,
+      wlRejected: nl.wlRejected,
+    };
+  }
+  return { satWlFcb, satNlFcb, perSystem };
+}

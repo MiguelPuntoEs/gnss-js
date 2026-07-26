@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.35.0
+
+### New — multi-GNSS PPP-AR network calibration (`estimateNetworkFcbs`)
+
+- Added `estimateNetworkFcbs` — one call that calibrates the full wide-lane + narrow-lane satellite FCBs for PPP-AR from a set of `solvePpp` arcs, **per constellation** (the receiver biases are system-specific, so GPS/Galileo/BeiDou must not share a datum). Returns merged per-satellite `satWlFcb`/`satNlFcb` maps — the reusable product a rover applies before resolving only its own receiver bias — plus a per-system fix-rate/residual summary.
+- **Multi-GNSS roughly doubles the fixable narrow-lane arcs.** Measured on the 6-station network (2024-001): GPS alone fixes ~26 narrow-lane arcs; adding Galileo brings it to ~48 (Galileo ~76%, GPS ~81%, both ~1.2 cm residual). Constellations do not lengthen individual arcs — each satellite's arc is fragmented independently by slips/scintillation — but they multiply the _count_ of simultaneous fixable arcs, which is the coverage lever when long arcs are scarce. (GLONASS is excluded: its FDMA signals break the between-satellite integer property, so it only yields float arcs.)
+
 ## 1.34.0
 
 ### New — narrow-lane FCB estimation: self-contained PPP-AR reaches centimetre

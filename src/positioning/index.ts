@@ -477,6 +477,7 @@ export type { ArSat, ArOptions, ArResult, ArFixedSat } from './ppp-ar';
 export {
   estimateWidelaneFcb,
   estimateNarrowlaneFcb,
+  estimateNetworkFcbs,
   extractWidelaneArcs,
 } from './ppp-fcb';
 export type {
@@ -486,4 +487,6 @@ export type {
   WlFcbResult,
   NlArc,
   NlFcbResult,
+  NetworkFcbResult,
+  NetworkFcbSummary,
 } from './ppp-fcb';
