@@ -94,29 +94,52 @@ function load() {
       undefined,
       undefined,
       (time, prn, codes, values) => {
-        if (!prn.startsWith('G')) return;
+        const sys = prn[0];
         const get = (c: string) => {
           const i = codes.indexOf(c);
           return i >= 0 ? values[i] : null;
         };
-        const c1 = get('C1W') ?? get('C1C');
-        const c2 = get('C2W');
-        const l1 = get('L1C');
-        const l2 = get('L2W');
-        if (!c1 || !c2 || !l1 || !l2) return;
+        let sat: PppEpoch['obs'][number] | null = null;
+        if (sys === 'G') {
+          const c1 = get('C1W') ?? get('C1C');
+          const c2 = get('C2W');
+          const l1 = get('L1C');
+          const l2 = get('L2W');
+          if (c1 && c2 && l1 && l2)
+            sat = {
+              prn,
+              f1: FREQ.G!['1']!,
+              f2: FREQ.G!['2']!,
+              c1,
+              c2,
+              l1,
+              l2,
+              band1: 'G01',
+              band2: 'G02',
+              slip: false,
+            };
+        } else if (sys === 'E') {
+          const c1 = get('C1C') ?? get('C1X');
+          const c2 = get('C5Q') ?? get('C5X');
+          const l1 = get('L1C') ?? get('L1X');
+          const l2 = get('L5Q') ?? get('L5X');
+          if (c1 && c2 && l1 && l2)
+            sat = {
+              prn,
+              f1: FREQ.E!['1']!,
+              f2: FREQ.E!['5']!,
+              c1,
+              c2,
+              l1,
+              l2,
+              band1: 'E01',
+              band2: 'E05',
+              slip: false,
+            };
+        }
+        if (!sat) return;
         if (!byTime.has(time)) byTime.set(time, []);
-        byTime.get(time)!.push({
-          prn,
-          f1: FREQ.G!['1']!,
-          f2: FREQ.G!['2']!,
-          c1,
-          c2,
-          l1,
-          l2,
-          band1: 'G01',
-          band2: 'G02',
-          slip: false,
-        });
+        byTime.get(time)!.push(sat);
       }
     );
     const epochs = [...byTime.entries()]
@@ -160,12 +183,17 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
       .map((v) => v / tail.length);
     const horiz = Math.hypot(avg[0]!, avg[1]!);
     const err3d = Math.hypot(avg[0]!, avg[1]!, avg[2]!);
-    // GPS-only float PPP at an equatorial station (weak N–S geometry),
-    // 5-min precise clocks: decimetre-level, an order better than SPP.
+    // Multi-GNSS (GPS+Galileo, per-constellation clocks) float PPP, 5-min
+    // precise clocks: decimetre-level, an order better than SPP. (The
+    // residual horizontal is consistent with the RINEX header being at a
+    // different coordinate epoch — plate motion — not a solver error.)
     expect(err3d).toBeLessThan(0.6);
     expect(horiz).toBeLessThan(0.4);
-    // Vertical converges to a few cm.
+    // Vertical converges to the decimetre level.
     expect(Math.abs(avg[2]!)).toBeLessThan(0.2);
+    // Multi-constellation: well above a GPS-only satellite count.
+    const meanSats = tail.reduce((a, s) => a + s.nSats, 0) / tail.length;
+    expect(meanSats).toBeGreaterThan(12);
     // Post-fit phase residuals at the centimetre–decimetre level.
     const prRms = Math.sqrt(
       tail.reduce((a, s) => a + s.phaseResRms * s.phaseResRms, 0) / tail.length

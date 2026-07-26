@@ -265,9 +265,11 @@ function satStateAtEmission(
 const IDX_X = 0;
 const IDX_Y = 1;
 const IDX_Z = 2;
-const IDX_CLK = 3;
-const IDX_ZWD = 4;
-const NBASE = 5; // position(3) + clock(1) + zwd(1)
+const IDX_ZWD = 3;
+const NBASE = 4; // position(3) + zenith wet delay(1)
+// Per-constellation receiver clocks (absorbing the inter-system bias) and
+// float ambiguities are appended dynamically after the base states.
+const CLK_VAR = 1e10; // white-noise clock variance reset each epoch (σ≈100 km)
 
 export function solvePpp(
   epochs: PppEpoch[],
@@ -285,7 +287,6 @@ export function solvePpp(
     opts.aprioriPos[0],
     opts.aprioriPos[1],
     opts.aprioriPos[2],
-    0, // receiver clock (m)
     0.1, // zenith wet delay (m) a priori
   ];
   const P: number[][] = [];
@@ -295,10 +296,11 @@ export function solvePpp(
   P[IDX_X]![IDX_X] = 100 * 100; // 100 m a priori position σ
   P[IDX_Y]![IDX_Y] = 100 * 100;
   P[IDX_Z]![IDX_Z] = 100 * 100;
-  P[IDX_CLK]![IDX_CLK] = 1e10;
   P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
 
-  // Ambiguity bookkeeping: prn → state index; last-seen epoch index.
+  // Per-constellation receiver clock state indices, and float ambiguities.
+  const clkIdx = new Map<string, number>();
+  const clockSeeded = new Set<string>();
   const ambIdx = new Map<string, number>();
   const lastSeen = new Map<string, number>();
   // Melbourne–Wübbena running mean per satellite for cycle-slip detection
@@ -346,14 +348,25 @@ export function solvePpp(
     x.splice(idx, 1);
     P.splice(idx, 1);
     for (const row of P) row.splice(idx, 1);
-    // Reindex ambiguities above the dropped slot.
+    // Reindex ambiguities AND clocks above the dropped slot.
     for (const [prn, i] of ambIdx) {
       if (i === idx) ambIdx.delete(prn);
       else if (i > idx) ambIdx.set(prn, i - 1);
     }
+    for (const [sys, i] of clkIdx) {
+      if (i > idx) clkIdx.set(sys, i - 1);
+    }
   };
 
-  let clockSeeded = false;
+  /** State index of a constellation's receiver clock, creating it lazily. */
+  const clockOf = (sys: string): number => {
+    let i = clkIdx.get(sys);
+    if (i === undefined) {
+      i = growState(0, CLK_VAR);
+      clkIdx.set(sys, i);
+    }
+    return i;
+  };
   const series: PppEpochResult[] = [];
   const truth = opts.groundTruth;
   const t0 = epochs[0]?.timeMs ?? 0;
@@ -364,9 +377,9 @@ export function solvePpp(
     const epoch = epochs[ei]!;
 
     // ── Time update ──
-    // Position: static (no process noise). Receiver clock: white noise —
-    // reset its variance so it is freely re-estimated each epoch.
-    P[IDX_CLK]![IDX_CLK] = 1e10;
+    // Position: static (no process noise). Each constellation clock: white
+    // noise — reset its variance so it is freely re-estimated each epoch.
+    for (const ci of clkIdx.values()) P[ci]![ci] = CLK_VAR;
     // Zenith wet delay: random walk.
     P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
 
@@ -469,17 +482,26 @@ export function solvePpp(
     // the very first usable epoch the clock is seeded from the median code
     // residual so it starts in range. ──
     const zwd0 = x[IDX_ZWD]!;
-    if (vis.length > 0) {
-      if (!clockSeeded) {
-        const s = vis
-          .map(
-            (v) => v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw)
-          )
-          .sort((a, b) => a - b);
-        x[IDX_CLK] = s[Math.floor(s.length / 2)]!;
-        clockSeeded = true;
+    // Seed each constellation's clock from its own median code residual on
+    // first sighting (a different receiver hardware delay per system — the
+    // inter-system bias — so they must not share a clock), and keep its
+    // variance reset for free white-noise re-estimation this epoch.
+    const bySys = new Map<string, number[]>();
+    for (const v of vis) {
+      const sys = v.prn[0]!;
+      const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw);
+      const arr = bySys.get(sys);
+      if (arr) arr.push(r);
+      else bySys.set(sys, [r]);
+    }
+    for (const [sys, res] of bySys) {
+      const ci = clockOf(sys);
+      if (!clockSeeded.has(sys)) {
+        res.sort((a, b) => a - b);
+        x[ci] = res[Math.floor(res.length / 2)]!;
+        clockSeeded.add(sys);
       }
-      P[IDX_CLK]![IDX_CLK] = 1e10; // σ ≈ 100 km — white noise, absorbs jumps
+      P[ci]![ci] = CLK_VAR;
     }
 
     // ── Pass 2: EKF measurement updates ──
@@ -487,8 +509,8 @@ export function solvePpp(
     let sumPhaseResSq = 0;
     let nPhaseRes = 0;
     for (const v of vis) {
-      const common =
-        v.range + x[IDX_CLK]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+      const ci = clockOf(v.prn[0]!);
+      const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
 
       // Ambiguity state — create/reset on first sight or cycle slip.
       let ai = ambIdx.get(v.prn);
@@ -518,7 +540,7 @@ export function solvePpp(
         h[IDX_X] = -v.e[0];
         h[IDX_Y] = -v.e[1];
         h[IDX_Z] = -v.e[2];
-        h[IDX_CLK] = 1;
+        h[ci] = 1;
         h[IDX_ZWD] = v.mw;
         const innov = v.pIf - common;
         // Loose absolute bound (clock jumps up to ~ms); the S-based reject
@@ -530,7 +552,7 @@ export function solvePpp(
       // the state), including the ambiguity partial.
       {
         const commonPh =
-          v.range + x[IDX_CLK]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
         const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
         // A large phase innovation on a converged filter is an undetected
         // cycle slip → re-initialise this ambiguity rather than corrupt the
@@ -547,7 +569,7 @@ export function solvePpp(
           h[IDX_X] = -v.e[0];
           h[IDX_Y] = -v.e[1];
           h[IDX_Z] = -v.e[2];
-          h[IDX_CLK] = 1;
+          h[ci] = 1;
           h[IDX_ZWD] = v.mw;
           h[ai] = 1;
           if (ekfUpdateScalar(x, P, h, innov, rPhase, 4)) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.29.0
+
+### Improved — multi-GNSS PPP (GPS + Galileo)
+
+- `solvePpp` now estimates **one receiver clock per constellation** (absorbing the inter-system bias), so a single call jointly processes GPS **and** Galileo (and any further systems the caller supplies) instead of GPS alone. On the ABMF validation set this roughly doubles the usable satellites (~10 → ~18) for a more robust, better-conditioned float solution. The public API is unchanged — feed mixed-system `PppSatObs` (each with its own `f1/f2` and ANTEX `band1/band2`) and the engine groups them by constellation internally.
+
 ## 1.28.0
 
 ### New feature — Precise Point Positioning (`solvePpp`)
