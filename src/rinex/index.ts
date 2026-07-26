@@ -8,6 +8,7 @@ export * from './nav-writer';
 export * from './nav-writer-v4';
 export * from './ionex';
 export * from './sp3';
+export * from './clk';
 export * from './obs-writer';
 export * from './obs-writer-v2';
 export * from './obs-writer-v4';

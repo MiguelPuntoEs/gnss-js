@@ -24,6 +24,7 @@
 import { C_LIGHT, OMEGA_E } from '../constants/gnss';
 import { ecefToGeodetic, getEnuDifference, getAer } from '../coordinates/ecef';
 import { sp3Position, type Sp3File } from '../rinex/sp3';
+import { clkBias, type ClkFile } from '../rinex/clk';
 import { niellMapping } from './ppp-tropo';
 import {
   type PppCorrections,
@@ -79,6 +80,11 @@ export interface PppOptions {
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
   troposphere?: boolean;
+  /** High-rate precise satellite clocks (RINEX CLOCK, typically 30 s). When
+   * given, satellite clock offsets come from this by linear interpolation
+   * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
+   * Satellites/epochs absent from the CLK fall back to the SP3 clock. */
+  clk?: ClkFile;
 }
 
 export interface PppEpochResult {
@@ -219,7 +225,8 @@ function satStateAtEmission(
   sp3: Sp3File,
   prn: string,
   recvTimeMs: number,
-  rcv: [number, number, number]
+  rcv: [number, number, number],
+  clk?: ClkFile
 ): { state: SatState; travelS: number } | null {
   let travelS = 0.075; // ~ 20000 km / c initial guess
   let sx = 0;
@@ -240,7 +247,8 @@ function satStateAtEmission(
       const vz = (pPlus.z - pMinus.z) / 1.0;
       velDotPos = p.x * vx + p.y * vy + p.z * vz;
     }
-    clkS = p.clk;
+    // Prefer the high-rate CLK offset; fall back to the SP3 5-min clock.
+    clkS = (clk && clkBias(clk, prn, tEmit)) ?? p.clk;
     const [rx, ry, rz] = sagnacRotate(p.x, p.y, p.z, travelS);
     sx = rx;
     sy = ry;
@@ -408,7 +416,7 @@ export function solvePpp(
     for (const o of epoch.obs) {
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
       const slip = detectSlip(o, ei);
-      const sat = satStateAtEmission(sp3, o.prn, epoch.timeMs, rcv);
+      const sat = satStateAtEmission(sp3, o.prn, epoch.timeMs, rcv, opts.clk);
       if (!sat) continue;
       const [elRad, azRad] = getAer(
         sat.state.x,

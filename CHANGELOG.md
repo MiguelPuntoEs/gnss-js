@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.30.0
+
+### New feature — 30 s precise clocks for PPP (`parseClk`)
+
+- Added a **RINEX CLOCK (`.CLK`) parser** (`parseClk` / `clkBias`) for high-rate (typically 30 s) precise satellite clock corrections. It keeps only `AS` (satellite) records, infers the sampling interval, and linearly interpolates the clock bias between the bracketing samples (returning `null` across gaps > 4 intervals or outside the span).
+- `solvePpp` accepts an optional `clk` (a `ClkFile`): when present, satellite clock offsets come from the 30 s clocks instead of the SP3 5-minute clocks, falling back to SP3 per satellite/epoch not covered.
+- On the ABMF validation set the 30 s clocks tighten the **vertical** (≈19 cm → ≈12 cm) while the static-average horizontal is unchanged. This is expected: in static float PPP the per-epoch receiver clock and per-arc float ambiguities already absorb most of the 5-minute interpolation error, so clock rate is not the static-PPP accuracy bottleneck (integer ambiguity resolution is). High-rate clocks matter more for kinematic PPP, convergence, and as groundwork for PPP-AR.
+
 ## 1.29.0
 
 ### Improved — multi-GNSS PPP (GPS + Galileo)

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
+import { gunzipSync } from 'zlib';
 import { join } from 'path';
 import { parseRinexStream } from '../src/rinex';
 import { parseSp3 } from '../src/rinex/sp3';
+import { parseClk } from '../src/rinex/clk';
 import { parseAntex } from '../src/antex';
 import {
   solvePpp,
@@ -20,6 +22,7 @@ const FIX = join(__dirname, '..', 'test-fixtures');
 const HAS_DATA =
   existsSync(join(FIX, 'ABMF.crx')) && existsSync(join(FIX, 'ESA_MGEX.sp3'));
 const HAS_ATX = existsSync(join(FIX, 'igs20.atx'));
+const HAS_CLK = existsSync(join(FIX, 'ESA_MGEX_gpsgal.clk.gz'));
 
 /* ------------------------------------------------------------------ */
 /*  Physics helpers (no external data needed)                          */
@@ -223,6 +226,50 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
       });
       expect(sol.series.length).toBe(720);
       expect(sol.finalError3d!).toBeLessThan(1.0);
+    }
+  );
+
+  it.skipIf(!HAS_CLK)(
+    'accepts 30 s precise clocks and holds decimetre accuracy',
+    async () => {
+      const { epochs, truth } = await load();
+      const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+      const clk = parseClk(
+        gunzipSync(readFileSync(join(FIX, 'ESA_MGEX_gpsgal.clk.gz'))).toString(
+          'utf8'
+        )
+      );
+      // 30 s sampling, a full day of GPS + Galileo satellite clocks.
+      expect(clk.intervalSec).toBe(30);
+      expect(clk.sats['G01']!.t.length).toBeGreaterThan(2000);
+
+      const apriori: [number, number, number] = [
+        truth[0] + 10,
+        truth[1] - 10,
+        truth[2] + 10,
+      ];
+      const sol = solvePpp(epochs, sp3, {
+        aprioriPos: apriori,
+        groundTruth: truth,
+        elevationMaskDeg: 10,
+        clk,
+      });
+      const tail = sol.series.slice(-120).filter((s) => s.enu);
+      const avg = tail
+        .reduce(
+          (a, s) => [a[0] + s.enu![0], a[1] + s.enu![1], a[2] + s.enu![2]],
+          [0, 0, 0]
+        )
+        .map((v) => v / tail.length);
+      const err3d = Math.hypot(avg[0]!, avg[1]!, avg[2]!);
+      // High-rate clocks keep the decimetre solution and tighten the
+      // vertical (5-min SP3 linear interpolation leaves a cm-level clock
+      // error that the vertical absorbs). The static-average horizontal is
+      // unchanged — in float PPP the per-epoch receiver clock and per-arc
+      // ambiguities already absorb most of the interpolation error, so 30 s
+      // clocks are not the static-PPP accuracy bottleneck (PPP-AR is).
+      expect(err3d).toBeLessThan(0.5);
+      expect(Math.abs(avg[2]!)).toBeLessThan(0.15);
     }
   );
 });
