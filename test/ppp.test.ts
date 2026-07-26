@@ -217,6 +217,11 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     // Three constellations: ~24 satellites, well above GPS-only.
     const meanSats = tail.reduce((a, s) => a + s.nSats, 0) / tail.length;
     expect(meanSats).toBeGreaterThan(20);
+    // Per-arc float ambiguities are emitted for PPP-AR.
+    expect(sol.arcs.length).toBeGreaterThan(20);
+    expect(
+      sol.arcs.every((a) => Number.isFinite(a.aIF) && a.nEpochs >= 10)
+    ).toBe(true);
     // Post-fit phase residuals at the centimetre–decimetre level.
     const prRms = Math.sqrt(
       tail.reduce((a, s) => a + s.phaseResRms * s.phaseResRms, 0) / tail.length

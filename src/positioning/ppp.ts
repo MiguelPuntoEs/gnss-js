@@ -117,6 +117,27 @@ export interface PppSolution {
   convergenceSec: number | null;
   /** Final 3D error vs ground truth (m), if given. */
   finalError3d: number | null;
+  /** Per-arc converged float ambiguities — one per continuous satellite
+   * tracking arc — the raw material for ambiguity resolution (PPP-AR). */
+  arcs: PppArc[];
+}
+
+/** A converged carrier-phase arc: the float ionosphere-free ambiguity plus
+ * the wide-lane, for integer resolution / FCB estimation. */
+export interface PppArc {
+  prn: string;
+  /** Final float ionosphere-free ambiguity (m). */
+  aIF: number;
+  /** Arc-averaged Melbourne–Wübbena wide-lane (cycles). */
+  mwCyc: number;
+  f1: number;
+  f2: number;
+  /** Mean satellite elevation over the arc (deg). */
+  meanElevDeg: number;
+  /** Epochs in the arc. */
+  nEpochs: number;
+  startMs: number;
+  endMs: number;
 }
 
 /* ================================================================== */
@@ -311,6 +332,40 @@ export function solvePpp(
   const clockSeeded = new Set<string>();
   const ambIdx = new Map<string, number>();
   const lastSeen = new Map<string, number>();
+
+  // Per-arc float-ambiguity collector for PPP-AR. Snapshotted each epoch a
+  // satellite is used and flushed to `arcs` when the arc ends (slip, drop, or
+  // end of run) so the recorded aIF is the arc's converged value.
+  const arcs: PppArc[] = [];
+  const arcSnap = new Map<
+    string,
+    {
+      aIF: number;
+      mwCyc: number;
+      f1: number;
+      f2: number;
+      elevSum: number;
+      nEpochs: number;
+      startMs: number;
+      endMs: number;
+    }
+  >();
+  const flushArc = (prn: string, minEpochs = 10) => {
+    const s = arcSnap.get(prn);
+    arcSnap.delete(prn);
+    if (!s || s.nEpochs < minEpochs) return;
+    arcs.push({
+      prn,
+      aIF: s.aIF,
+      mwCyc: s.mwCyc,
+      f1: s.f1,
+      f2: s.f2,
+      meanElevDeg: s.elevSum / s.nEpochs,
+      nEpochs: s.nEpochs,
+      startMs: s.startMs,
+      endMs: s.endMs,
+    });
+  };
   // Melbourne–Wübbena running mean per satellite for cycle-slip detection
   // (ionosphere-free + geometry-free, so it does not drift with the
   // ionosphere — unlike a geometry-free test, which is unusable at
@@ -411,6 +466,8 @@ export function solvePpp(
       mw: number;
       windupM: number;
       slip: boolean;
+      f1: number;
+      f2: number;
     }
     const vis: Vis[] = [];
     for (const o of epoch.obs) {
@@ -477,6 +534,8 @@ export function solvePpp(
         mw,
         windupM: corr.phaseWindupM,
         slip,
+        f1: o.f1,
+        f2: o.f2,
       });
     }
 
@@ -517,6 +576,9 @@ export function solvePpp(
     for (const v of vis) {
       const ci = clockOf(v.prn[0]!);
       const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+
+      // A flagged/detected slip ends the current arc before re-init.
+      if (v.slip) flushArc(v.prn);
 
       // Ambiguity state — create/reset on first sight or cycle slip.
       let ai = ambIdx.get(v.prn);
@@ -564,6 +626,7 @@ export function solvePpp(
         // cycle slip → re-initialise this ambiguity rather than corrupt the
         // state; small innovations get a normal (gated) update.
         if (Math.abs(innov) > 0.15) {
+          flushArc(v.prn); // undetected slip → close the arc, re-initialise
           x[ai] = v.lIf - (commonPh + v.windupM);
           for (let j = 0; j < P.length; j++) {
             P[ai]![j] = 0;
@@ -581,6 +644,32 @@ export function solvePpp(
           ekfUpdateScalar(x, P, h, innov, rPhase, 4);
         }
       }
+
+      // Snapshot the (converged) arc state for PPP-AR.
+      {
+        const elevDeg = (v.elRad * 180) / Math.PI;
+        const mwMean = mwState.get(v.prn)?.mean ?? 0;
+        const s = arcSnap.get(v.prn);
+        if (s) {
+          s.aIF = x[ai]!;
+          s.mwCyc = mwMean;
+          s.elevSum += elevDeg;
+          s.nEpochs++;
+          s.endMs = epoch.timeMs;
+        } else {
+          arcSnap.set(v.prn, {
+            aIF: x[ai]!,
+            mwCyc: mwMean,
+            f1: v.f1,
+            f2: v.f2,
+            elevSum: elevDeg,
+            nEpochs: 1,
+            startMs: epoch.timeMs,
+            endMs: epoch.timeMs,
+          });
+        }
+      }
+
       lastSeen.set(v.prn, ei);
       nSats++;
     }
@@ -626,6 +715,7 @@ export function solvePpp(
         const idx = ambIdx.get(prn);
         if (idx !== undefined) dropState(idx);
         lastSeen.delete(prn);
+        flushArc(prn); // the arc ended when the satellite set
       }
     }
 
@@ -668,6 +758,9 @@ export function solvePpp(
     });
   }
 
+  // Flush the still-open arcs at the end of the run.
+  for (const prn of [...arcSnap.keys()]) flushArc(prn);
+
   const finalPos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
   const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
   const finalError3d = truth
@@ -686,5 +779,6 @@ export function solvePpp(
     epochsUsed: epochs.length,
     convergenceSec,
     finalError3d,
+    arcs,
   };
 }
