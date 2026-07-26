@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.0
+
+### New feature — Hatanaka (Compact RINEX) compression
+
+- **`writeCrx`** (`gnss-js/rinex`): compress a RINEX observation file to Compact RINEX (Hatanaka / CRINEX) — text in, text out, the inverse of the existing `crx.ts` decoder. A faithful TypeScript port of RNXCMP's `rnx2crx` 4.2.0 (Y. Hatanaka / GSI Japan), supporting RINEX 2.x (CRINEX 1.0) and 3.x / 4.0x (CRINEX 3.0), including the RINEX 4.02 pico-second record (CRINEX 3.1). Validated **byte-for-byte** against the `rnx2crx`/`crx2rnx` oracles on real multi-GNSS RINEX 3.03/3.04 files (ABMF, ALBH) and synthetic RINEX 2.11 exercising obs/satellite-list continuation lines, blank fields and the CRINEX-1 present→blank flag-reset edge case; full `crx2rnx` round-trips are identical. This removes the need for a vendored `rnx2crx` C binary to produce Hatanaka downloads (CRINEX is ~2.9× smaller than gzipped RINEX, lossless).
+
 ## 1.26.0
 
 ### New features — two more receiver formats
@@ -15,11 +21,11 @@ Both slot into the same receiver pipeline as SBF/UBX/NovAtel (observation epochs
 
 Two model upgrades to `solveSpp`, both aimed at the height component where a single-frequency solution is weakest. Measured on the ABMF (Guadeloupe) ground-truth oracle, single-frequency multi-GNSS, mid-day:
 
-| iono model | vertical error |
-| --- | --- |
-| none | 8.3 m |
-| broadcast Klobuchar | 3.2 m |
-| **GIM** | **1.1 m** |
+| iono model          | vertical error |
+| ------------------- | -------------- |
+| none                | 8.3 m          |
+| broadcast Klobuchar | 3.2 m          |
+| **GIM**             | **1.1 m**      |
 
 - **Saastamoinen troposphere** replaces the previous fixed 2.47 m zenith delay. Standard-atmosphere hydrostatic + wet terms, station-height- and latitude-dependent, mapped by 1/sin(el) — a port of RTKLIB's `tropmodel` (humidity 0.7), so results stay directly comparable with the rnx2rtkp oracle. Removes the residual vertical bias a constant zenith delay leaves behind.
 - **GIM (IONEX) ionosphere** — new `gim` option on `solveSpp` accepts a parsed `IonexGrid` (`parseIonex`) and takes precedence over broadcast `iono`, backfilling from Klobuchar only in a map time gap. Global maps capture ~80–90% of the true ionosphere versus Klobuchar's ~50%, cutting the ABMF vertical error ~3× (3.2 → 1.1 m). New exports: `gimSlantIonoDelayL1`, `gimVerticalTec`, `IONO_L1_M_PER_TECU` (`gnss-js/positioning`). The thin-shell evaluator (pierce point at 450 km, bilinear-in-space / linear-in-time TEC, obliquity mapping, TEC→L1 delay) is validated end-to-end against a real ESA rapid GIM in the SPP oracle.
