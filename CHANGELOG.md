@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.28.0
+
+### New feature — Precise Point Positioning (`solvePpp`)
+
+- **Static float PPP** (`gnss-js/positioning`): absolute cm–dm positioning from a single RINEX observation file plus precise products (SP3 orbit + clock, ANTEX), **no base station**. Dual-frequency ionosphere-free code + carrier phase drive a forward Extended Kalman Filter over `[position, receiver clock, zenith wet troposphere, one float ambiguity per satellite arc]`, with precise satellite orbit + clock, the periodic relativistic clock term, Earth-rotation (Sagnac), Saastamoinen zenith hydrostatic delay + an estimated wet delay mapped by the **Niell mapping function**, **Melbourne–Wübbena** cycle-slip detection (ionosphere-free, so it holds at equatorial stations where a geometry-free test fails), elevation weighting and innovation-based outlier rejection.
+- **Optional rigorous corrections** (opt-in via `createPppCorrections`): satellite & receiver antenna PCO/PCV from ANTEX, carrier-phase wind-up, and IERS solid-earth tides, driven by a compact low-precision Sun/Moon ephemeris (`sunEcef`/`moonEcef`/`solidEarthTide`).
+- New exports: `solvePpp`, the `Ppp*` types, `niellMapping`, `buildPppAntenna`, `createPppCorrections`, `sunEcef`, `moonEcef`, `solidEarthTide`, `gmst`. Validated on real ABMF (2024-01-01) + ESA MGEX SP3: converges from a 10 m offset to **decimetre-level (centimetre vertical)** with cm–dm post-fit phase residuals — an order of magnitude better than single-point positioning. The residual horizontal at this GPS-only equatorial station is geometry-limited; multi-GNSS + ambiguity resolution are the roadmap to centimetre.
+
 ## 1.27.0
 
 ### New feature — Hatanaka (Compact RINEX) compression
