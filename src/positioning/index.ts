@@ -473,3 +473,5 @@ export type { PppAntennaModel, AntennaOffset } from './ppp-antenna';
 export { sunEcef, moonEcef, solidEarthTide, gmst } from './ppp-astro';
 export { resolvePppAmbiguities, wlWavelength, nlWavelength } from './ppp-ar';
 export type { ArSat, ArOptions, ArResult, ArFixedSat } from './ppp-ar';
+export { estimateWidelaneFcb, extractWidelaneArcs } from './ppp-fcb';
+export type { WlArc, WlObs, WlFcbOptions, WlFcbResult } from './ppp-fcb';

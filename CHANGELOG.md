@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.32.0
+
+### New — self-contained wide-lane FCB estimation (PPP-AR without a product)
+
+- Added `estimateWidelaneFcb` — network estimation of per-satellite wide-lane fractional-cycle biases from a small set of stations, the Ge/Gendt iterative decomposition (`Ñ_wl = N + b_rcv + b_sat`, circular-mean updates, reference-station datum). This is the route to integer ambiguities that needs **no external phase-bias product**: a single receiver can't separate the satellite bias from the integer, but a network can, because every station shares the same satellite bias. Its output feeds `resolvePppAmbiguities`' `wlBiasCyc`.
+- Added `extractWidelaneArcs` — arc-averaged Melbourne–Wübbena wide-lanes from a station's epoch stream, split on cycle-slip/gap.
+- **Validated on a real self-built 6-station MGEX network (2024-001), no external bias product**: estimated FCBs make ABMF's wide-lanes snap to integers at **~98% (GPS)**, **~95% (Galileo)**, **~85% (BeiDou)**, with per-constellation residual RMS of 0.09–0.14 cycles. (Biases are estimated per constellation — the receiver wide-lane bias is system-specific.) The wide-lane is the robust half of PPP-AR; the narrow-lane (the centimetre step) is next.
+
 ## 1.31.0
 
 ### New — PPP-AR building blocks (Bias-SINEX + integer resolver)

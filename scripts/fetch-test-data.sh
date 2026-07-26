@@ -58,6 +58,30 @@ echo "Fetching test fixtures…"
 download "https://igs.bkg.bund.de/root_ftp/IGS/obs/2024/001/ABMF00GLP_R_20240010000_01D_30S_MO.crx.gz" "$DIR/ABMF.crx.gz"
 decompress "$DIR/ABMF.crx"
 
+# MGEX network (2024/001) for the wide-lane FCB / PPP-AR test — a spread of
+# stations so the satellite fractional-cycle biases separate from the
+# per-station receiver biases. Optional (the test skips without them).
+OBS="https://igs.bkg.bund.de/root_ftp/IGS/obs/2024/001"
+for pair in \
+  "BRUX00BEL:BRUX" "ANMG00MYS:ANMG" "AREG00PER:AREG" \
+  "ALIC00AUS:ALIC" "ADIS00ETH:ADIS"; do
+  long="${pair%%:*}"; short="${pair##*:}"
+  if download "$OBS/${long}_R_20240010000_01D_30S_MO.crx.gz" "$DIR/$short.crx.gz"; then
+    decompress "$DIR/$short.crx"
+  fi
+done
+
+# ESA MGEX 30 s satellite clocks (2024/001), trimmed to GPS+Galileo+BeiDou
+# AS records to keep the fixture small — used by the 30 s-clock PPP test.
+if [[ ! -f "$DIR/ESA_MGEX_gec.clk.gz" ]]; then
+  if download "https://navigation-office.esa.int/products/gnss-products/2295/ESA0MGNFIN_20240010000_01D_30S_CLK.CLK.gz" "$DIR/_full_clk.gz"; then
+    gunzip -kc "$DIR/_full_clk.gz" > "$DIR/_full.clk"
+    { sed -n '1,/END OF HEADER/p' "$DIR/_full.clk"; grep -E '^AS [GEC]' "$DIR/_full.clk"; } \
+      | gzip -9 > "$DIR/ESA_MGEX_gec.clk.gz"
+    rm -f "$DIR/_full_clk.gz" "$DIR/_full.clk"
+  fi
+fi
+
 # ESA MGEX final orbits (SP3, 2024/001) — precise-orbit truth for the
 # broadcast-vs-precise test. Best-effort: ESA's navigation-office server
 # is the only source and is unreliable from CI IPs, so a failure here
