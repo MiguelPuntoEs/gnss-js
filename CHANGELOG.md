@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.37.0
+
+### New — GPS/QZSS LNAV from raw SBF blocks + one-pass `decodeSbfNavigation`
+
+- Added the missing **GPS/QZSS LNAV decoder** for raw SBF blocks: `parseSbfGpsNav` assembles GPSRawCA (4017) / QZSRawL1CA (4066) subframes 1–3 into Keplerian ephemerides. A Septentrio configured for raw output (e.g. TU Delft's DLF500) broadcasts GPS ephemeris _only_ as GPSRawCA — `parseSbfNav` reads the decoded GPSNav block (absent in such a stream), so GPS previously came through solely via L2C/L5 CNAV. Validated against DLF500: 416 GPSRawCA → 13 GPS ephemerides, with physical `sqrtA`/`e`/`i0` and a PRN set that is a superset of the L2C/L5 CNAV satellites.
+- The GPS/QZSS LNAV subframe-1/2/3 accumulator is now a shared `GpsLnavAssembler` in `navbits` (returning a discriminated `LnavPush` so each caller keeps exact bad-frame accounting); `parseUbxNav` uses it instead of its own inline copy, so u-blox and Septentrio share one implementation.
+- Added **`decodeSbfNavigation(data)`** — a single-pass navigation decoder that walks the SBF stream **once** and routes every navigation block (decoded GPS/GAL/GLO/BDS/QZS, raw GPS-LNAV, GPS CNAV, Galileo I/NAV + F/NAV, GLONASS strings, BeiDou D1/D2, and the Klobuchar/NeQuick iono + GPS-UTC leap-second blocks) through one dispatch to shared per-block `feed*` helpers, merging and de-duplicating by `(prn, toc, Galileo I/NAV-vs-F/NAV source)`. It replaces the 6–8 separate full-stream rescans a consumer previously did by calling each `parseSbf*` in turn, and returns per-source block counts for coverage diagnostics. On DLF500 it yields 61 ephemerides (G13/E24/R11/C13) + 21 CNAV in one pass.
+
+  **Remaining raw decoders** (need the signal ICDs / BDS-3 layouts, not the SBF reference alone): BDS-3 CNAV1/2/3 (B1C/B2a/B2b), SBAS (GEORawL1/L5), NavIC. Their decoded-block counterparts (GPSCNav, BDSCNav1/2/3, NavICLNav) are also not yet read.
+
 ## 1.36.0
 
 ### New — ambiguity-fixed position (`fixPppPosition`): the float→fixed loop closed
