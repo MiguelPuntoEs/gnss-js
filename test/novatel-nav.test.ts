@@ -678,6 +678,46 @@ describe('parseNovatelNav (synthetic frames)', () => {
     expect(res.ionoCorrections['GPSB']).toEqual([133120, 0, -262144, 262144]);
     expect(res.leapSeconds).toBe(18);
   });
+
+  it('decodes a RAWSBASFRAME type-9 GEO message to a geostationary orbit', () => {
+    // A real SBAS L1 message type 9 (29 bytes, PRN 144) carved from the
+    // DLF500 SBF capture, re-wrapped in an OEM4 RAWSBASFRAME (id 973):
+    // frame-decoder u4, PRN u4, a u4, then the 29-byte message.
+    const mt9 = Uint8Array.from(
+      Buffer.from(
+        'c624f0401e2b940bb3ddded5a0f9e53081afbcfc9888fc3eefbc1f8011',
+        'hex'
+      )
+    );
+    const p = new Payload(41);
+    p.u4(0, 3); // frame-decoder number
+    p.u4(4, 144); // SBAS PRN → S44
+    p.u4(8, 0); // reserved
+    p.buf.set(mt9, 12);
+
+    // Non–type-9 messages (here a type-2 fast-correction frame) are ignored.
+    const other = new Payload(41);
+    other.u4(4, 131);
+    other.buf[12] = 0xc6; // preamble
+    other.buf[13] = 0x08; // message type 2 in bits 8-13
+
+    const res = parseNovatelNav(
+      concat(
+        buildFrame(287, WEEK, 512000000, other.buf), // RAWWAASFRAME twin
+        buildFrame(973, WEEK, 512000000, p.buf)
+      )
+    );
+    const geo = res.ephemerides.filter(
+      (e) => e.prn[0] === 'S'
+    ) as GlonassEphemeris[];
+    expect(geo).toHaveLength(1);
+    expect(geo[0]!.prn).toBe('S44');
+    expect(geo[0]!.system).toBe('S');
+    const r = Math.hypot(geo[0]!.x, geo[0]!.y, geo[0]!.z); // km
+    expect(r).toBeGreaterThan(42000); // geostationary radius ≈ 42 164 km
+    expect(r).toBeLessThan(42300);
+    expect(geo[0]!.freqNum).toBe(0);
+  });
 });
 
 /**

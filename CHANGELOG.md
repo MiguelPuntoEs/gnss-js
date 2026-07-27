@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.44.0
+
+### New — SBAS GEO navigation from NovAtel (RAWSBASFRAME / RAWWAASFRAME)
+
+- `parseNovatelNav` now decodes SBAS GEO navigation (message type 9) from RAWSBASFRAME (OEM6/OEM7, message 973) and its OEMV-era twin RAWWAASFRAME (287), using the shared `decodeSbasGeoNav` from 1.43.0. This brings the third receiver format to SBAS parity with u-blox and Septentrio — every constellation a NovAtel OEM7 broadcasts is now decoded.
+- Layout per RTKLIB `decode_rawsbasframeb`/`decode_rawwaasframeb` and the OEM7 manual §3.169: after the OEM4 header, frame-decoder u4, PRN u4, a u4, then the 250-bit SBAS message as 29 bytes. Only 29 bytes (232 bits) are carried — enough for every MT9 field but short of the 24-bit SBAS CRC, so it is not re-checked; the OEM4 CRC-32 over the whole log already guarantees the transported bytes. Non–type-9 messages (fast/long corrections, iono) are skipped.
+- Verified on the OEMV `RAWWAASFRAME` capture (90 frames → correct PRNs/message types) and with a real type-9 GEO message re-wrapped in an OEM4 frame → geostationary orbit (|r| ≈ 42,164 km).
+
 ## 1.43.0
 
 ### New — SBAS GEO navigation (message type 9) from u-blox and Septentrio

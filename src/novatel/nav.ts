@@ -2,16 +2,28 @@
  * NovAtel navigation-message decoding: RAWEPHEM (message 41, raw GPS
  * LNAV subframes 1–3), GLOEPHEMERIS (message 723, decoded GLONASS
  * L1 C/A ephemeris), GALEPHEMERIS (1122), BDSEPHEMERIS (1696),
- * QZSSEPHEMERIS (1336) and IONUTC (8, GPS Klobuchar + UTC parameters).
+ * QZSSEPHEMERIS (1336), RAWSBASFRAME (973) / RAWWAASFRAME (287, its
+ * OEMV-era twin — raw SBAS L1 GEO messages) and IONUTC (8, GPS
+ * Klobuchar + UTC parameters).
  *
  * Ported from RTKLIB demo5 (rtklibexplorer fork, src/rcv/novatel.c:
  * decode_rawephemb / decode_gloephemerisb / decode_galephemerisb /
- * decode_bdsephemerisb / decode_ionutcb, Copyright (c) 2007-2020
- * T. Takasu, BSD-2-Clause) and cross-checked against the OEM7
- * Commands and Logs Reference Manual. QZSSEPHEMERIS has no RTKLIB
- * decoder (RTKLIB only handles the raw-subframe QZSSRAWEPHEM 1331);
- * its layout is taken from the OEM7 manual §3.150 and is therefore
- * synthetic-tested only, like SBF's QZSNav.
+ * decode_bdsephemerisb / decode_rawsbasframeb / decode_ionutcb,
+ * Copyright (c) 2007-2020 T. Takasu, BSD-2-Clause) and cross-checked
+ * against the OEM7 Commands and Logs Reference Manual. QZSSEPHEMERIS
+ * has no RTKLIB decoder (RTKLIB only handles the raw-subframe
+ * QZSSRAWEPHEM 1331); its layout is taken from the OEM7 manual §3.150
+ * and is therefore synthetic-tested only, like SBF's QZSNav.
+ *
+ * RAWSBASFRAME/RAWWAASFRAME carry the 250-bit SBAS L1 message as a
+ * 29-byte field (OEM7 manual §3.169: after the header, frame-decoder
+ * u4, PRN u4, a u4, then 29 bytes of message). Message type 9 (GEO
+ * navigation) is decoded by the shared `decodeSbasGeoNav`, the same
+ * decoder the u-blox and SBF paths use; other message types (fast/long
+ * corrections, etc.) are skipped. Because only 29 bytes (232 bits) are
+ * carried — enough for every MT9 field but 18 bits short of the 24-bit
+ * SBAS CRC — the SBAS CRC is not re-checked; the OEM4 CRC-32 over the
+ * whole log already guarantees the transported bytes.
  *
  * Output records mirror what `parseNavFile` produces for the
  * equivalent RINEX 3 navigation file: Keplerian `tocDate` is a
@@ -29,6 +41,7 @@
 
 import { decodeGpsLnavFrame } from '../navbits';
 import { CnavAssembler, cnavCrcOk, type CnavEphemeris } from '../navbits/cnav';
+import { decodeSbasGeoNav } from '../navbits/sbas';
 import type {
   Ephemeris,
   GlonassEphemeris,
@@ -45,6 +58,8 @@ const ID_GALEPHEMERIS = 1122;
 const ID_QZSSEPHEMERIS = 1336;
 const ID_GPSEPHEM = 7;
 const ID_BDSEPHEMERIS = 1696;
+const ID_RAWWAASFRAME = 287; // OEMV/OEM4 raw SBAS (WAAS) frame
+const ID_RAWSBASFRAME = 973; // OEM6/OEM7 raw SBAS frame (same format)
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 // BDT calendar epoch (Jan 1 2006 00:00:00 BDT), naive — RINEX BDS nav
@@ -444,6 +459,29 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
     } else if (frame.id === ID_GLOEPHEMERIS && frame.msgLen >= 144) {
       const eph = decodeGloEphemeris(view, frame.payload);
       if (!eph) continue;
+      const prev = lastGlo.get(eph.prn);
+      if (
+        prev &&
+        Math.abs(prev.tocDate.getTime() - eph.tocDate.getTime()) < 1000 &&
+        prev.health === eph.health
+      ) {
+        continue; // unchanged ephemeris
+      }
+      lastGlo.set(eph.prn, eph);
+      ephemerides.push(eph);
+    } else if (
+      (frame.id === ID_RAWSBASFRAME || frame.id === ID_RAWWAASFRAME) &&
+      frame.msgLen >= 41
+    ) {
+      if (frame.week === 0) continue; // header time unresolved
+      // §3.169: frame-decoder u4, PRN u4, a u4, then the 250-bit SBAS
+      // message as 29 bytes (only enough for the MT9 fields, not its CRC).
+      const p = frame.payload;
+      const prn = view.getUint32(p + 4, true);
+      const msg = new Uint8Array(32);
+      msg.set(data.subarray(p + 12, p + 41));
+      const eph = decodeSbasGeoNav(msg, prn, frame.week, frame.towMs / 1000);
+      if (!eph) continue; // not a type-9 (GEO navigation) message
       const prev = lastGlo.get(eph.prn);
       if (
         prev &&
