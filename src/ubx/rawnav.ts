@@ -1,9 +1,9 @@
 /**
  * u-blox UBX raw navigation-message decoding for the non-GPS
- * constellations: Galileo I/NAV (E1B/E5b), BeiDou D1/D2 (B1I/B2I) and
- * GLONASS L1/L2 C/A strings from RXM-SFRBX (class 0x02, id 0x13).
- * GPS/QZSS LNAV stays in `parseUbxNav` (./nav.ts) and GPS CNAV in
- * `parseUbxCnav` (./cnav.ts).
+ * constellations: Galileo I/NAV (E1B/E5b), BeiDou D1/D2 (B1I/B2I),
+ * GLONASS L1/L2 C/A strings and SBAS L1 C/A GEO navigation (message
+ * type 9) from RXM-SFRBX (class 0x02, id 0x13). GPS/QZSS LNAV stays in
+ * `parseUbxNav` (./nav.ts) and GPS CNAV in `parseUbxCnav` (./cnav.ts).
  *
  * The per-constellation word repack is a port of RTKLIB demo5
  * (rtklibexplorer fork, src/rcv/ublox.c: decode_rxmsfrbx routing into
@@ -73,6 +73,7 @@ import { getBitU, setBitU } from '../navbits';
 import { BdsAssembler, bdsSubframeParityOk } from '../navbits/bds';
 import { GalInavAssembler, galInavPageCrcOk } from '../navbits/gal';
 import { GloStringAssembler, testGloString } from '../navbits/glo';
+import { decodeSbasGeoNav, sbasCrcOk } from '../navbits/sbas';
 import type { Ephemeris } from '../rinex/nav';
 import { ubxFrames } from './frame';
 
@@ -97,16 +98,18 @@ export interface UbxRawNavResult {
   /**
    * Broadcast ephemerides in stream order, unchanged rebroadcasts
    * suppressed: Galileo I/NAV (`system: 'E'`, RINEX I/NAV clock set),
-   * BeiDou D1/D2 (`system: 'C'`, BDT epochs/weeks) and GLONASS
-   * (`system: 'R'`, UTC epochs, km state vectors).
+   * BeiDou D1/D2 (`system: 'C'`, BDT epochs/weeks), GLONASS
+   * (`system: 'R'`, UTC epochs, km state vectors) and SBAS GEO
+   * (`system: 'S'`, GPS-scale epochs, km state vectors).
    */
   ephemerides: Ephemeris[];
   /** RXM-SFRBX messages routed to each constellation's decoder:
    * `gal` = E1B + E5b I/NAV pages, `bds` = B1I + B2I subframes,
-   * `glo` = L1 + L2 C/A strings. */
-  counts: { gal: number; bds: number; glo: number };
+   * `glo` = L1 + L2 C/A strings, `sbas` = L1 C/A GEO messages. */
+  counts: { gal: number; bds: number; glo: number; sbas: number };
   /** Messages dropped for a failed integrity check: I/NAV page
-   * CRC-24Q, BDS BCH(15,11,1) word parity, GLONASS Hamming (KX). */
+   * CRC-24Q, BDS BCH(15,11,1) word parity, GLONASS Hamming (KX),
+   * SBAS CRC-24Q. */
   badParity: number;
 }
 
@@ -122,7 +125,7 @@ export function parseUbxRawNav(
 ): UbxRawNavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const ephemerides: Ephemeris[] = [];
-  const counts = { gal: 0, bds: 0, glo: 0 };
+  const counts = { gal: 0, bds: 0, glo: 0, sbas: 0 };
   let badParity = 0;
 
   const inav = new GalInavAssembler();
@@ -131,6 +134,11 @@ export function parseUbxRawNav(
 
   /** Most recent RXM-RAWX epoch (GPS scale) — RTKLIB's raw->time. */
   let refDate: Date | null = null;
+  /** …and its GPS week / time-of-week, for the SBAS t0 anchor. */
+  let refWeek = 0;
+  let refTow = 0;
+  /** Suppress unchanged SBAS GEO rebroadcasts (per PRN + epoch). */
+  const sbasSeen = new Set<string>();
 
   for (const f of ubxFrames(data)) {
     if (f.msgClass !== 0x02) continue;
@@ -144,6 +152,8 @@ export function parseUbxRawNav(
         refDate = new Date(
           GPS_EPOCH_MS + (week * SEC_PER_WEEK + rcvTow) * 1000
         );
+        refWeek = week;
+        refTow = rcvTow;
       }
       continue;
     }
@@ -237,8 +247,38 @@ export function parseUbxRawNav(
       if (!refDate) continue; // no receiver time yet: day unresolvable
       const eph = glo.push(`R${two(svId)}`, str, refDate, p[3]! - 7);
       if (eph) ephemerides.push(eph);
+    } else if (gnssId === 1) {
+      /* ── SBAS L1 C/A GEO navigation (message type 9) ──────────── */
+      if (p.length < 8 + 32) continue; // 8 dwrds (250-bit message)
+      counts.sbas++;
+      if (svId < 120 || svId > 158) continue;
+
+      // Repack: each little-endian dwrd big-endian → the 250-bit
+      // message MSB-first (RTKLIB decode_snav).
+      const msg = new Uint8Array(32);
+      for (let k = 0; k < 8; k++) {
+        const w = view.getUint32(base + 4 * k, true);
+        msg[4 * k] = w >>> 24;
+        msg[4 * k + 1] = (w >>> 16) & 0xff;
+        msg[4 * k + 2] = (w >>> 8) & 0xff;
+        msg[4 * k + 3] = w & 0xff;
+      }
+
+      if (!sbasCrcOk(msg)) {
+        badParity++;
+        continue;
+      }
+      if (refWeek === 0) continue; // no receiver time yet: t0 unresolvable
+      const eph = decodeSbasGeoNav(msg, svId, refWeek, refTow);
+      if (eph) {
+        const key = `${eph.prn}@${eph.tocDate.getTime()}`;
+        if (!sbasSeen.has(key)) {
+          sbasSeen.add(key);
+          ephemerides.push(eph);
+        }
+      }
     }
-    // gnssId 0/5 (GPS/QZSS): parseUbxNav / parseUbxCnav; 1 (SBAS): skip
+    // gnssId 0/5 (GPS/QZSS): parseUbxNav / parseUbxCnav
   }
 
   return { ephemerides, counts, badParity };

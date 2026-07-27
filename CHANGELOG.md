@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.43.0
+
+### New — SBAS GEO navigation (message type 9) from u-blox and Septentrio
+
+- New shared decoder `decodeSbasGeoNav` (`src/navbits/sbas.ts`) turns an SBAS L1 C/A message type 9 (GEO navigation) into a GEO ephemeris — a `GlonassEphemeris` tagged `system: 'S'`, i.e. an ECEF state vector (position/velocity/acceleration in km) plus a clock offset/drift, propagated by the same `glonassPosition` used for GLONASS. Field offsets and DO-229 scale factors follow RTKLIB `decode_sbstype9`; the 24-bit CRC-24Q is re-run on every message (`sbasCrcOk`).
+- Wired into both raw-frame sources that carry SBAS L1: **u-blox RXM-SFRBX** (`parseUbxRawNav`, gnssId 1) and **Septentrio SBF GEORawL1** (block 4020, via the one-pass `decodeSbfNavigation` and the new standalone `parseSbfGeoNav`). This closes the last broadcast-nav gap on both formats — every constellation a ZED-F9P or mosaic-X5 emits is now decoded.
+- Validated on real captures: the F9P slice decodes S31/S33/S38 and the DLF500 SBF slice decodes S21/S23/S36/S44, all to geostationary orbits (|r| ≈ 42,164 km, station-kept birds at ≈ 0 velocity), CRC-24Q clean on all frames. Records round-trip through the RINEX 3 nav writer as standard SBAS (`S##`) entries.
+- GEORawL5 (4021, DFMC L5 SBAS) is deliberately not routed here — it carries a different message set (MT 32/34/35/…) from the L1 message type 9.
+
 ## 1.42.0
 
 ### New — Trimble RETSVDATA Galileo ephemeris (subtype 11)

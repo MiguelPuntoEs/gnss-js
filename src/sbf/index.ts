@@ -929,6 +929,12 @@ export {
 } from './rawnav-bds';
 
 export {
+  parseSbfGeoNav,
+  feedGeoBlock,
+  type SbfGeoNavResult,
+} from './rawnav-sbas';
+
+export {
   parseSbfHas,
   type SbfHasResult,
   type SbfHasMessage,
