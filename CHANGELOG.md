@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.53.0
+
+### New — SBF PVTGeodetic decoder (`parseSbfPvt`)
+
+- `parseSbfPvt` (`sbf`) decodes Septentrio PVTGeodetic (block 4007): the receiver's own position, solution mode ('standalone', 'sbas-aided', 'rtk-fixed', 'ppp', …), satellites used, and 2-σ horizontal/vertical accuracy estimate. The receiver's fix is a ready reference to cross-check an independent SPP/SBAS solution against — e.g. a network-RTK-fixed station provides a centimetre truth to validate that a protection level genuinely bounds the actual error.
+
 ## 1.52.0
 
 ### New — SBAS protection levels (HPL / VPL)
