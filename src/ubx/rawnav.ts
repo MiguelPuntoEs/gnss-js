@@ -92,6 +92,18 @@ export interface UbxRawNavOptions {
    * week and are decoded regardless); the system clock is never used.
    */
   refWeek?: number;
+  /**
+   * Called for every CRC-valid SBAS L1 C/A message (all types, not only the
+   * GEO navigation MT9), with the 250-bit message MSB-first, the GEO PRN, and
+   * the reception GPS week / time-of-week. Feed these to an
+   * {@link ../positioning/sbas.SbasProcessor} to build SBAS corrections.
+   */
+  onSbasMessage?: (
+    msg: Uint8Array,
+    prn: number,
+    week: number,
+    tow: number
+  ) => void;
 }
 
 export interface UbxRawNavResult {
@@ -269,6 +281,7 @@ export function parseUbxRawNav(
         continue;
       }
       if (refWeek === 0) continue; // no receiver time yet: t0 unresolvable
+      opts.onSbasMessage?.(msg, svId, refWeek, refTow);
       const eph = decodeSbasGeoNav(msg, svId, refWeek, refTow);
       if (eph) {
         const key = `${eph.prn}@${eph.tocDate.getTime()}`;
