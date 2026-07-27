@@ -132,6 +132,39 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
     expect(sol!.dop?.pdop).toBeLessThan(6);
   });
 
+  it('applies SBAS satellite corrections through the sbas option', async () => {
+    const { single, ephMap } = await load();
+    const none = solveSpp(single, ephMap, TARGET_MS)!;
+
+    // Stub SBAS source: a uniform +10 m clock correction on every GPS
+    // satellite. A common per-constellation satellite-clock offset is
+    // absorbed by that constellation's receiver-clock bias, so the position
+    // is unchanged but the GPS clock-bias estimate shifts by +10 m — a clean,
+    // deterministic check that the correction actually reaches the model.
+    const OFFSET_M = 10;
+    const sbas = {
+      satCorrection: (prn: string) =>
+        prn[0] === 'G'
+          ? {
+              dPos: [0, 0, 0] as [number, number, number],
+              dClkS: OFFSET_M / C_LIGHT,
+              varM2: 1,
+            }
+          : null,
+      ionoDelay: () => null,
+    };
+    const withSbas = solveSpp(single, ephMap, TARGET_MS, { sbas })!;
+
+    expect(withSbas.converged).toBe(true);
+    // Position essentially unchanged (common GPS clock offset is absorbable).
+    expect(err(withSbas.position, none.position)).toBeLessThan(0.5);
+    // GPS receiver clock bias shifts by ~ +OFFSET_M; other systems unaffected.
+    expect(withSbas.clockBias['G']! - none.clockBias['G']!).toBeCloseTo(
+      OFFSET_M,
+      0
+    );
+  });
+
   it.skipIf(!HAS_GIM)(
     'GIM ionosphere beats broadcast Klobuchar on the vertical',
     async () => {

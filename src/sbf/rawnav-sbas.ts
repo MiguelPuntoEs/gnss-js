@@ -31,7 +31,13 @@ import { scanSbfFrames, svidToPrn } from './frame';
  */
 export function feedGeoBlock(
   view: DataView,
-  b: number
+  b: number,
+  onSbasMessage?: (
+    msg: Uint8Array,
+    prn: number,
+    week: number,
+    tow: number
+  ) => void
 ): { eph?: GlonassEphemeris; badCrc?: boolean } {
   const tow = view.getUint32(b + 8, true); // ms of GPS week
   const wnc = view.getUint16(b + 12, true); // full GPS week
@@ -51,6 +57,7 @@ export function feedGeoBlock(
 
   if (!sbasCrcOk(msg)) return { badCrc: true };
   const prn = Number(prnStr.slice(1)) + 100; // "S23" → 123 (SBAS PRN)
+  onSbasMessage?.(msg, prn, wnc, tow / 1000);
   const eph = decodeSbasGeoNav(msg, prn, wnc, tow / 1000);
   return eph ? { eph } : {};
 }
@@ -71,7 +78,17 @@ export interface SbfGeoNavResult {
  * the same blocks through {@link feedGeoBlock}; this standalone parser
  * mirrors the per-constellation `parseSbf*` helpers.
  */
-export function parseSbfGeoNav(data: Uint8Array): SbfGeoNavResult {
+export function parseSbfGeoNav(
+  data: Uint8Array,
+  opts: {
+    onSbasMessage?: (
+      msg: Uint8Array,
+      prn: number,
+      week: number,
+      tow: number
+    ) => void;
+  } = {}
+): SbfGeoNavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const ephemerides: GlonassEphemeris[] = [];
   const seen = new Set<string>();
@@ -81,7 +98,7 @@ export function parseSbfGeoNav(data: Uint8Array): SbfGeoNavResult {
   scanSbfFrames(data, view, (id, b, len) => {
     if (id !== 4020 || len < 52) return;
     messages++;
-    const r = feedGeoBlock(view, b);
+    const r = feedGeoBlock(view, b, opts.onSbasMessage);
     if (r.eph) {
       const key = `${r.eph.prn}|${r.eph.tocDate.getTime()}`;
       if (!seen.has(key)) {

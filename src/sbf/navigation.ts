@@ -94,7 +94,19 @@ function ephKey(e: Ephemeris): string {
  * F/NAV, GLONASS strings, BeiDou D1/D2, and the Klobuchar/NeQuick iono +
  * GPS-UTC leap-second blocks. See the module header for merge semantics.
  */
-export function decodeSbfNavigation(data: Uint8Array): SbfNavigation {
+export function decodeSbfNavigation(
+  data: Uint8Array,
+  opts: {
+    /** Called for every CRC-valid SBAS L1 message (all types) — feed an
+     *  {@link ../positioning/sbas.SbasProcessor} to build SBAS corrections. */
+    onSbasMessage?: (
+      msg: Uint8Array,
+      prn: number,
+      week: number,
+      tow: number
+    ) => void;
+  } = {}
+): SbfNavigation {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
   const ephemerides: Ephemeris[] = [];
@@ -226,7 +238,7 @@ export function decodeSbfNavigation(data: Uint8Array): SbfNavigation {
         // GEORawL1 (SBAS L1 C/A GEO message)
         if (len < 52) return;
         counts.sbasRaw++;
-        const r = feedGeoBlock(view, b);
+        const r = feedGeoBlock(view, b, opts.onSbasMessage);
         if (r.eph) addEph(r.eph);
         else if (r.badCrc) counts.badFrames++;
         return;
