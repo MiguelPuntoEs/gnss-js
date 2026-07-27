@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.45.0
+
+### New — offline RTK post-processing (`postProcessRtk`)
+
+- `postProcessRtk(base, rover, ephemerides, baseEcef, opts)` (`positioning`) is the `rnx2rtkp`-style batch driver: it pairs a base and rover observation stream by epoch time and runs each synchronized pair through a single `RtkFloatEngine` (float, with optional LAMBDA integer fixing), returning the rover track — `{ position, lat/lon/height, enu baseline, status (fixed/float/dgnss), ratio, nSats, nFixed }` per epoch plus a `fixRate`. The estimator is the same one validated on live streams; this adds the batch loop + second-aligned epoch pairing (with a `pairToleranceMs` gate) so a recorded base/rover pair — RINEX or any decoded receiver stream (`{ epochs: [{ timeMs, meas }] }`) — can be processed to a track.
+- Validated on the WHU OEM719 ~1.58 km short baseline: static solution converges to the surveyed rover point at the decimetre level (< 0.3 m horizontal, < 0.6 m vertical), instant AR yields integer-fixed epochs, and rover epochs with no base within tolerance are reported as `unmatched`. Static + kinematic modes.
+
 ## 1.44.0
 
 ### New — SBAS GEO navigation from NovAtel (RAWSBASFRAME / RAWWAASFRAME)
