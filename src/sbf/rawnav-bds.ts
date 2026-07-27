@@ -41,6 +41,41 @@ export interface SbfBdsNavResult {
 }
 
 /**
+ * Process one BDSRaw (4047) block at frame offset `b`: extract the
+ * 300-bit D1/D2 subframe, run BCH(15,11,1) word parity, and push it to
+ * the shared assembler. Returns a fresh ephemeris, or `{ badCrc: true }`
+ * on a parity failure. Shared by {@link parseSbfBdsNav} and the one-pass
+ * {@link decodeSbfNavigation}.
+ */
+export function feedBdsBlock(
+  view: DataView,
+  b: number,
+  assembler: BdsAssembler
+): { eph?: KeplerEphemeris; badCrc?: boolean } {
+  const prn = svidToPrn(view.getUint8(b + 14));
+  if (!prn || prn[0] !== 'C') return {};
+
+  // NAVBits u4[10] at +20: first received bit = MSB of NAVBits[0];
+  // 300 bits, the low 20 bits of NAVBits[9] to be ignored.
+  const sf = new Uint8Array(38);
+  for (let k = 0; k < 10; k++) {
+    const w = view.getUint32(b + 20 + 4 * k, true);
+    sf[4 * k] = w >>> 24;
+    if (k < 9) {
+      sf[4 * k + 1] = (w >>> 16) & 0xff;
+      sf[4 * k + 2] = (w >>> 8) & 0xff;
+      sf[4 * k + 3] = w & 0xff;
+    } else {
+      sf[37] = (w >>> 16) & 0xf0; // bits 296-299; 300-303 unused
+    }
+  }
+
+  if (!bdsSubframeParityOk(sf)) return { badCrc: true };
+  const eph = assembler.push(prn, sf);
+  return eph ? { eph } : {};
+}
+
+/**
  * Decode every BDSRaw (4047) block in an SBF byte stream and assemble
  * the carried D1/D2 subframes into ephemerides (`system: 'C'`, BDT
  * epochs/weeks, like `parseSbfNav`'s BDSNav records). GEO satellites
@@ -58,30 +93,9 @@ export function parseSbfBdsNav(data: Uint8Array): SbfBdsNavResult {
   scanSbfFrames(data, view, (id, b, len) => {
     if (id !== 4047 || len < 60) return;
     messages++;
-    const prn = svidToPrn(view.getUint8(b + 14));
-    if (!prn || prn[0] !== 'C') return;
-
-    // NAVBits u4[10] at +20: first received bit = MSB of NAVBits[0];
-    // 300 bits, the low 20 bits of NAVBits[9] to be ignored.
-    const sf = new Uint8Array(38);
-    for (let k = 0; k < 10; k++) {
-      const w = view.getUint32(b + 20 + 4 * k, true);
-      sf[4 * k] = w >>> 24;
-      if (k < 9) {
-        sf[4 * k + 1] = (w >>> 16) & 0xff;
-        sf[4 * k + 2] = (w >>> 8) & 0xff;
-        sf[4 * k + 3] = w & 0xff;
-      } else {
-        sf[37] = (w >>> 16) & 0xf0; // bits 296-299; 300-303 unused
-      }
-    }
-
-    if (!bdsSubframeParityOk(sf)) {
-      badCrc++;
-      return;
-    }
-    const eph = assembler.push(prn, sf);
-    if (eph) ephemerides.push(eph);
+    const r = feedBdsBlock(view, b, assembler);
+    if (r.eph) ephemerides.push(r.eph);
+    else if (r.badCrc) badCrc++;
   });
 
   return { ephemerides, badCrc, messages };
@@ -108,6 +122,52 @@ export interface SbfGloNavResult {
  * L1 C/A and L2 C/A strings are identical and share one assembler
  * per slot, as in RTKLIB.
  */
+/**
+ * Process one GLORawCA (4026) block at frame offset `b`: extract the
+ * 85-bit navigation string, run the Hamming (KX) check, and push it to
+ * the shared assembler with the block's TOW/WNc-derived day and
+ * frequency number. Returns a fresh ephemeris, `{ badCrc: true }` on a
+ * Hamming failure, or `{}` when the block has no valid time stamp
+ * (do-not-use). Shared by {@link parseSbfGloNav} and the one-pass
+ * {@link decodeSbfNavigation}.
+ */
+export function feedGloBlock(
+  view: DataView,
+  b: number,
+  assembler: GloStringAssembler
+): { eph?: GlonassEphemeris; badCrc?: boolean } {
+  const prn = svidToPrn(view.getUint8(b + 14));
+  if (!prn || prn[0] !== 'R') return {};
+  const towMs = view.getUint32(b + 8, true);
+  const wnc = view.getUint16(b + 12, true);
+  if (towMs === TOW_DNU || wnc === WNC_DNU) return {};
+
+  // NAVBits u4[3] at +20: first received bit = MSB of NAVBits[0];
+  // 85 bits, the low 11 bits of NAVBits[2] to be ignored.
+  const str = new Uint8Array(11);
+  for (let k = 0; k < 3; k++) {
+    const w = view.getUint32(b + 20 + 4 * k, true);
+    str[4 * k] = w >>> 24;
+    if (k < 2) {
+      str[4 * k + 1] = (w >>> 16) & 0xff;
+      str[4 * k + 2] = (w >>> 8) & 0xff;
+      str[4 * k + 3] = w & 0xff;
+    } else {
+      str[9] = (w >>> 16) & 0xff;
+      str[10] = (w >>> 8) & 0xf8; // bits 80-84; 85-95 unused
+    }
+  }
+
+  if (!testGloString(str)) return { badCrc: true };
+  const eph = assembler.push(
+    prn,
+    str,
+    new Date(GPS_EPOCH_MS + wnc * MS_PER_WEEK + towMs),
+    view.getUint8(b + 18) - 8 // FreqNr, offset by 8
+  );
+  return eph ? { eph } : {};
+}
+
 export function parseSbfGloNav(data: Uint8Array): SbfGloNavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const ephemerides: GlonassEphemeris[] = [];
@@ -118,39 +178,9 @@ export function parseSbfGloNav(data: Uint8Array): SbfGloNavResult {
   scanSbfFrames(data, view, (id, b, len) => {
     if (id !== 4026 || len < 32) return;
     messages++;
-    const prn = svidToPrn(view.getUint8(b + 14));
-    if (!prn || prn[0] !== 'R') return;
-    const towMs = view.getUint32(b + 8, true);
-    const wnc = view.getUint16(b + 12, true);
-    if (towMs === TOW_DNU || wnc === WNC_DNU) return;
-
-    // NAVBits u4[3] at +20: first received bit = MSB of NAVBits[0];
-    // 85 bits, the low 11 bits of NAVBits[2] to be ignored.
-    const str = new Uint8Array(11);
-    for (let k = 0; k < 3; k++) {
-      const w = view.getUint32(b + 20 + 4 * k, true);
-      str[4 * k] = w >>> 24;
-      if (k < 2) {
-        str[4 * k + 1] = (w >>> 16) & 0xff;
-        str[4 * k + 2] = (w >>> 8) & 0xff;
-        str[4 * k + 3] = w & 0xff;
-      } else {
-        str[9] = (w >>> 16) & 0xff;
-        str[10] = (w >>> 8) & 0xf8; // bits 80-84; 85-95 unused
-      }
-    }
-
-    if (!testGloString(str)) {
-      badCrc++;
-      return;
-    }
-    const eph = assembler.push(
-      prn,
-      str,
-      new Date(GPS_EPOCH_MS + wnc * MS_PER_WEEK + towMs),
-      view.getUint8(b + 18) - 8 // FreqNr, offset by 8
-    );
-    if (eph) ephemerides.push(eph);
+    const r = feedGloBlock(view, b, assembler);
+    if (r.eph) ephemerides.push(r.eph);
+    else if (r.badCrc) badCrc++;
   });
 
   return { ephemerides, badCrc, messages };

@@ -68,7 +68,7 @@ export interface SbfNavResult {
 }
 
 /** GPSNav (5891) / QZSNav (4095) — identical layout, LNAV fields. */
-function decodeGpsQzsNav(
+export function decodeGpsQzsNav(
   view: DataView,
   b: number,
   sys: 'G' | 'J'
@@ -120,7 +120,10 @@ function decodeGpsQzsNav(
 }
 
 /** GALNav (4002) — INAV (source 2) or FNAV (source 16). */
-function decodeGalNav(view: DataView, b: number): KeplerEphemeris | null {
+export function decodeGalNav(
+  view: DataView,
+  b: number
+): KeplerEphemeris | null {
   const prn = view.getUint8(b + 14) - 70;
   if (prn < 1 || prn > 36) return null;
   const source = view.getUint8(b + 15);
@@ -174,7 +177,10 @@ function decodeGalNav(view: DataView, b: number): KeplerEphemeris | null {
 }
 
 /** BDSNav (4081) — D1/D2. Weeks and epochs kept on the BDT scale. */
-function decodeBdsNav(view: DataView, b: number): KeplerEphemeris | null {
+export function decodeBdsNav(
+  view: DataView,
+  b: number
+): KeplerEphemeris | null {
   const prn = svidToPrn(view.getUint8(b + 14));
   if (!prn || prn[0] !== 'C') return null;
   // WNc is a GPS week; BDS week = GPS week − 1356 (BDT = GPST − 14 s)
@@ -221,7 +227,10 @@ function decodeBdsNav(view: DataView, b: number): KeplerEphemeris | null {
 }
 
 /** GLONav (4004) — PZ-90 state vector. */
-function decodeGloNav(view: DataView, b: number): GlonassEphemeris | null {
+export function decodeGloNav(
+  view: DataView,
+  b: number
+): GlonassEphemeris | null {
   const prn = svidToPrn(view.getUint8(b + 14));
   if (!prn || prn[0] !== 'R') return null;
   const wnc = view.getUint16(b + 12, true);

@@ -23,8 +23,8 @@
  * iono/UTC parameters through the shared `readLnavSubframe` helper.
  */
 
-import { decodeGpsLnavFrame, getBitU, setBitU } from '../navbits';
-import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
+import { GpsLnavAssembler, getBitU, setBitU } from '../navbits';
+import type { Ephemeris } from '../rinex/nav';
 import { ubxFrames, type UbxFrame } from './frame';
 
 /** CNAV message preamble (IS-GPS-200 §30.3.3) — flags L2C messages. */
@@ -49,13 +49,6 @@ export interface UbxNavResult {
    * IODC/IODE cross-check failed (mixed issues of data).
    */
   badParity: number;
-}
-
-/** Per-satellite LNAV subframe accumulator (subframes 1–3, 30 B each). */
-interface SubframeBuffer {
-  buf: Uint8Array;
-  /** Bitmask of buffered subframes: bit (id − 1) set once id was seen. */
-  have: number;
 }
 
 /** One parity-stripped GPS/QZSS LNAV subframe from an RXM-SFRBX frame. */
@@ -149,47 +142,25 @@ export function parseUbxNav(
   // without guessing (and the system clock is out of bounds here).
   if (refWeek === undefined) return { ephemerides, badParity };
 
-  const subframes = new Map<number, SubframeBuffer>();
-  const last = new Map<string, KeplerEphemeris>();
+  // Subframes 1–3 accumulate per satellite; the shared assembler decodes
+  // on subframe 3 and suppresses unchanged issues of data (RTKLIB
+  // decode_nav). Subframes 4/5 (page-18 iono/UTC) go to parseUbxIonoUtc.
+  const assembler = new GpsLnavAssembler();
 
   for (const f of ubxFrames(data)) {
     if (f.msgClass !== 0x02 || f.msgId !== 0x13) continue;
     const lnav = readLnavSubframe(view, f);
     if (!lnav) continue;
-    const { prn, gnssId, svId, buff, id } = lnav;
+    const { prn, buff, id } = lnav;
 
+    // HOW subframe-ID out of the 1–5 range is a corrupt frame.
     if (id < 1 || id > 5) {
       badParity++;
       continue;
     }
-    if (id > 3) continue; // subframes 4/5: handled by parseUbxIonoUtc
-
-    const key = gnssId * 256 + svId;
-    let sf = subframes.get(key);
-    if (!sf) {
-      sf = { buf: new Uint8Array(90), have: 0 };
-      subframes.set(key, sf);
-    }
-    sf.buf.set(buff, (id - 1) * 30);
-    sf.have |= 1 << (id - 1);
-
-    // Decode on subframe 3 (RTKLIB decode_nav), once 1 and 2 are in.
-    if (id !== 3 || sf.have !== 0b111) continue;
-    const eph = decodeGpsLnavFrame(sf.buf, { prn, refWeek });
-    if (!eph) {
-      badParity++; // IODC/IODE mismatch across the buffered subframes
-      continue;
-    }
-    const prev = last.get(prn);
-    if (
-      prev &&
-      prev.iode === eph.iode &&
-      prev.tocDate.getTime() === eph.tocDate.getTime()
-    ) {
-      continue; // unchanged issue of data
-    }
-    last.set(prn, eph);
-    ephemerides.push(eph);
+    const r = assembler.push(prn, buff, refWeek);
+    if (r.kind === 'eph') ephemerides.push(r.eph);
+    else if (r.kind === 'decodeFailed') badParity++; // IODC/IODE mismatch
   }
 
   return { ephemerides, badParity };
