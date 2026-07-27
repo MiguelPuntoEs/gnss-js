@@ -40,6 +40,14 @@ export {
 
 export { parseSbfIonoUtc, type SbfIonoUtcResult } from './iono';
 
+export { parseSbfGpsNav, type SbfGpsNavResult } from './rawnav-gps';
+
+export {
+  decodeSbfNavigation,
+  type SbfNavigation,
+  type SbfNavCounts,
+} from './navigation';
+
 export {
   parseSbfCnav,
   type SbfCnavResult,

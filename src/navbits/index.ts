@@ -81,6 +81,73 @@ export interface DecodeLnavOptions {
 }
 
 /**
+ * Result of feeding one GPS/QZSS LNAV subframe to a {@link GpsLnavAssembler}:
+ * `incomplete` (buffered, waiting for the 1/2/3 set), `eph` (a fresh
+ * ephemeris completed), `duplicate` (a re-broadcast of the last issue of
+ * data, suppressed), `decodeFailed` (subframe 3 completed a set but the
+ * IODC/IODE cross-check rejected it — a mixed-issue frame), or `skipped`
+ * (a subframe-ID outside 1–3, e.g. 4/5).
+ */
+export type LnavPush =
+  | { kind: 'incomplete' | 'duplicate' | 'decodeFailed' | 'skipped' }
+  | { kind: 'eph'; eph: KeplerEphemeris };
+
+/**
+ * Assembles GPS/QZSS LNAV subframes 1–3 into ephemerides, one buffer per
+ * satellite, suppressing re-broadcasts of an unchanged issue of data —
+ * the shared core behind both `parseUbxNav` (RXM-SFRBX) and the SBF
+ * GPSRawCA decoder. Input subframes are parity-stripped: ten 24-bit data
+ * words packed MSB-first into 30 bytes (the `(word >>> 6) & 0xffffff`
+ * form both u-blox and Septentrio deliver). Decode fires on subframe 3
+ * once 1 and 2 are buffered (RTKLIB decode_nav).
+ */
+export class GpsLnavAssembler {
+  private readonly buffers = new Map<
+    string,
+    { buf: Uint8Array; have: number }
+  >();
+  private readonly last = new Map<string, KeplerEphemeris>();
+
+  /** Subframe ID (1–5) from the HOW word of a parity-stripped subframe. */
+  static subframeId(subframe: Uint8Array): number {
+    return getBitU(subframe, 43, 3);
+  }
+
+  /**
+   * Push one parity-stripped 30-byte LNAV subframe for `prn`, resolving
+   * the 10-bit week against `refWeek`. See {@link LnavPush} for outcomes.
+   */
+  push(prn: string, subframe: Uint8Array, refWeek: number): LnavPush {
+    const id = GpsLnavAssembler.subframeId(subframe);
+    if (id < 1 || id > 3) return { kind: 'skipped' };
+
+    let sf = this.buffers.get(prn);
+    if (!sf) {
+      sf = { buf: new Uint8Array(90), have: 0 };
+      this.buffers.set(prn, sf);
+    }
+    sf.buf.set(subframe, (id - 1) * 30);
+    sf.have |= 1 << (id - 1);
+
+    if (id !== 3 || sf.have !== 0b111) return { kind: 'incomplete' };
+
+    const eph = decodeGpsLnavFrame(sf.buf, { prn, refWeek });
+    if (!eph) return { kind: 'decodeFailed' };
+
+    const prev = this.last.get(prn);
+    if (
+      prev &&
+      prev.iode === eph.iode &&
+      prev.tocDate.getTime() === eph.tocDate.getTime()
+    ) {
+      return { kind: 'duplicate' };
+    }
+    this.last.set(prn, eph);
+    return { kind: 'eph', eph };
+  }
+}
+
+/**
  * Decode GPS LNAV subframes 1–3 into a Keplerian ephemeris.
  *
  * Input is the parity-stripped frame exactly as NovAtel RAWEPHEM (and

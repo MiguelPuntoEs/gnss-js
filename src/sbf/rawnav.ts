@@ -37,10 +37,51 @@ export interface SbfCnavResult {
 }
 
 /** SBF signal-type numbers (mosaic-X5 refguide §4.1.10) → label. */
-const SIGNAL_OF_BLOCK: Record<number, 'L2C' | 'L5'> = {
+export const CNAV_SIGNAL_OF_BLOCK: Record<number, 'L2C' | 'L5'> = {
   4018: 'L2C',
   4019: 'L5',
 };
+
+/** Per-signal CNAV assemblers, one instance shared by a whole scan. */
+export interface CnavAssemblers {
+  L2C: CnavAssembler;
+  L5: CnavAssembler;
+}
+
+export function newCnavAssemblers(): CnavAssemblers {
+  return { L2C: new CnavAssembler(), L5: new CnavAssembler() };
+}
+
+/**
+ * Process one GPSRawL2C/GPSRawL5 block at frame offset `b`: extract the
+ * 300-bit CNAV message, CRC-24Q gate it, and push it to the matching
+ * per-signal assembler. Returns a fresh ephemeris, or `{ badCrc: true }`
+ * when the CRC failed. Shared by {@link parseSbfCnav} and the one-pass
+ * {@link decodeSbfNavigation}.
+ */
+export function feedCnavBlock(
+  view: DataView,
+  b: number,
+  id: number,
+  asm: CnavAssemblers
+): { eph?: SbfCnavEphemeris; badCrc?: boolean } {
+  const signal = CNAV_SIGNAL_OF_BLOCK[id];
+  if (!signal) return {};
+
+  // NAVBits u4[10] at +20: first received bit = MSB of NAVBits[0].
+  const msg = new Uint8Array(40);
+  for (let k = 0; k < 10; k++) {
+    const w = view.getUint32(b + 20 + 4 * k, true);
+    msg[4 * k] = w >>> 24;
+    msg[4 * k + 1] = (w >>> 16) & 0xff;
+    msg[4 * k + 2] = (w >>> 8) & 0xff;
+    msg[4 * k + 3] = w & 0xff;
+  }
+
+  if (!cnavCrcOk(msg)) return { badCrc: true };
+  const eph = asm[signal].push(msg);
+  return eph ? { eph: { ...eph, signal } } : {};
+}
 
 /**
  * Decode every GPSRawL2C/GPSRawL5 block in an SBF byte stream and
@@ -52,34 +93,16 @@ const SIGNAL_OF_BLOCK: Record<number, 'L2C' | 'L5'> = {
 export function parseSbfCnav(data: Uint8Array): SbfCnavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const ephemerides: SbfCnavEphemeris[] = [];
-  const assemblers: Record<'L2C' | 'L5', CnavAssembler> = {
-    L2C: new CnavAssembler(),
-    L5: new CnavAssembler(),
-  };
+  const asm = newCnavAssemblers();
   let badCrc = 0;
   let messages = 0;
 
   scanSbfFrames(data, view, (id, b, len) => {
-    const signal = SIGNAL_OF_BLOCK[id];
-    if (!signal || len < 60) return;
+    if (!CNAV_SIGNAL_OF_BLOCK[id] || len < 60) return;
     messages++;
-
-    // NAVBits u4[10] at +20: first received bit = MSB of NAVBits[0].
-    const msg = new Uint8Array(40);
-    for (let k = 0; k < 10; k++) {
-      const w = view.getUint32(b + 20 + 4 * k, true);
-      msg[4 * k] = w >>> 24;
-      msg[4 * k + 1] = (w >>> 16) & 0xff;
-      msg[4 * k + 2] = (w >>> 8) & 0xff;
-      msg[4 * k + 3] = w & 0xff;
-    }
-
-    if (!cnavCrcOk(msg)) {
-      badCrc++;
-      return;
-    }
-    const eph = assemblers[signal].push(msg);
-    if (eph) ephemerides.push({ ...eph, signal });
+    const r = feedCnavBlock(view, b, id, asm);
+    if (r.eph) ephemerides.push(r.eph);
+    else if (r.badCrc) badCrc++;
   });
 
   return { ephemerides, badCrc, messages };
