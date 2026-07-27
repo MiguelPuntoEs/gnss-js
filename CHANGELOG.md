@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.38.0
+
+### New — SBF ReceiverSetup (5902): station identity + reference position
+
+- Added `parseSbfReceiverSetup` — decodes the Septentrio ReceiverSetup (5902) block into the station's marker (name/number/type/code), receiver (name, serial, firmware, product), antenna (type, serial, ΔH/E/N offsets) and reference position (latitude/longitude in radians, ellipsoidal height, plus the ECEF `position` for convenience). It's the block a RINEX header's marker/receiver/antenna and APPROX POSITION lines come from — and gives a receiver-format stream the station metadata + approximate position that RTCM gets from message types 1005/1006/1033.
+- Length-tolerant across block revisions: the trailing rev-1…4 fields (MarkerType, GNSSFWVersion, ProductName, the reference position, StationCode) are read only when the block length covers them.
+- Validated against a real DLF500NLD1 block: marker `DLF500NLD`, receiver `SSRC7`/PolaRx5 fw `2025.08.4`, antenna `LEIAR25.R3 … LEIT`, position 51.986°N 4.387°E 75.8 m (TU Delft).
+
 ## 1.37.0
 
 ### New — GPS/QZSS LNAV from raw SBF blocks + one-pass `decodeSbfNavigation`

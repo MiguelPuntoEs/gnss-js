@@ -22,6 +22,7 @@
 !/test-fixtures/dlf5_bdsglo_slice.sbf
 !/test-fixtures/dlf5_has_slice.sbf
 !/test-fixtures/dlf500_sbf_nav_slice.sbf
+!/test-fixtures/dlf500_sbf_setup_slice.sbf
 !/test-fixtures/f9p_rawnav_slice.ubx
 !/test-fixtures/oem719_rtk_base.gps
 !/test-fixtures/oem719_rtk_rover.gps
