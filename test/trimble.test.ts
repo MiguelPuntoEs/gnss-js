@@ -148,6 +148,26 @@ describe.skipIf(!existsSync(GPSNAV_FILE))(
       expect(Math.abs(nav.ionoCorrections['GPSA']![0]!)).toBeLessThan(1e-7);
     });
 
+    it('decodes GLONASS ephemerides (RETSVDATA subtype 9) as a state vector', () => {
+      const glo = parseTrimbleNav(raw).ephemerides.filter(
+        (e) => e.prn[0] === 'R'
+      );
+      expect(glo.length).toBeGreaterThanOrEqual(5);
+      for (const e of glo) {
+        if (!('x' in e)) continue;
+        // PZ-90 orbit radius ≈ 25,510 km (GLONASS MEO), speed ≈ 3.4 km/s.
+        const r = Math.hypot(e.x, e.y, e.z);
+        expect(r).toBeGreaterThan(25000);
+        expect(r).toBeLessThan(26000);
+        expect(Math.hypot(e.xDot, e.yDot, e.zDot)).toBeGreaterThan(2.5);
+        expect(Math.hypot(e.xDot, e.yDot, e.zDot)).toBeLessThan(4.5);
+        expect(e.freqNum).toBeGreaterThanOrEqual(-7);
+        expect(e.freqNum).toBeLessThanOrEqual(6);
+        expect(Math.abs(e.tauN)).toBeLessThan(1e-3);
+        expect(e.tocDate.getUTCMinutes() % 15).toBe(0); // GLONASS 15-min tb
+      }
+    });
+
     it('decodes BeiDou ephemerides (RETSVDATA subtype 21) on the BDT scale', () => {
       const bds = parseTrimbleNav(raw).ephemerides.filter(
         (e) => e.prn[0] === 'C'

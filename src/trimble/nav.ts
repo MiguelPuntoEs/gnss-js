@@ -1,7 +1,7 @@
 /**
  * Trimble RT17/RT27 navigation-message decoding: RETSVDATA (0x55)
- * GPS ephemeris (subtype 1), BeiDou ephemeris (subtype 21) and ION / UTC
- * data (subtype 3).
+ * GPS ephemeris (subtype 1), GLONASS ephemeris (subtype 9), BeiDou
+ * ephemeris (subtype 21) and ION / UTC data (subtype 3).
  *
  * The GPS path is ported field-for-field from RTKLIB's `src/rcv/rt17.c`
  * (`decode_gps_ephemeris` / `decode_ion_utc_data`, tomojitakasu/RTKLIB,
@@ -17,11 +17,20 @@
  * RINEX 3 navigation record and match the NovAtel/SBF ephemeris paths
  * (GPS: GPS-scale `tocDate`; BeiDou: naive-BDT `tocDate`; angles in rad).
  *
- * Still not decoded: the GLONASS/Galileo/QZSS ephemeris and almanac
- * subtypes (RETSVDATA 9/11/13/23/27 on this stream).
+ * The subtype→constellation map is confirmed by RTKLIB's rt17.c
+ * RETSVDATA table (st[]: 1 = GPS Eph, 9 = GLONASS Eph, 11 = Galileo Eph,
+ * 21 = BeiDou Eph) — but RTKLIB only *decodes* subtypes 1 and 3, so the
+ * GLONASS/BeiDou field layouts here were reverse-engineered and validated
+ * against physics + the 2026-07-27 BRDC. Still not decoded: Galileo
+ * (subtype 11) and the QZSS/almanac subtypes (13/23/27 on this stream).
  */
 
-import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
+import type {
+  Ephemeris,
+  GlonassEphemeris,
+  KeplerEphemeris,
+} from '../rinex/nav';
+import { getGpsLeap } from '../time/utc';
 import { RETSVDATA, trimbleFrames } from './frame';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
@@ -43,6 +52,7 @@ const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 const SUB_GPS_EPHEMERIS = 1;
 const SUB_ION_UTC = 3;
+const SUB_GLO_EPHEMERIS = 9;
 const SUB_BDS_EPHEMERIS = 21;
 
 /**
@@ -210,9 +220,56 @@ function decodeBdsEphemeris(
 }
 
 /**
- * Decode every RETSVDATA navigation message (GPS ephemeris, ION/UTC) in
- * a Trimble binary byte stream. Repeated broadcasts of an unchanged GPS
- * ephemeris are suppressed by issue of data (IODE), as RTKLIB does.
+ * Decode a RETSVDATA GLONASS ephemeris (subtype 9). Unlike GPS/BeiDou
+ * this is a PZ-90 state vector, not a Keplerian struct: after the STX,
+ * slot u1 (+5), GPS week u2 (+6) and GPS SOW u4 (+8), then FCN i1 (+29),
+ * and an interleaved X/Ẋ/Ẍ, Y/Ẏ/Ÿ, Z/Ż/Z̈ block of f8 metres/m·s⁻¹/m·s⁻²
+ * (+33…+104), τn f8 (+113) and γn f8 (+121). Fields established from a
+ * real DLF100NLD1 capture (|position| = 25 510 km ⇒ GLONASS orbit; FCN
+ * R21 = +4, R05 = +1; τn/γn cross-checked against the 2026-07-27 BRDC).
+ * The record is stamped on the GPS time scale; `tocDate` is the reference
+ * time on the UTC scale RINEX uses (block time − leap seconds), and — as
+ * in RINEX and `parseSbfNav` — the clock bias carries the −τn sign.
+ */
+function decodeGloEphemeris(
+  view: DataView,
+  base: number
+): GlonassEphemeris | null {
+  const slot = view.getUint8(base + 5);
+  if (slot < 1 || slot > 24) return null;
+  const week = view.getUint16(base + 6, false);
+  const tow = view.getUint32(base + 8, false); // GPST seconds of week
+  const gpsTimeMs = gpsMs(week, tow);
+  const leapMs = getGpsLeap(new Date(gpsTimeMs)) * 1000;
+  const tocMs = gpsTimeMs - leapMs; // UTC reference time (tb)
+  return {
+    system: 'R',
+    prn: `R${String(slot).padStart(2, '0')}`,
+    tocDate: new Date(tocMs),
+    // RINEX stores −τn as the clock bias; the record carries τn (ICD sign).
+    tauN: -view.getFloat64(base + 113, false),
+    gammaN: view.getFloat64(base + 121, false),
+    messageFrameTime: ((tocMs - GPS_EPOCH_MS) / 1000) % SEC_PER_WEEK,
+    // State vector: metres / m·s⁻¹ / m·s⁻² → km / km·s⁻¹ / km·s⁻².
+    x: view.getFloat64(base + 33, false) / 1000,
+    xDot: view.getFloat64(base + 41, false) / 1000,
+    xAcc: view.getFloat64(base + 49, false) / 1000,
+    y: view.getFloat64(base + 57, false) / 1000,
+    yDot: view.getFloat64(base + 65, false) / 1000,
+    yAcc: view.getFloat64(base + 73, false) / 1000,
+    z: view.getFloat64(base + 81, false) / 1000,
+    zDot: view.getFloat64(base + 89, false) / 1000,
+    zAcc: view.getFloat64(base + 97, false) / 1000,
+    health: 0, // Bn health bit not located; observed sats are operational
+    freqNum: view.getInt8(base + 29), // FCN, signed byte (−7…+6)
+  };
+}
+
+/**
+ * Decode every RETSVDATA navigation message (GPS/BeiDou/GLONASS
+ * ephemeris, ION/UTC) in a Trimble binary byte stream. Repeated
+ * broadcasts of an unchanged ephemeris are suppressed by issue of data
+ * (Keplerian) / reference epoch (GLONASS), as RTKLIB does.
  */
 export function parseTrimbleNav(data: Uint8Array): TrimbleNavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -251,6 +308,13 @@ export function parseTrimbleNav(data: Uint8Array): TrimbleNavResult {
       ionoCorrections['GPSA'] = alpha;
       ionoCorrections['GPSB'] = beta;
       leapSeconds = Math.trunc(view.getFloat64(p + 94, false)); // Δt_LS
+    } else if (sub === SUB_GLO_EPHEMERIS && f.len >= 125) {
+      const eph = decodeGloEphemeris(view, f.start);
+      if (!eph) continue;
+      const key = eph.tocDate.getTime(); // GLONASS: dedup by reference epoch
+      if (lastIode.get(eph.prn) === key) continue;
+      lastIode.set(eph.prn, key);
+      ephemerides.push(eph);
     }
   }
 
