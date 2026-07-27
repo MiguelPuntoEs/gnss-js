@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.50.0
+
+### Fixed — multi-GNSS SPP no longer fails when a whole constellation sits below the elevation mask
+
+- `solveSpp` allocates a per-constellation receiver-clock unknown for every system present, but drops sub-mask satellites from iteration 2 onward. A constellation whose satellites were **all** below the mask — a lone QZSS / NavIC / SBAS / BeiDou-GEO satellite seen from the wrong hemisphere — left its clock column with no observations, making the normal-equation matrix singular, so the **entire** multi-GNSS fix returned `null`. Such an unconstrained clock is now pinned to its current value (unit diagonal), and the per-iteration observation-count requirement counts only contributing systems, so the remaining constellations still solve. Purely a robustness fix — nominal solves are unchanged.
+- Reproduced from a live `AMEL00NLD0` (Netherlands) RTCM3 stream in which a single below-horizon QZSS satellite blocked every epoch; the same data now solves to ~4 m against the station's surveyed coordinate.
+
 ## 1.49.0
 
 ### New — SBAS (WAAS/EGNOS/…) wide-area corrections (`SbasProcessor`)

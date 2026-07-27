@@ -276,6 +276,9 @@ export function solveSpp(
       );
       const Htv = new Array<number>(dim).fill(0);
       let rows = 0;
+      // Contributing rows per system this iteration — a constellation can lose
+      // every satellite to the elevation mask (see the empty-column fix below).
+      const sysRows = new Map<string, number>(systems.map((s) => [s, 0]));
       for (const k of Object.keys(residuals)) delete residuals[k];
 
       const positionSaneIter = x * x + y * y + z * z > 1e12; // > 1000 km
@@ -357,9 +360,32 @@ export function solveSpp(
         }
         residuals[prn] = v;
         rows++;
+        sysRows.set(sys, sysRows.get(sys)! + 1);
       }
 
-      if (rows < dim) return null;
+      // A constellation can end an iteration with no contributing satellites —
+      // a lone QZSS/NavIC/SBAS/GEO bird below the horizon from the wrong
+      // hemisphere is dropped by the elevation mask (iter ≥ 2). Its per-system
+      // clock column is then all zeros, so the normal matrix is singular and
+      // solveLinear fails — which previously sank the ENTIRE multi-GNSS fix,
+      // not just that constellation. Pin each such unconstrained clock to its
+      // current value (unit diagonal, zero gradient) so dx for it is 0 and the
+      // remaining systems still solve.
+      let activeSystems = 0;
+      for (const s of systems) {
+        if (sysRows.get(s)! === 0) {
+          const idx = sysIndex.get(s)!;
+          HtH[idx]![idx] = 1;
+          Htv[idx] = 0;
+        } else {
+          activeSystems++;
+        }
+      }
+
+      // Need at least (3 position + one clock per contributing system)
+      // observations. A masked-out constellation's pinned clock is not a free
+      // parameter, so it does not count toward the requirement.
+      if (rows < 3 + activeSystems) return null;
       const dx = solveLinear(HtH, Htv);
       if (!dx) return null;
 

@@ -4,8 +4,9 @@ import { join } from 'path';
 import { parseRinexStream, parseNavFile, parseIonex } from '../src/rinex';
 import type { Ephemeris } from '../src/rinex/nav';
 import { solveSpp, ionoFree, satClockCorrection } from '../src/positioning';
+import { computeSatPosition } from '../src/orbit';
 import { ecefToGeodetic, getEnuDifference } from '../src/coordinates';
-import { FREQ } from '../src/constants/gnss';
+import { FREQ, C_LIGHT } from '../src/constants/gnss';
 
 const DIR = join(__dirname, '../test-fixtures');
 const HAS_DATA =
@@ -157,6 +158,59 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
       expect(uGim).toBeLessThan(2.0);
     }
   );
+
+  it('still solves when a whole constellation is below the elevation mask', async () => {
+    // Regression: a lone satellite from a constellation that is entirely below
+    // the horizon (e.g. a single QZSS bird seen from the Atlantic) used to sink
+    // the ENTIRE multi-GNSS fix. Its per-system clock column had no above-mask
+    // satellites, so the normal matrix was singular and solveSpp returned null.
+    // Reproduced here by injecting one QZSS satellite (invisible from ABMF in
+    // Guadeloupe) with a geometrically consistent pseudorange.
+    const { single, ephMap, approx } = await load();
+
+    const baseline = solveSpp(single, ephMap, TARGET_MS);
+    expect(baseline).not.toBeNull();
+
+    const jPrn = [...ephMap.keys()].find((p) => p.startsWith('J'));
+    expect(jPrn, 'BRDC.nav should carry a QZSS ephemeris').toBeDefined();
+    const jEph = ephMap.get(jPrn!)!;
+    const jSat = computeSatPosition(jEph, TARGET_MS);
+    // Below the horizon from ABMF → its elevation will fail the mask.
+    const jUp = getEnuDifference(
+      jSat.x,
+      jSat.y,
+      jSat.z,
+      approx[0],
+      approx[1],
+      approx[2],
+      ...(ecefToGeodetic(approx[0], approx[1], approx[2]).slice(0, 2) as [
+        number,
+        number,
+      ])
+    )[2];
+    expect(jUp, 'QZSS sat must be below the local horizon').toBeLessThan(0);
+
+    const rho = Math.hypot(
+      jSat.x - approx[0],
+      jSat.y - approx[1],
+      jSat.z - approx[2]
+    );
+    const withQzss = new Map(single);
+    withQzss.set(jPrn!, rho - C_LIGHT * satClockCorrection(jEph, TARGET_MS));
+
+    const sol = solveSpp(withQzss, ephMap, TARGET_MS);
+    expect(
+      sol,
+      'a below-mask constellation must not sink the solve'
+    ).not.toBeNull();
+    expect(sol!.converged).toBe(true);
+    // The masked QZSS satellite is excluded, so the fix is unchanged.
+    expect(sol!.usedSatellites).not.toContain(jPrn);
+    expect(err(sol!.position, approx)).toBeCloseTo(
+      err(baseline!.position, approx),
+      6
+    );
+  });
 
   it('solves iono-free GPS within 10 m', async () => {
     const { dual, ephMap, approx } = await load();
