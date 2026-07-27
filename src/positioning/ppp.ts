@@ -100,6 +100,8 @@ export interface PppEpochResult {
   nSats: number;
   /** Estimated zenith wet delay (m). */
   ztdWet: number;
+  /** A priori zenith hydrostatic delay (m, Saastamoinen). ZTD = this + ztdWet. */
+  ztdHydrostatic: number;
   /** RMS of post-fit phase residuals this epoch (m). */
   phaseResRms: number;
 }
@@ -113,6 +115,8 @@ export interface PppSolution {
   series: PppEpochResult[];
   /** Estimated zenith wet delay at the end (m). */
   ztdWet: number;
+  /** A priori zenith hydrostatic delay at the end (m). ZTD = this + ztdWet. */
+  ztdHydrostatic: number;
   /** Epochs processed. */
   epochsUsed: number;
   /** Seconds from first epoch until 3D error first stays < 0.1 m
@@ -499,6 +503,9 @@ export function solvePpp(
       f2: number;
     }
     const vis: Vis[] = [];
+    // Zenith hydrostatic delay is station-level (same for every satellite this
+    // epoch); capture it so ZTD = ZHD + ZWD can be reported.
+    let epochZhd = 0;
     for (const o of epoch.obs) {
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
       const slip = detectSlip(o, ei);
@@ -533,6 +540,7 @@ export function solvePpp(
           ? niellMapping(elRad, latRad, heightM, epoch.timeMs)
           : { zhd: 0, mh: 0, mw: 0 };
       const { zhd, mh, mw } = trop;
+      epochZhd = zhd;
 
       const geom: SatGeom = {
         prn: o.prn,
@@ -783,6 +791,7 @@ export function solvePpp(
       position: pos,
       nSats,
       ztdWet: x[IDX_ZWD]!,
+      ztdHydrostatic: epochZhd,
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
     });
   }
@@ -830,6 +839,9 @@ export function solvePpp(
     llh,
     series,
     ztdWet: x[IDX_ZWD]!,
+    ztdHydrostatic: series.length
+      ? series[series.length - 1]!.ztdHydrostatic
+      : 0,
     epochsUsed: epochs.length,
     convergenceSec,
     finalError3d,

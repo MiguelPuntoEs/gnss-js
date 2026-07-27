@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.46.0
+
+### New — zenith hydrostatic delay in PPP output (full ZTD)
+
+- `solvePpp` now reports the a priori **zenith hydrostatic delay** (`ztdHydrostatic`, Saastamoinen) alongside the estimated wet delay, on both `PppSolution` and every `PppEpochResult`. The total zenith tropospheric delay is `ztdHydrostatic + ztdWet`, so a caller can produce a ZTD time series (and derive integrated water vapour) without re-deriving the hydrostatic model. Purely additive — no change to the estimator or existing fields.
+
 ## 1.45.1
 
 ### Fixed — RTK post-processing on sub-1 Hz data (30 s RINEX)
