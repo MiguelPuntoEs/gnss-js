@@ -121,14 +121,15 @@ describe.skipIf(!existsSync(GPSNAV_FILE))(
   () => {
     const raw = new Uint8Array(readFileSync(GPSNAV_FILE));
 
+    const gpsOnly = () =>
+      parseTrimbleNav(raw).ephemerides.filter((e) => e.prn[0] === 'G');
+
     it('decodes the 176-byte subtype-1 records into GPS ephemerides', () => {
-      const nav = parseTrimbleNav(raw);
-      expect(nav.ephemerides.length).toBeGreaterThanOrEqual(5);
-      expect(nav.ephemerides.every((e) => e.prn[0] === 'G')).toBe(true);
+      expect(gpsOnly().length).toBeGreaterThanOrEqual(5);
     });
 
     it('produces physically plausible GPS orbits', () => {
-      for (const e of parseTrimbleNav(raw).ephemerides) {
+      for (const e of gpsOnly()) {
         if (!('sqrtA' in e)) continue;
         expect(e.sqrtA).toBeGreaterThan(5153);
         expect(e.sqrtA).toBeLessThan(5154); // GPS MEO √a ≈ 5153.6 m^½
@@ -145,6 +146,24 @@ describe.skipIf(!existsSync(GPSNAV_FILE))(
       expect(nav.ionoCorrections['GPSA']).toHaveLength(4);
       expect(nav.ionoCorrections['GPSB']).toHaveLength(4);
       expect(Math.abs(nav.ionoCorrections['GPSA']![0]!)).toBeLessThan(1e-7);
+    });
+
+    it('decodes BeiDou ephemerides (RETSVDATA subtype 21) on the BDT scale', () => {
+      const bds = parseTrimbleNav(raw).ephemerides.filter(
+        (e) => e.prn[0] === 'C'
+      );
+      expect(bds.length).toBeGreaterThanOrEqual(5);
+      for (const e of bds) {
+        if (!('sqrtA' in e)) continue;
+        expect(e.sqrtA).toBeGreaterThan(5282); // BeiDou MEO √a ≈ 5282.6 m^½
+        expect(e.sqrtA).toBeLessThan(5284);
+        expect(e.e).toBeLessThan(0.02);
+        // BDT week = GPS week − 1356 (≈ 1073 for 2026); tocDate on the BDT
+        // calendar lands on a clean broadcast boundary (GPST − 14 s).
+        expect(e.week).toBeGreaterThan(1000);
+        expect(e.week).toBeLessThan(1356);
+        expect(e.tocDate.getUTCSeconds()).toBe(0);
+      }
     });
   }
 );
