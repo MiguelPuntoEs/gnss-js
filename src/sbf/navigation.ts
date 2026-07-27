@@ -4,7 +4,7 @@
  * A Septentrio broadcasts navigation data as a mix of *decoded* blocks
  * (GPSNav/GALNav/GLONav/BDSNav/QZSNav — already-parsed ephemeris) and
  * *raw* navigation-frame blocks (GPSRawCA, GALRawINAV/FNAV, GLORawCA,
- * BDSRaw, GPSRawL2C/L5) whose bits must be assembled — and which class a
+ * BDSRaw, GPSRawL2C/L5, GEORawL1) whose bits must be assembled — and which class a
  * given receiver emits depends on its configuration. The granular
  * `parseSbf*` functions each re-scan the whole stream for one class;
  * this decoder walks the byte stream **once**, routing every navigation
@@ -36,6 +36,7 @@ import {
 import { feedGalBlock, newGalAssemblers } from './rawnav-gal';
 import { feedBdsBlock, feedGloBlock } from './rawnav-bds';
 import { feedGpsLnavBlock } from './rawnav-gps';
+import { feedGeoBlock } from './rawnav-sbas';
 import { BdsAssembler } from '../navbits/bds';
 import { GloStringAssembler } from '../navbits/glo';
 import { GpsLnavAssembler } from '../navbits';
@@ -56,6 +57,8 @@ export interface SbfNavCounts {
   gloRaw: number;
   /** Raw BeiDou D1/D2 subframe blocks (BDSRaw). */
   bdsRaw: number;
+  /** Raw SBAS L1 GEO message blocks (GEORawL1). */
+  sbasRaw: number;
   /** Frames dropped by a CRC/parity check across all raw decoders. */
   badFrames: number;
 }
@@ -106,6 +109,7 @@ export function decodeSbfNavigation(data: Uint8Array): SbfNavigation {
     galRaw: 0,
     gloRaw: 0,
     bdsRaw: 0,
+    sbasRaw: 0,
     badFrames: 0,
   };
 
@@ -214,6 +218,15 @@ export function decodeSbfNavigation(data: Uint8Array): SbfNavigation {
         if (len < 60) return;
         counts.bdsRaw++;
         const r = feedBdsBlock(view, b, bdsAsm);
+        if (r.eph) addEph(r.eph);
+        else if (r.badCrc) counts.badFrames++;
+        return;
+      }
+      case 4020: {
+        // GEORawL1 (SBAS L1 C/A GEO message)
+        if (len < 52) return;
+        counts.sbasRaw++;
+        const r = feedGeoBlock(view, b);
         if (r.eph) addEph(r.eph);
         else if (r.badCrc) counts.badFrames++;
         return;

@@ -6,6 +6,7 @@ import { parseSbfCnav } from '../src/sbf/rawnav';
 import { parseSbfNav } from '../src/sbf/nav';
 import { parseSbfGalNav } from '../src/sbf/rawnav-gal';
 import { parseSbfBdsNav, parseSbfGloNav } from '../src/sbf/rawnav-bds';
+import { parseSbfGeoNav } from '../src/sbf/rawnav-sbas';
 import { parseSbfIonoUtc } from '../src/sbf/iono';
 import { decodeSbfNavigation } from '../src/sbf/navigation';
 
@@ -71,6 +72,25 @@ describe.skipIf(!existsSync(SBF_FILE))('decodeSbfNavigation (one pass)', () => {
     expect(counts.galRaw).toBeGreaterThan(0);
     expect(counts.gloRaw).toBeGreaterThan(0);
     expect(counts.bdsRaw).toBeGreaterThan(0);
+    expect(counts.sbasRaw).toBeGreaterThan(0);
+  });
+
+  it('decodes SBAS GEO (type-9) into geostationary state vectors', () => {
+    const geo = parseSbfGeoNav(bytes);
+    expect(geo.messages).toBeGreaterThan(0);
+    expect(geo.badCrc).toBe(0); // GEORawL1 CRC-24Q clean in this slice
+    expect(geo.ephemerides.length).toBeGreaterThanOrEqual(3);
+    for (const e of geo.ephemerides) {
+      expect(e.system).toBe('S');
+      const r = Math.hypot(e.x, e.y, e.z); // km
+      expect(r).toBeGreaterThan(42000); // geostationary radius ≈ 42 164 km
+      expect(r).toBeLessThan(42300);
+    }
+    // the one-pass decoder surfaces the same GEO records
+    const oneP = decodeSbfNavigation(bytes).ephemerides.filter(
+      (e) => e.prn[0] === 'S'
+    );
+    expect(oneP.length).toBe(geo.ephemerides.length);
   });
 
   it('matches the sum of the per-class parsers (no divergence)', () => {
@@ -86,6 +106,7 @@ describe.skipIf(!existsSync(SBF_FILE))('decodeSbfNavigation (one pass)', () => {
     for (const e of parseSbfGalNav(bytes).ephemerides) union.set(key(e), e);
     for (const e of parseSbfGloNav(bytes).ephemerides) union.set(key(e), e);
     for (const e of parseSbfBdsNav(bytes).ephemerides) union.set(key(e), e);
+    for (const e of parseSbfGeoNav(bytes).ephemerides) union.set(key(e), e);
     expect(nav.ephemerides.length).toBe(union.size);
 
     expect(nav.cnav.length).toBe(parseSbfCnav(bytes).ephemerides.length);

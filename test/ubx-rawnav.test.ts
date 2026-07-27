@@ -273,7 +273,7 @@ describe('parseUbxRawNav (synthetic)', () => {
   it('returns nothing on an empty or garbage stream', () => {
     expect(parseUbxRawNav(new Uint8Array(0))).toEqual({
       ephemerides: [],
-      counts: { gal: 0, bds: 0, glo: 0 },
+      counts: { gal: 0, bds: 0, glo: 0, sbas: 0 },
       badParity: 0,
     });
     expect(
@@ -291,7 +291,7 @@ describe('parseUbxRawNav (synthetic)', () => {
         : sfrbx(2, 11, 5, 0, inavDwrds(inavPage(w), false))
     );
     const res = parseUbxRawNav(concat(frames));
-    expect(res.counts).toEqual({ gal: 5, bds: 0, glo: 0 });
+    expect(res.counts).toEqual({ gal: 5, bds: 0, glo: 0, sbas: 0 });
     expect(res.badParity).toBe(0);
     expect(res.ephemerides).toHaveLength(1);
     const e = res.ephemerides[0] as KeplerEphemeris;
@@ -321,7 +321,7 @@ describe('parseUbxRawNav (synthetic)', () => {
   it('assembles a BeiDou D1 frame from 30-LSB dwrd words', () => {
     const frames = buildD1().map((sf) => sfrbx(3, 29, 0, 0, bdsDwrds(sf)));
     const res = parseUbxRawNav(concat(frames));
-    expect(res.counts).toEqual({ gal: 0, bds: 3, glo: 0 });
+    expect(res.counts).toEqual({ gal: 0, bds: 3, glo: 0, sbas: 0 });
     expect(res.badParity).toBe(0);
     expect(res.ephemerides).toHaveLength(1);
     const e = res.ephemerides[0] as KeplerEphemeris;
@@ -395,9 +395,28 @@ describe.skipIf(!existsSync(UBX_FILE))('parseUbxRawNav (F9P slice)', () => {
   const sys = (s: string) => res.ephemerides.filter((e) => e.prn[0] === s);
 
   it('routes and checks every SFRBX message', () => {
-    expect(res.counts).toEqual({ gal: 1789, bds: 400, glo: 2162 });
+    expect(res.counts).toEqual({ gal: 1789, bds: 400, glo: 2162, sbas: 726 });
     // the F9P forwards only parity-clean messages in SFRBX
     expect(res.badParity).toBe(0);
+  });
+
+  it('decodes the SBAS GEO (type-9) records to geostationary orbits', () => {
+    const geo = sys('S') as GlonassEphemeris[];
+    // three GEO PRNs (S31, S33, S38), two epochs each in this slice
+    expect([...new Set(geo.map((e) => e.prn))].sort()).toEqual([
+      'S31',
+      'S33',
+      'S38',
+    ]);
+    for (const e of geo) {
+      const r = Math.hypot(e.x, e.y, e.z); // km
+      // geostationary radius ≈ 42 164 km; station-kept, near-zero velocity
+      expect(r).toBeGreaterThan(42000);
+      expect(r).toBeLessThan(42300);
+      expect(Math.hypot(e.xDot, e.yDot, e.zDot)).toBeLessThan(0.01);
+      expect(e.health).toBe(0);
+      expect(e.freqNum).toBe(0);
+    }
   });
 
   it('decodes the Galileo I/NAV records convbin emits', () => {
