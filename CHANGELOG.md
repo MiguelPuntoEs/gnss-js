@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.40.0
+
+### New — Trimble RETSVDATA BeiDou ephemeris (subtype 21)
+
+- `parseTrimbleNav` now decodes BeiDou ephemerides (RETSVDATA subtype 21). Established from a real DLF100NLD1 capture that Trimble reuses the **identical 176-byte Keplerian struct** as GPS subtype 1 — decoding subtype 21 at the GPS field offsets yields √a ≈ 5282.6 m^½ (BeiDou MEO), i₀ ≈ 55°. The GPS ephemeris reader is refactored to a shared field decoder; the BeiDou path applies the GPS→BDT time-scale conversion (week − 1356, seconds-of-week − 14) so the record lands on the BDT calendar RINEX uses and matches `parseSbfNav`'s BDSNav output.
+- Validated end-to-end: the decoded elements propagate through `keplerPosition` to a BeiDou-MEO orbit (altitude ≈ 21,500 km, |r| ≈ a), the toe/toc land on clean BDT broadcast boundaries (GPST − 14 s), and BDT weeks are correct (≈ 1073 for 2026). On the reference capture: 14 BeiDou + 12 GPS ephemerides.
+
+  Health is taken from the same flags nibble as GPS (0 = healthy for the observed operational satellites); the constellation's set-on-all flags bit 0 is deliberately not used. Still not decoded: the GLONASS/Galileo/QZSS ephemeris and almanac subtypes (RETSVDATA 9/11/13/23/27).
+
 ## 1.39.0
 
 ### Fixed — Trimble RETSVDATA GPS ephemeris + ION/UTC (off-by-two length gates)
