@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.39.0
+
+### Fixed — Trimble RETSVDATA GPS ephemeris + ION/UTC (off-by-two length gates)
+
+- `parseTrimbleNav` never decoded a real GPS ephemeris: the subtype-1 (GPS ephemeris) gate required `f.len >= 178`, but real RETSVDATA GPS records are **176** data bytes, so every one was silently dropped — the path had only ever been exercised by a 180-byte synthetic record. Likewise the ION/UTC (subtype-3) gate required `>= 125` while real records are **123** bytes. Both gates are corrected to the length the decoder actually reads (176 / 102). The field layout itself was always right.
+- Validated against a real DLF100NLD1 Trimble capture: 12 GPS ephemerides decode to physical Keplerian elements (√a ≈ 5153.6 m^½, e < 0.03, i₀ ≈ 55°, week 2429), and the ION/UTC record yields the Klobuchar coefficients + leap seconds (18).
+
+  Still not decoded: the GLONASS/Galileo/BeiDou/QZSS RETSVDATA subtypes (9/11/13/21/23/27 on this stream) — the multi-GNSS Trimble nav gap.
+
 ## 1.38.0
 
 ### New — SBF ReceiverSetup (5902): station identity + reference position

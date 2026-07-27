@@ -107,10 +107,54 @@ describe.skipIf(!existsSync(FILE))('parseTrimble (DLF100 RT27 slice)', () => {
 });
 
 /**
- * The DLF100 capture carried no GPS ephemeris (RETSVDATA subtype 1), so
- * the ported RTKLIB GPS-ephemeris path is exercised with a synthetic
- * record built to the ICD layout: it checks the big-endian field
- * offsets, the semicircle→radian (×π) scaling and the PRN/week mapping.
+ * Real GPS ephemeris from a longer DLF100NLD1 capture (RETSVDATA
+ * subtype 1). These records are 176 data bytes — the previous `f.len >=
+ * 178` gate was off by two and silently dropped every real GPS
+ * ephemeris (only the 180-byte synthetic record below ever passed).
+ */
+const GPSNAV_FILE = join(
+  __dirname,
+  '../test-fixtures/dlf100_rt27_gpsnav_slice.t02'
+);
+describe.skipIf(!existsSync(GPSNAV_FILE))(
+  'parseTrimbleNav (DLF100 real GPS ephemeris)',
+  () => {
+    const raw = new Uint8Array(readFileSync(GPSNAV_FILE));
+
+    it('decodes the 176-byte subtype-1 records into GPS ephemerides', () => {
+      const nav = parseTrimbleNav(raw);
+      expect(nav.ephemerides.length).toBeGreaterThanOrEqual(5);
+      expect(nav.ephemerides.every((e) => e.prn[0] === 'G')).toBe(true);
+    });
+
+    it('produces physically plausible GPS orbits', () => {
+      for (const e of parseTrimbleNav(raw).ephemerides) {
+        if (!('sqrtA' in e)) continue;
+        expect(e.sqrtA).toBeGreaterThan(5153);
+        expect(e.sqrtA).toBeLessThan(5154); // GPS MEO √a ≈ 5153.6 m^½
+        expect(e.e).toBeLessThan(0.03);
+        expect(e.i0).toBeGreaterThan(0.9); // ≈ 55°
+        expect(e.i0).toBeLessThan(1.05);
+        expect(e.week).toBeGreaterThan(2000);
+      }
+    });
+
+    it('decodes the 123-byte ION/UTC record (Klobuchar + leap seconds)', () => {
+      const nav = parseTrimbleNav(raw);
+      expect(nav.leapSeconds).toBe(18);
+      expect(nav.ionoCorrections['GPSA']).toHaveLength(4);
+      expect(nav.ionoCorrections['GPSB']).toHaveLength(4);
+      expect(Math.abs(nav.ionoCorrections['GPSA']![0]!)).toBeLessThan(1e-7);
+    });
+  }
+);
+
+/**
+ * The original DLF100 slice carried no GPS ephemeris (RETSVDATA subtype
+ * 1), so the ported RTKLIB GPS-ephemeris path is also exercised with a
+ * synthetic record built to the ICD layout: it checks the big-endian
+ * field offsets, the semicircle→radian (×π) scaling and the PRN/week
+ * mapping.
  */
 describe('parseTrimbleNav (synthetic GPS ephemeris)', () => {
   function buildEphFrame(): Uint8Array {
