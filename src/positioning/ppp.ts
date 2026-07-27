@@ -66,6 +66,14 @@ export interface PppOptions {
   /** A priori receiver ECEF position (m). Required — from the RINEX header
    * approx position or an SPP solution. */
   aprioriPos: [number, number, number];
+  /**
+   * Rover dynamics. 'static' (default): the position is a single constant
+   * state, so all epochs average into one converged coordinate. 'kinematic':
+   * the position is white noise (RTKLIB `PMODE_PPP_KINEMA`) — re-estimated
+   * each epoch from that epoch's measurements while the carrier ambiguities
+   * (and troposphere) persist, so a moving receiver is tracked epoch by epoch.
+   */
+  mode?: 'static' | 'kinematic';
   /** Ground-truth ECEF (m) for reporting ENU error in the series. */
   groundTruth?: [number, number, number];
   /** Elevation cutoff (deg). Default 10. */
@@ -332,6 +340,7 @@ const NBASE = 4; // position(3) + zenith wet delay(1)
 // Per-constellation receiver clocks (absorbing the inter-system bias) and
 // float ambiguities are appended dynamically after the base states.
 const CLK_VAR = 1e10; // white-noise clock variance reset each epoch (σ≈100 km)
+const POS_VAR = 60 * 60; // kinematic white-noise position variance (σ = 60 m)
 
 export function solvePpp(
   epochs: PppEpoch[],
@@ -342,6 +351,7 @@ export function solvePpp(
   const codeSigma = opts.codeSigma ?? 3.0;
   const phaseSigma = opts.phaseSigma ?? 0.01;
   const ztdQ = opts.ztdProcessNoise ?? 1e-8;
+  const kinematic = opts.mode === 'kinematic';
   const corrections = opts.corrections;
 
   // State vector and covariance. Position is estimated absolutely (metres).
@@ -473,8 +483,22 @@ export function solvePpp(
     const epoch = epochs[ei]!;
 
     // ── Time update ──
-    // Position: static (no process noise). Each constellation clock: white
-    // noise — reset its variance so it is freely re-estimated each epoch.
+    // Position: static holds it constant (no process noise). Kinematic treats
+    // it as white noise (RTKLIB PMODE_PPP_KINEMA) — after the first epoch,
+    // decorrelate the position states and reset their variance so the rover is
+    // re-estimated from this epoch's measurements; epoch-to-epoch continuity
+    // still lives in the persisting carrier-ambiguity states.
+    if (kinematic && ei > 0) {
+      for (const p of [IDX_X, IDX_Y, IDX_Z]) {
+        for (let j = 0; j < x.length; j++) {
+          P[p]![j] = 0;
+          P[j]![p] = 0;
+        }
+        P[p]![p] = POS_VAR;
+      }
+    }
+    // Each constellation clock: white noise — reset its variance so it is
+    // freely re-estimated each epoch.
     for (const ci of clkIdx.values()) P[ci]![ci] = CLK_VAR;
     // Zenith wet delay: random walk.
     P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);

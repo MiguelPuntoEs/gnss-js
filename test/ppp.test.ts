@@ -229,6 +229,40 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     expect(prRms).toBeLessThan(0.15);
   });
 
+  it('kinematic mode tracks a (static) rover epoch-by-epoch near truth', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    const sol = solvePpp(epochs, sp3, {
+      aprioriPos: truth,
+      groundTruth: truth,
+      elevationMaskDeg: 10,
+      mode: 'kinematic',
+    });
+    // Every epoch is positioned (white-noise position → per-epoch estimate).
+    const tail = sol.series.slice(-600).filter((s) => s.enu);
+    expect(tail.length).toBeGreaterThan(100);
+    // The per-epoch track stays centred on the truth at the dm level (median
+    // over the tail, robust to the odd bad epoch) — this is a static station
+    // processed kinematically, so the cluster should sit on the marker.
+    const med = (xs: number[]) =>
+      [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+    const c = [0, 1, 2].map((i) => med(tail.map((s) => s.enu![i]!)));
+    // Kinematic float PPP with 5-min clocks is far noisier than static — the
+    // per-epoch clock/tropo errors that average out in static map into each
+    // epoch's height. So the bar is decimetre horizontal, sub-2 m vertical
+    // (median over the tail, on a station that is actually static).
+    expect(Math.hypot(c[0]!, c[1]!)).toBeLessThan(0.8);
+    expect(Math.abs(c[2]!)).toBeLessThan(2);
+    // Kinematic is genuinely re-estimating each epoch, not converging to a
+    // single point: the up-component scatter is well above static's mm–cm.
+    const up = tail.map((s) => s.enu![2]!);
+    const upMean = up.reduce((a, v) => a + v, 0) / up.length;
+    const upStd = Math.sqrt(
+      up.reduce((a, v) => a + (v - upMean) ** 2, 0) / up.length
+    );
+    expect(upStd).toBeGreaterThan(0.02);
+  });
+
   it.skipIf(!HAS_ATX)(
     'runs with antenna/tide/wind-up corrections',
     async () => {
