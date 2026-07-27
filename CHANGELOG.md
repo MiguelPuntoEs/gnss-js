@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.47.0
+
+### New — code-only (DGNSS) mode in `postProcessRtk`
+
+- `postProcessRtk(..., { codeOnly: true })` routes each paired epoch through `solveDgnss` (double-differenced pseudoranges) instead of the carrier-phase float engine — a robust metre→sub-metre differential solution that needs no carrier phase and does no ambiguity fixing. Track points come back with `status: 'dgnss'`; `fixRate` is 0. Surfaces the existing `solveDgnss` as a batch post-processing mode. Verified on the WHU short baseline (every epoch solved, metre-level).
+
 ## 1.46.0
 
 ### New — zenith hydrostatic delay in PPP output (full ZTD)

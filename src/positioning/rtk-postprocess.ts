@@ -12,6 +12,7 @@
 import { ecefToGeodetic } from '../coordinates';
 import {
   RtkFloatEngine,
+  solveDgnss,
   toRtkEpoch,
   type EphemerisSource,
   type RawObservation,
@@ -58,6 +59,14 @@ export interface RtkPostProcessOptions extends RtkFloatOptions {
    * mainly rejects a base gap rather than sub-second offsets.
    */
   pairToleranceMs?: number;
+  /**
+   * Code-only differential (DGNSS): solve each epoch from double-differenced
+   * pseudoranges via {@link solveDgnss} instead of the carrier-phase float
+   * engine. Every epoch is independent (no filter), so there is no ambiguity
+   * fixing — a robust metre→sub-metre fallback that needs no carrier phase.
+   * Track points come back with `status: 'dgnss'`. Default false.
+   */
+  codeOnly?: boolean;
 }
 
 export interface RtkPostProcessResult {
@@ -160,31 +169,54 @@ export function postProcessRtk(
       unmatched++;
       continue;
     }
-    const sol = engine.process(
-      toRtkEpoch(rEp.meas),
-      toRtkEpoch(bEp.meas),
-      rEp.timeMs
-    );
-    if (!sol) continue;
+    let point: Omit<RtkTrackPoint, 'lat' | 'lon' | 'height' | 'enu'> | null;
+    if (opts.codeOnly) {
+      const dg = solveDgnss(
+        toRtkEpoch(rEp.meas),
+        toRtkEpoch(bEp.meas),
+        baseEcef,
+        ephemerides,
+        rEp.timeMs,
+        {
+          elevationMaskDeg: opts.elevationMaskDeg,
+          troposphere: opts.troposphere,
+          codeSigmaM: opts.codeSigmaM,
+        }
+      );
+      point = dg
+        ? {
+            timeMs: rEp.timeMs,
+            position: dg.position,
+            status: 'dgnss',
+            nSats: dg.nSats,
+          }
+        : null;
+    } else {
+      const sol = engine.process(
+        toRtkEpoch(rEp.meas),
+        toRtkEpoch(bEp.meas),
+        rEp.timeMs
+      );
+      point = sol
+        ? {
+            timeMs: rEp.timeMs,
+            position: sol.position,
+            status: sol.status,
+            ratio: sol.ratio,
+            nSats: sol.nSats,
+            nFixed: sol.nFixed,
+          }
+        : null;
+    }
+    if (!point) continue;
     solved++;
-    if (sol.status === 'fixed') fixed++;
+    if (point.status === 'fixed') fixed++;
     const [lat, lon, height] = ecefToGeodetic(
-      sol.position[0],
-      sol.position[1],
-      sol.position[2]
+      point.position[0],
+      point.position[1],
+      point.position[2]
     );
-    track.push({
-      timeMs: rEp.timeMs,
-      position: sol.position,
-      lat,
-      lon,
-      height,
-      enu: enuOf(sol.position),
-      status: sol.status,
-      ratio: sol.ratio,
-      nSats: sol.nSats,
-      nFixed: sol.nFixed,
-    });
+    track.push({ ...point, lat, lon, height, enu: enuOf(point.position) });
   }
 
   return { track, solved, unmatched, fixRate: solved ? fixed / solved : 0 };
