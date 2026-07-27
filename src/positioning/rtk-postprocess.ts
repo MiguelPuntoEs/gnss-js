@@ -74,6 +74,16 @@ export interface RtkPostProcessResult {
 const epochsOf = (o: RtkObsInput): readonly RtkObsEpoch[] =>
   Array.isArray(o) ? o : (o as { epochs: readonly RtkObsEpoch[] }).epochs;
 
+/** Median gap between consecutive (unique, sorted) epoch times, or null. */
+function medianIntervalMs(epochs: readonly RtkObsEpoch[]): number | null {
+  const times = [...new Set(epochs.map((e) => e.timeMs))].sort((a, b) => a - b);
+  if (times.length < 2) return null;
+  const gaps: number[] = [];
+  for (let i = 1; i < times.length; i++) gaps.push(times[i]! - times[i - 1]!);
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)]!;
+}
+
 /**
  * Post-process a base/rover observation pair into an RTK track.
  *
@@ -94,11 +104,25 @@ export function postProcessRtk(
   const tol = opts.pairToleranceMs ?? 500;
   const round = (ms: number) => Math.round(ms / 1000) * 1000;
 
+  const roverEpochs = epochsOf(rover);
+
+  // Detect the rover sampling interval and, unless the caller pinned it,
+  // scale the engine's cycle-slip gap gate to it. The engine default
+  // (`maxGapMs` 10 s) is tuned for ~1 Hz streams; on 30 s RINEX every epoch
+  // is >10 s from the last, so *every* satellite would be flagged as a slip
+  // each epoch — resetting the float ambiguities and gutting the fix rate.
+  // Tolerating ~2 missed epochs keeps the continuous float alive.
+  const interval = medianIntervalMs(roverEpochs);
+  const engineOpts =
+    opts.maxGapMs != null || interval == null
+      ? opts
+      : { ...opts, maxGapMs: Math.max(10_000, Math.round(interval * 2.5)) };
+
   // Base epochs keyed by rounded second for synchronized lookup.
   const baseByT = new Map<number, RtkObsEpoch>();
   for (const e of epochsOf(base)) baseByT.set(round(e.timeMs), e);
 
-  const engine = new RtkFloatEngine(baseEcef, ephemerides, opts);
+  const engine = new RtkFloatEngine(baseEcef, ephemerides, engineOpts);
 
   // ECEF→ENU rotation at the base (constant), for the baseline readout.
   const [bLat, bLon] = ecefToGeodetic(baseEcef[0], baseEcef[1], baseEcef[2]);
@@ -127,7 +151,7 @@ export function postProcessRtk(
   let unmatched = 0;
   let fixed = 0;
 
-  const sorted = [...epochsOf(rover)].sort((a, b) => a.timeMs - b.timeMs);
+  const sorted = [...roverEpochs].sort((a, b) => a.timeMs - b.timeMs);
   for (const rEp of sorted) {
     if (seen.has(rEp.timeMs)) continue; // drop RANGE/RANGECMP-style repeats
     seen.add(rEp.timeMs);
