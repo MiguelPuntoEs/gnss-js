@@ -13,10 +13,11 @@
  * paths (Keplerian `tocDate` a GPS-scale Date, angles in radians).
  *
  * RTKLIB decodes only these two RETSVDATA subtypes; the GLONASS,
- * Galileo, BeiDou and QZSS ephemeris/almanac subtypes are not handled
- * here (see the module note in the package README / decoder report).
- * This path is validated against synthetic records only: the DLF100
- * ALLOY capture carried GLONASS/BeiDou subtypes but no GPS ephemeris.
+ * Galileo, BeiDou and QZSS ephemeris/almanac subtypes (RETSVDATA
+ * subtypes 9/11/13/21/23/27, seen on the DLF100NLD1 Trimble stream) are
+ * not handled here. Validated against a real DLF100NLD1 capture: the
+ * subtype-1 GPS ephemerides decode to physical Keplerian elements
+ * (√a ≈ 5153.6 m^½, i₀ ≈ 55°, week 2429).
  */
 
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
@@ -139,13 +140,13 @@ export function parseTrimbleNav(data: Uint8Array): TrimbleNavResult {
     const sub = data[f.payload]!;
     retsvCounts[sub] = (retsvCounts[sub] ?? 0) + 1;
 
-    if (sub === SUB_GPS_EPHEMERIS && f.len >= 178) {
+    if (sub === SUB_GPS_EPHEMERIS && f.len >= 176) {
       const eph = decodeGpsEphemeris(data, view, f.start);
       if (!eph) continue;
       if (lastIode.get(eph.prn) === eph.iode) continue; // unchanged
       lastIode.set(eph.prn, eph.iode);
       ephemerides.push(eph);
-    } else if (sub === SUB_ION_UTC && f.len >= 125) {
+    } else if (sub === SUB_ION_UTC && f.len >= 102) {
       const p = f.start;
       const alpha: number[] = [];
       const beta: number[] = [];
