@@ -447,6 +447,15 @@ export type {
   RtkFloatSolution,
 } from './rtk';
 
+export { postProcessRtk } from './rtk-postprocess';
+export type {
+  RtkObsEpoch,
+  RtkObsInput,
+  RtkTrackPoint,
+  RtkPostProcessOptions,
+  RtkPostProcessResult,
+} from './rtk-postprocess';
+
 export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
 
