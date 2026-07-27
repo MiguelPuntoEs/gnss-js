@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.48.0
+
+### New — kinematic PPP (`mode: 'kinematic'`)
+
+- `solvePpp(..., { mode: 'kinematic' })` positions a moving receiver: the rover position becomes a white-noise state (RTKLIB `PMODE_PPP_KINEMA`) — re-estimated each epoch from that epoch's measurements while the carrier ambiguities and troposphere persist across epochs — instead of the single constant state that `'static'` (the default) averages over the whole session. Purely additive; `'static'` behaviour is unchanged.
+- Kinematic float PPP with 5-minute clocks is markedly noisier than static (per-epoch clock/tropo errors that average out in static map into each epoch, the vertical most of all); precise 30 s clocks and ambiguity resolution tighten it. Verified on ABMF processed kinematically: the per-epoch track stays decimetre-horizontal / sub-2 m-vertical around the known marker, with genuine per-epoch scatter (not static convergence).
+
 ## 1.47.0
 
 ### New — code-only (DGNSS) mode in `postProcessRtk`
