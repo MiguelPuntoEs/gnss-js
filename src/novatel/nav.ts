@@ -377,7 +377,21 @@ function decodeGpsQzssEphemeris(
  * Galileo by IODNav + toe + toc per data source, BeiDou by toe + toc,
  * GLONASS by reference time and health.
  */
-export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
+export function parseNovatelNav(
+  data: Uint8Array,
+  opts: {
+    /** Called for each SBAS L1 message (all types) from RAWSBASFRAME. The
+     *  frame carries 232 bits — the correction fields fit, but the inner SBAS
+     *  CRC does not; the outer OEM4 CRC-32 guarantees the bytes. Feed an
+     *  {@link ../positioning/sbas.SbasProcessor}. */
+    onSbasMessage?: (
+      msg: Uint8Array,
+      prn: number,
+      week: number,
+      tow: number
+    ) => void;
+  } = {}
+): NovatelNavResult {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const stats = { badCrc: 0 };
   const ephemerides: Ephemeris[] = [];
@@ -480,6 +494,7 @@ export function parseNovatelNav(data: Uint8Array): NovatelNavResult {
       const prn = view.getUint32(p + 4, true);
       const msg = new Uint8Array(32);
       msg.set(data.subarray(p + 12, p + 41));
+      opts.onSbasMessage?.(msg, prn, frame.week, frame.towMs / 1000);
       const eph = decodeSbasGeoNav(msg, prn, frame.week, frame.towMs / 1000);
       if (!eph) continue; // not a type-9 (GEO navigation) message
       const prev = lastGlo.get(eph.prn);

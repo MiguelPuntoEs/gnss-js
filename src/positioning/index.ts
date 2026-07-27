@@ -65,6 +65,38 @@ export interface SppOptions {
    * reference the broadcast clock already matches. Default true.
    */
   tgd?: boolean;
+  /**
+   * SBAS wide-area corrections (WAAS/EGNOS/…). When given, each satellite in
+   * the SBAS PRN mask has its position + clock adjusted by the fast/long-term
+   * corrections, and — where the ionospheric pierce point is covered by the
+   * SBAS grid — the SBAS slant ionosphere replaces the Klobuchar/GIM model.
+   * Pass an {@link ./sbas.SbasProcessor} (or anything with these two methods).
+   * Combine with single-frequency pseudoranges, not iono-free input.
+   */
+  sbas?: SbasCorrectionSource;
+}
+
+/** The two SBAS corrections `solveSpp` consumes — {@link ./sbas.SbasProcessor}
+ *  satisfies this structurally. */
+export interface SbasCorrectionSource {
+  satCorrection(
+    prn: string,
+    week: number,
+    tow: number
+  ): {
+    dPos: [number, number, number];
+    dClkS: number;
+    varM2: number;
+  } | null;
+  ionoDelay(
+    week: number,
+    tow: number,
+    latRad: number,
+    lonRad: number,
+    heightM: number,
+    azRad: number,
+    elRad: number
+  ): { delayM: number; varM2: number } | null;
 }
 
 export interface SppSolution {
@@ -240,8 +272,10 @@ export function solveSpp(
     tgd = true,
     iono,
     gim,
+    sbas,
   } = opts;
   const gpsTow = ((timeMs - GPS_EPOCH_MS_SPP) / 1000) % 604800;
+  const gpsWeek = Math.floor((timeMs - GPS_EPOCH_MS_SPP) / 1000 / 604800);
 
   const all = [...pseudoranges.keys()].filter((p) => ephemerides.has(p));
   const minSats = (list: string[]) => 3 + new Set(list.map((p) => p[0]!)).size;
@@ -302,8 +336,21 @@ export function solveSpp(
         // Group delay is a measurement (code) bias, not a clock offset:
         // it enters the pseudorange model but not the transmission time.
         const isKepler = eph.system !== 'R' && eph.system !== 'S';
-        const dts =
+        let dts =
           dtsClock - (tgd && isKepler ? (eph as KeplerEphemeris).tgd : 0);
+
+        // SBAS fast + long-term satellite correction: shift the broadcast
+        // position and clock toward the wide-area reference (PRNs in the mask
+        // only; others return null and are left on broadcast).
+        if (sbas) {
+          const sc = sbas.satCorrection(prn, gpsWeek, gpsTow);
+          if (sc) {
+            sat.x += sc.dPos[0];
+            sat.y += sc.dPos[1];
+            sat.z += sc.dPos[2];
+            dts += sc.dClkS;
+          }
+        }
 
         const travel = Math.hypot(sat.x - x, sat.y - y, sat.z - z) / C_LIGHT;
         const [sx, sy, sz] = sagnac(sat, travel);
@@ -329,12 +376,24 @@ export function solveSpp(
         const tropo =
           troposphere && positionSane ? tropoDelay(elev, rxLat, rxHgt) : 0;
         let ionoM = 0;
-        if ((gim || iono) && positionSane) {
-          // L1 slant delay from the GIM (preferred), else broadcast
-          // Klobuchar; the GIM returns null only in a time gap / no-value
-          // cell, in which case Klobuchar backfills when supplied.
+        if ((sbas || gim || iono) && positionSane) {
+          // L1 slant delay: SBAS grid (preferred, where the pierce point is
+          // covered), else GIM, else broadcast Klobuchar — each backfills the
+          // previous where it has no value (SBAS grid edge, GIM time gap).
           let l1M: number | null = null;
-          if (gim)
+          if (sbas) {
+            const si = sbas.ionoDelay(
+              gpsWeek,
+              gpsTow,
+              rxLat,
+              rxLon,
+              rxHgt,
+              azim,
+              elev
+            );
+            if (si) l1M = si.delayM;
+          }
+          if (l1M === null && gim)
             l1M = gimSlantIonoDelayL1(gim, rxLat, rxLon, azim, elev, timeMs);
           if (l1M === null && iono) {
             l1M =

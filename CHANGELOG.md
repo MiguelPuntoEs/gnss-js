@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.51.0
+
+### New — SBAS-corrected SPP + SBAS message hooks on every decoder
+
+- `solveSpp` gains an `sbas` option (an {@link SbasProcessor} or any `SbasCorrectionSource`): each satellite in the SBAS PRN mask has its broadcast position + clock shifted by the fast/long-term corrections, and — where the ionospheric pierce point is inside the SBAS grid — the SBAS slant ionosphere replaces the Klobuchar/GIM model (falling back to them at the grid edge). This turns plain single-frequency SPP into SBAS-augmented (WAAS/EGNOS) SPP.
+- `decodeSbfNavigation` (Septentrio GEORawL1) and `parseNovatelNav` (RAWSBASFRAME/RAWWAASFRAME) gain the same `onSbasMessage(msg, prn, week, tow)` hook `parseUbxRawNav` got in 1.49.0, so all three raw-frame sources can feed an `SbasProcessor` live. (NovAtel carries 232 bits — the correction fields fit; the outer OEM4 CRC-32 guarantees them.)
+
 ## 1.50.0
 
 ### Fixed — multi-GNSS SPP no longer fails when a whole constellation sits below the elevation mask
