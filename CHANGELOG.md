@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.41.0
+
+### New — Trimble RETSVDATA GLONASS ephemeris (subtype 9)
+
+- `parseTrimbleNav` now decodes GLONASS ephemerides (RETSVDATA subtype 9) — a PZ-90 state vector, not a Keplerian struct. Reverse-engineered from a real DLF100NLD1 capture and validated: |position| = 25,510 km (GLONASS MEO), speed ≈ 3.4 km/s, and the frequency channel numbers come out exactly right (R04 = +6, R12 = −1, R18 = −3, …). The reference time is the block time on the UTC scale (GPS − leap seconds), landing on a clean 15-minute tb boundary; τn carries the RINEX −τn sign and γn is passed through — both cross-checked against the 2026-07-27 BRDC (R21 γn = −3.638e-12, −τn = −3.296e-4). Positions/velocities/accelerations convert metres→km to match the RINEX/SBF GLONASS convention.
+- The subtype→constellation map is confirmed by RTKLIB's rt17.c RETSVDATA table (st[9] = GLONASS Eph, st[11] = Galileo Eph, st[21] = BeiDou Eph); RTKLIB only decodes subtypes 1 and 3, so the layouts were established here. Reference capture now yields GPS + GLONASS + BeiDou (Galileo, subtype 11, is next).
+
 ## 1.40.0
 
 ### New — Trimble RETSVDATA BeiDou ephemeris (subtype 21)
