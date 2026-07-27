@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.49.0
+
+### New — SBAS (WAAS/EGNOS/…) wide-area corrections (`SbasProcessor`)
+
+- `SbasProcessor` (`positioning`) ingests decoded SBAS L1 messages and produces the two corrections a single-point solve needs: `satCorrection(prn, week, tow)` — long-term satellite ephemeris + fast pseudorange/clock corrections — and `ionoDelay(...)` — a slant L1 ionospheric delay interpolated from the SBAS grid at a pierce point. It decodes MT1 (PRN mask), MT2–5/24 (fast corrections), MT6 (integrity), MT7 (fast degradation/latency), MT24/25 (long-term corrections), and MT18/26 (ionospheric grid mask + delays). A faithful port of RTKLIB `sbas.c` (`decode_sbstype*`, `sbssatcorr`, `sbsioncorr`), including the DO-229 IGP band tables and the 4-point grid interpolation. (GEO navigation MT9 remains `decodeSbasGeoNav`.)
+- `parseUbxRawNav` gains an `onSbasMessage(msg, prn, week, tow)` hook that surfaces every CRC-valid SBAS L1 message (all types), for feeding the processor live.
+- Validated on a real F9P WAAS stream (PRN 138): the full message set decodes, GPS satellites receive metre-level fast/clock/position corrections (σ ≈ 1 m), and the ionospheric grid (80 IGPs) interpolates plausible sub-30 m slant delays.
+
 ## 1.48.0
 
 ### New — kinematic PPP (`mode: 'kinematic'`)

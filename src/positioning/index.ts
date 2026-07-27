@@ -459,6 +459,9 @@ export type {
 export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
 
+export { SbasProcessor } from './sbas';
+export type { SbasSatCorrection, SbasIonoDelay } from './sbas';
+
 export { solvePpp } from './ppp';
 export type {
   PppSatObs,
