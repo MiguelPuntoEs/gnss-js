@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.52.0
+
+### New — SBAS protection levels (HPL / VPL)
+
+- `sbasProtectionLevels(sats, opts?)` (`positioning`) computes the DO-229 horizontal and vertical protection levels from the per-satellite ENU geometry and total error variances: `HPL = K_H·d_major`, `VPL = K_V·d_U` (defaults K_H=6.0, K_V=5.33 for precision approach), where `d_major`/`d_U` come from the variance-weighted least-squares covariance. Needs ≥ 4 satellites.
+- `solveSpp` returns `hpl`, `vpl` and `sbasSats` when the `sbas` option is set: each SBAS-corrected satellite's total variance is built from the broadcast fast/long (σ²_flt, UDRE) and grid ionosphere (σ²_uire, GIVE) plus a DO-229 airborne + residual-troposphere model (`sbasAirTropoVar`), and the corrected set is projected to a protection level — the SBAS integrity bound alongside the position.
+
 ## 1.51.0
 
 ### New — SBAS-corrected SPP + SBAS message hooks on every decoder

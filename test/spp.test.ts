@@ -165,6 +165,31 @@ describe.skipIf(!HAS_DATA)('SPP against ABMF ground truth', () => {
     );
   });
 
+  it('computes SBAS protection levels when corrections + iono are supplied', async () => {
+    const { single, ephMap } = await load();
+    // Stub SBAS source with realistic per-satellite variances (σ_flt ≈ 0.3 m,
+    // σ_uire ≈ 0.5 m) on GPS — enough for a protection level over the GPS set.
+    const sbas = {
+      satCorrection: (prn: string) =>
+        prn[0] === 'G'
+          ? {
+              dPos: [0, 0, 0] as [number, number, number],
+              dClkS: 0,
+              varM2: 0.09,
+            }
+          : null,
+      ionoDelay: () => ({ delayM: 3, varM2: 0.25 }),
+    };
+    const sol = solveSpp(single, ephMap, TARGET_MS, { sbas })!;
+    expect(sol.sbasSats).toBeGreaterThanOrEqual(4);
+    expect(sol.hpl).toBeGreaterThan(0);
+    expect(sol.vpl).toBeGreaterThan(0);
+    // EGNOS/WAAS-class protection levels are metres to low tens of metres.
+    expect(sol.hpl!).toBeLessThan(60);
+    expect(sol.vpl!).toBeLessThan(80);
+    expect(sol.vpl!).toBeGreaterThan(sol.hpl!);
+  });
+
   it.skipIf(!HAS_GIM)(
     'GIM ionosphere beats broadcast Klobuchar on the vertical',
     async () => {

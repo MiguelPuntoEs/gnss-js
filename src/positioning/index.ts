@@ -114,6 +114,15 @@ export interface SppSolution {
   dop: DopValues | null;
   iterations: number;
   converged: boolean;
+  /**
+   * SBAS integrity, present only when the `sbas` option was given and enough
+   * corrected satellites were available. Horizontal/vertical protection levels
+   * (m) — the DO-229 statistical error bounds — and the count of SBAS-corrected
+   * satellites they were computed from.
+   */
+  hpl?: number;
+  vpl?: number;
+  sbasSats?: number;
 }
 
 /* ================================================================== */
@@ -225,6 +234,89 @@ function sagnac(
 }
 
 /** Solve the normal equations A·x = b by Gaussian elimination. */
+/**
+ * DO-229 SBAS error-model σ² (m²) for one satellite at elevation `elRad`,
+ * excluding the SBAS-broadcast fast/long (`σ²_flt`) and ionosphere (`σ²_uire`)
+ * terms which the caller adds from the message stream. Covers the airborne
+ * receiver (noise+divergence + multipath, AAD-A curves) and residual
+ * troposphere. This is the standard variance budget behind a protection level.
+ */
+function sbasAirTropoVar(elRad: number): number {
+  const elDeg = (elRad * 180) / Math.PI;
+  // Airborne multipath (DO-229 App J) and a noise+divergence curve (AAD-A).
+  const sigMp = 0.13 + 0.53 * Math.exp(-elDeg / 10);
+  const sigNoise = 0.15 + 0.43 * Math.exp(-elDeg / 6.9);
+  // Residual troposphere: 0.12 m × the DO-229 tropo mapping function.
+  const m = 1.001 / Math.sqrt(0.002001 + Math.sin(elRad) * Math.sin(elRad));
+  const sigTropo = 0.12 * m;
+  return sigMp * sigMp + sigNoise * sigNoise + sigTropo * sigTropo;
+}
+
+/** Invert a small square matrix by Gauss-Jordan; null if singular. */
+function invertMatrix(A: number[][]): number[][] | null {
+  const n = A.length;
+  const M = A.map((row, i) => [
+    ...row,
+    ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)),
+  ]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++)
+      if (Math.abs(M[r]![col]!) > Math.abs(M[piv]![col]!)) piv = r;
+    if (Math.abs(M[piv]![col]!) < 1e-12) return null;
+    [M[col], M[piv]] = [M[piv]!, M[col]!];
+    const d = M[col]![col]!;
+    for (let j = 0; j < 2 * n; j++) M[col]![j]! /= d;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r]![col]!;
+      for (let j = 0; j < 2 * n; j++) M[r]![j]! -= f * M[col]![j]!;
+    }
+  }
+  return M.map((row) => row.slice(n));
+}
+
+/**
+ * SBAS horizontal/vertical protection levels (m) from the per-satellite ENU
+ * geometry and total error variances. HPL = K_H·d_major, VPL = K_V·d_U, where
+ * d_major is the semi-major axis of the horizontal position-error ellipse and
+ * d_U the vertical std, both from the variance-weighted least-squares
+ * covariance (DO-229 §2.1.4.10). Needs ≥ 4 satellites.
+ */
+export function sbasProtectionLevels(
+  sats: readonly { azRad: number; elRad: number; variance: number }[],
+  opts: { kH?: number; kV?: number } = {}
+): { hpl: number; vpl: number; dMajor: number; dU: number } | null {
+  const kH = opts.kH ?? 6.0; // DO-229 precision-approach horizontal
+  const kV = opts.kV ?? 5.33; // DO-229 precision-approach vertical
+  if (sats.length < 4) return null;
+  // Weighted normal matrix GᵀWG in the ENU + clock frame.
+  const N = [0, 1, 2, 3].map(() => [0, 0, 0, 0]);
+  for (const s of sats) {
+    if (!(s.variance > 0)) continue;
+    const ce = Math.cos(s.elRad);
+    const g = [
+      ce * Math.sin(s.azRad),
+      ce * Math.cos(s.azRad),
+      Math.sin(s.elRad),
+      1,
+    ];
+    const w = 1 / s.variance;
+    for (let i = 0; i < 4; i++)
+      for (let j = 0; j < 4; j++) N[i]![j]! += w * g[i]! * g[j]!;
+  }
+  const cov = invertMatrix(N);
+  if (!cov) return null;
+  const dE2 = cov[0]![0]!;
+  const dN2 = cov[1]![1]!;
+  const dEN = cov[0]![1]!;
+  const dU = Math.sqrt(Math.max(cov[2]![2]!, 0));
+  const dMajor = Math.sqrt(
+    (dE2 + dN2) / 2 + Math.sqrt(((dE2 - dN2) / 2) ** 2 + dEN * dEN)
+  );
+  return { hpl: kH * dMajor, vpl: kV * dU, dMajor, dU };
+}
+
 function solveLinear(A: number[][], b: number[]): number[] | null {
   const n = b.length;
   const M = A.map((row, i) => [...row, b[i]!]);
@@ -493,9 +585,12 @@ export function solveSpp(
 
   const { x, y, z, clock, residuals, iterations, converged } = inner;
 
-  // Final DOP + used-satellite list at the solution
+  // Final DOP + used-satellite list at the solution, plus (when SBAS is on)
+  // the per-satellite ENU geometry + error variance for the protection level.
   const used: string[] = [];
   const azels: { az: number; el: number }[] = [];
+  const [rxLat, rxLon, rxHgt] = ecefToGeodetic(x, y, z);
+  const sbasRows: { azRad: number; elRad: number; variance: number }[] = [];
   for (const prn of candidates) {
     if (!(prn in residuals)) continue;
     const eph = ephemerides.get(prn)!;
@@ -505,8 +600,29 @@ export function solveSpp(
     if (azel.el >= (elevationMaskDeg * Math.PI) / 180) {
       used.push(prn);
       azels.push(azel);
+      if (sbas) {
+        const sc = sbas.satCorrection(prn, gpsWeek, gpsTow);
+        const si = sbas.ionoDelay(
+          gpsWeek,
+          gpsTow,
+          rxLat,
+          rxLon,
+          rxHgt,
+          azel.az,
+          azel.el
+        );
+        // A fully SBAS-corrected satellite needs both the fast/long variance
+        // and grid ionosphere; only those contribute to the protection level.
+        if (sc && si)
+          sbasRows.push({
+            azRad: azel.az,
+            elRad: azel.el,
+            variance: sc.varM2 + si.varM2 + sbasAirTropoVar(azel.el),
+          });
+      }
     }
   }
+  const pl = sbas ? sbasProtectionLevels(sbasRows) : null;
 
   return {
     position: [x, y, z],
@@ -517,6 +633,11 @@ export function solveSpp(
     dop: computeDop(azels),
     iterations,
     converged,
+    ...(pl
+      ? { hpl: pl.hpl, vpl: pl.vpl, sbasSats: sbasRows.length }
+      : sbas
+        ? { sbasSats: sbasRows.length }
+        : {}),
   };
 }
 
