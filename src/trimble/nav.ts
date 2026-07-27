@@ -22,8 +22,20 @@
  * RETSVDATA table (st[]: 1 = GPS Eph, 9 = GLONASS Eph, 11 = Galileo Eph,
  * 21 = BeiDou Eph) — but RTKLIB only *decodes* subtypes 1 and 3, so the
  * GLONASS/BeiDou field layouts here were reverse-engineered and validated
- * against physics + the 2026-07-27 BRDC. Still not decoded: the
- * QZSS / almanac subtypes (13/23/27 on this stream).
+ * against physics + the 2026-07-27 BRDC.
+ *
+ * Deliberately NOT decoded (investigated on the DLF100NLD1 capture; none
+ * are broadcast ephemeris, so none affect positioning, and none are in
+ * RTKLIB's table or have a clean validation oracle):
+ *   - subtype 27 (×30, 184+ B): paged BeiDou supplementary nav — p+1 is a
+ *     BeiDou PRN, p+2 a page index 3/4/5 (10 sats × 3 pages), i.e. B-CNAV /
+ *     a reduced-almanac supplement needing multi-page reassembly. BeiDou is
+ *     already positionable via subtype 21, so this is redundant unless
+ *     almanac-based pass prediction is wanted.
+ *   - subtype 23 (×6, 98 B): time/UTC-model parameters (p+1 = a model id,
+ *     not a satellite) — GNSS-time offsets / UTC model, not per-satellite.
+ *   - subtype 13 (×1, 87 B): a single auxiliary record (lone almanac or a
+ *     GPS UTC/health entry).
  */
 
 import type {
