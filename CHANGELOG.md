@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.45.1
+
+### Fixed — RTK post-processing on sub-1 Hz data (30 s RINEX)
+
+- `postProcessRtk` now detects the rover sampling interval and, unless the caller pins `maxGapMs`, scales the engine's cycle-slip gap gate to it (≈2.5× the median epoch spacing, floored at 10 s). The `RtkFloatEngine` default `maxGapMs` of 10 s is tuned for ~1 Hz streams; on 30 s RINEX every epoch is >10 s from the previous one, so **every satellite was flagged as a cycle slip each epoch**, resetting the float ambiguities and collapsing the fix rate.
+- Validated on the TU Delft DELF↔DLF1 ~14.3 m baseline (broadcast nav, static, instant AR): the 30 s daily pair goes from ~4% to **95% fixed** with 98% of fixes within 5 cm of the surveyed 14.321 m baseline; the 1 s pair reaches 95% fixed with 99.9% cm-accurate. 1 Hz behaviour is unchanged (gate stays at the 10 s floor).
+
 ## 1.45.0
 
 ### New — offline RTK post-processing (`postProcessRtk`)
