@@ -1,7 +1,8 @@
 /**
  * Trimble RT17/RT27 navigation-message decoding: RETSVDATA (0x55)
- * GPS ephemeris (subtype 1), GLONASS ephemeris (subtype 9), BeiDou
- * ephemeris (subtype 21) and ION / UTC data (subtype 3).
+ * GPS ephemeris (subtype 1), GLONASS ephemeris (subtype 9), Galileo
+ * ephemeris (subtype 11), BeiDou ephemeris (subtype 21) and ION / UTC
+ * data (subtype 3).
  *
  * The GPS path is ported field-for-field from RTKLIB's `src/rcv/rt17.c`
  * (`decode_gps_ephemeris` / `decode_ion_utc_data`, tomojitakasu/RTKLIB,
@@ -21,8 +22,8 @@
  * RETSVDATA table (st[]: 1 = GPS Eph, 9 = GLONASS Eph, 11 = Galileo Eph,
  * 21 = BeiDou Eph) — but RTKLIB only *decodes* subtypes 1 and 3, so the
  * GLONASS/BeiDou field layouts here were reverse-engineered and validated
- * against physics + the 2026-07-27 BRDC. Still not decoded: Galileo
- * (subtype 11) and the QZSS/almanac subtypes (13/23/27 on this stream).
+ * against physics + the 2026-07-27 BRDC. Still not decoded: the
+ * QZSS / almanac subtypes (13/23/27 on this stream).
  */
 
 import type {
@@ -53,6 +54,7 @@ const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 const SUB_GPS_EPHEMERIS = 1;
 const SUB_ION_UTC = 3;
 const SUB_GLO_EPHEMERIS = 9;
+const SUB_GAL_EPHEMERIS = 11;
 const SUB_BDS_EPHEMERIS = 21;
 
 /**
@@ -220,6 +222,61 @@ function decodeBdsEphemeris(
 }
 
 /**
+ * Decode a RETSVDATA Galileo ephemeris (subtype 11). Keplerian like
+ * GPS/BeiDou but a distinct, more compact struct (184 bytes): svid u1
+ * (+5), GPS/GST week u2 (+7), toe u4 (+9), IODnav u2 (+13), then the
+ * orbit block crs f8 (+19) and the consecutive f8 series deltaN, m0, cuc,
+ * e, cus, √a, cic, Ω₀, cis, i₀, crc, ω, Ω̇, i̇ (+27…+138), the clock af0/
+ * af1/af2 f8 (+146/+154/+162), and the two group delays BGD E5b/E1 f8
+ * (+170) and BGD E5a/E1 f8 (+179, each followed by a 1-byte signal tag).
+ * Semicircle angular/harmonic fields ×π, as for GPS. Every field was
+ * cross-checked against the 2026-07-27 BRDC (E04: √a 5440.63, af1
+ * 3.4078e-11, BGD E5a −3.958e-9, …). GST is GPS-aligned, so `tocDate` is
+ * on the GPS scale and `week` is the continuous GPS week, matching
+ * `parseSbfNav`'s GALNav output.
+ */
+function decodeGalEphemeris(
+  view: DataView,
+  base: number
+): KeplerEphemeris | null {
+  const svid = view.getUint8(base + 5);
+  if (svid < 1 || svid > 36) return null;
+  const g = (o: number) => view.getFloat64(base + o, false);
+  const week = view.getUint16(base + 7, false);
+  const toe = view.getUint32(base + 9, false);
+  const tocMs = gpsMs(week, toe); // GST ≈ GPST, toc = toe
+  return {
+    system: 'E',
+    prn: `E${String(svid).padStart(2, '0')}`,
+    toc: sowOf(tocMs),
+    tocDate: new Date(tocMs),
+    toe,
+    week,
+    iode: view.getUint16(base + 13, false), // IODnav
+    af0: g(146),
+    af1: g(154),
+    af2: g(162),
+    crs: g(19),
+    deltaN: g(27) * GPS_PI,
+    m0: g(35) * GPS_PI,
+    cuc: g(43) * GPS_PI,
+    e: g(51),
+    cus: g(59) * GPS_PI,
+    sqrtA: g(67),
+    cic: g(75) * GPS_PI,
+    omega0: g(83) * GPS_PI,
+    cis: g(91) * GPS_PI,
+    i0: g(99) * GPS_PI,
+    crc: g(107),
+    omega: g(115) * GPS_PI,
+    omegaDot: g(123) * GPS_PI,
+    idot: g(131) * GPS_PI,
+    svHealth: 0, // Galileo SISA/health word not located; observed sats healthy
+    tgd: g(179), // BGD E5a/E1 (the RINEX Galileo tgd slot)
+  };
+}
+
+/**
  * Decode a RETSVDATA GLONASS ephemeris (subtype 9). Unlike GPS/BeiDou
  * this is a PZ-90 state vector, not a Keplerian struct: after the STX,
  * slot u1 (+5), GPS week u2 (+6) and GPS SOW u4 (+8), then FCN i1 (+29),
@@ -295,6 +352,12 @@ export function parseTrimbleNav(data: Uint8Array): TrimbleNavResult {
           : decodeBdsEphemeris(view, f.start);
       if (!eph) continue;
       if (lastIode.get(eph.prn) === eph.iode) continue; // unchanged
+      lastIode.set(eph.prn, eph.iode);
+      ephemerides.push(eph);
+    } else if (sub === SUB_GAL_EPHEMERIS && f.len >= 183) {
+      const eph = decodeGalEphemeris(view, f.start);
+      if (!eph) continue;
+      if (lastIode.get(eph.prn) === eph.iode) continue; // unchanged IODnav
       lastIode.set(eph.prn, eph.iode);
       ephemerides.push(eph);
     } else if (sub === SUB_ION_UTC && f.len >= 102) {

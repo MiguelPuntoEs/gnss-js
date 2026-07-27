@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.42.0
+
+### New — Trimble RETSVDATA Galileo ephemeris (subtype 11)
+
+- `parseTrimbleNav` now decodes Galileo ephemerides (RETSVDATA subtype 11) — Keplerian, but a distinct, more compact 184-byte struct than GPS/BeiDou (√a at +67, not +104). Reverse-engineered and **cross-checked field-by-field against the 2026-07-27 BRDC** (E04: √a = 5440.63, e = 2.773e-4, i₀ = 0.9695 rad, af1 = 3.4078e-11, BGD E5a/E1 = −3.958e-9 — all matching). The orbit propagates through `keplerPosition` to Galileo MEO (|r| ≈ 29,600 km). GST is GPS-aligned, so `tocDate`/`week` are on the GPS scale like `parseSbfNav`'s GALNav; `tgd` carries the BGD E5a/E1 group delay.
+- With this, `parseTrimbleNav` covers **all four core constellations — GPS, GLONASS, Galileo, BeiDou**. On the reference DLF100NLD1 capture: 12 GPS + 9 GLONASS + 7 Galileo + 14 BeiDou ephemerides. Still not decoded: the QZSS/almanac RETSVDATA subtypes (13/23/27).
+
 ## 1.41.0
 
 ### New — Trimble RETSVDATA GLONASS ephemeris (subtype 9)

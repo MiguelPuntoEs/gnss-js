@@ -168,6 +168,23 @@ describe.skipIf(!existsSync(GPSNAV_FILE))(
       }
     });
 
+    it('decodes Galileo ephemerides (RETSVDATA subtype 11)', () => {
+      const gal = parseTrimbleNav(raw).ephemerides.filter(
+        (e) => e.prn[0] === 'E'
+      );
+      expect(gal.length).toBeGreaterThanOrEqual(5);
+      for (const e of gal) {
+        if (!('sqrtA' in e)) continue;
+        expect(e.sqrtA).toBeGreaterThan(5440); // Galileo MEO √a ≈ 5440.6 m^½
+        expect(e.sqrtA).toBeLessThan(5441);
+        expect(e.e).toBeLessThan(0.01);
+        expect(e.i0).toBeGreaterThan(0.9); // ≈ 56°
+        expect(e.i0).toBeLessThan(1.05);
+        expect(e.week).toBeGreaterThan(2000); // GST is GPS-aligned
+        expect(Math.abs(e.tgd)).toBeLessThan(1e-7); // BGD E5a/E1
+      }
+    });
+
     it('decodes BeiDou ephemerides (RETSVDATA subtype 21) on the BDT scale', () => {
       const bds = parseTrimbleNav(raw).ephemerides.filter(
         (e) => e.prn[0] === 'C'
