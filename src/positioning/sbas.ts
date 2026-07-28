@@ -63,6 +63,53 @@ const DEGF = [
 ];
 const degfcorr = (ai: number) => (ai > 0 && ai <= 15 ? DEGF[ai]! : 0.0058);
 
+/** δUDRE multiplier by indicator (DO-229D Table A-21). */
+const DELTA_UDRE = [
+  1, 1.1, 1.25, 1.5, 2, 3, 4, 5, 6, 8, 10, 20, 30, 40, 50, 100,
+];
+
+/**
+ * Is a lat/lon (deg) inside an MT27 region? Corners (DO-229D §A.4.4.13.1):
+ * triangle = C1, C2, C3(=C1.lat, C2.lon); square = C1, C3, C2, C4(=C2.lat,
+ * C1.lon). Ray-casting in the lat/lon plane; antimeridian-wrapping regions
+ * (Δlon > 180°) aren't handled — EGNOS/WAAS regions don't wrap.
+ */
+function pointInRegion(
+  lat: number,
+  lon: number,
+  rg: {
+    square: boolean;
+    lat1: number;
+    lon1: number;
+    lat2: number;
+    lon2: number;
+  }
+): boolean {
+  const poly: [number, number][] = rg.square
+    ? [
+        [rg.lat1, rg.lon1],
+        [rg.lat1, rg.lon2],
+        [rg.lat2, rg.lon2],
+        [rg.lat2, rg.lon1],
+      ]
+    : [
+        [rg.lat1, rg.lon1],
+        [rg.lat2, rg.lon2],
+        [rg.lat1, rg.lon2],
+      ];
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i]!;
+    const [yj, xj] = poly[j]!;
+    if (
+      yi > lat !== yj > lat &&
+      lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi
+    )
+      inside = !inside;
+  }
+  return inside;
+}
+
 /**
  * Long-term correction degradation ε_ltc (m) — DO-229D §A.4.5.1.3, eqs A-54
  * (velocity code 1) and A-55 (velocity code 0). `ageSec` = t − t₀ (s).
@@ -171,6 +218,27 @@ interface SatEntry {
   fcorr?: FastCorr;
   lcorr?: LongCorr;
 }
+
+/** One MT27 service region (triangle or square) in lat/lon degrees. */
+interface Mt27Region {
+  square: boolean; // false = triangle (3 corners), true = square (4)
+  lat1: number;
+  lon1: number;
+  lat2: number;
+  lon2: number;
+}
+/** One MT27 message of the current IODS. */
+interface Mt27Msg {
+  priority: number;
+  udreInside: number; // δUDRE indicator (0..15) for users inside a region
+  regions: Mt27Region[];
+}
+/** MT27 service-message set (DO-229D §A.4.4.13) — δUDRE by user region. */
+interface Mt27State {
+  iods: number;
+  udreOutside: number; // δUDRE indicator for users outside every region
+  msgs: Map<number, Mt27Msg>; // keyed by service-message number
+}
 interface Igp {
   lat: number;
   lon: number;
@@ -257,6 +325,7 @@ export class SbasProcessor {
   private iodp = -1;
   private tlat = 0;
   private degr: Degradation | null = null;
+  private mt27: Mt27State | null = null;
   private ion: IonBand[] = [];
   /** GEO PRN(s) whose messages have been ingested. */
   readonly geoPrns = new Set<string>();
@@ -286,6 +355,8 @@ export class SbasProcessor {
         return this.decodeDegradation(msg) ? type : -1;
       case 10:
         return this.decodeMt10(msg) ? type : -1;
+      case 27:
+        return this.decodeMt27(msg) ? type : -1;
       case 18:
         return this.decodeIgpMask(msg) ? type : -1;
       case 24:
@@ -389,6 +460,57 @@ export class SbasProcessor {
       rssIono: u(137, 1) === 1,
     };
     return true;
+  }
+
+  /** MT27 SBAS service message (DO-229D §A.4.4.13, Table A-20): regions with a
+   *  δUDRE that inflates σ_UDRE for users inside/outside them. */
+  private decodeMt27(msg: Uint8Array): boolean {
+    const iods = getBitU(msg, 14, 3);
+    const svcNum = getBitU(msg, 20, 3) + 1; // coded with a +1 offset
+    const nRegions = getBitU(msg, 23, 3);
+    const priority = getBitU(msg, 26, 2);
+    const udreInside = getBitU(msg, 28, 4);
+    const udreOutside = getBitU(msg, 32, 4);
+    // A changed IODS invalidates the whole set.
+    if (!this.mt27 || this.mt27.iods !== iods)
+      this.mt27 = { iods, udreOutside, msgs: new Map() };
+    this.mt27.udreOutside = udreOutside; // common across the set
+    const regions: Mt27Region[] = [];
+    for (let r = 0; r < nRegions && r < 5; r++) {
+      const p = 36 + r * 35; // Coord1 lat(8)+lon(9)+Coord2 lat(8)+lon(9)+shape(1)
+      regions.push({
+        lat1: getBitS(msg, p, 8),
+        lon1: getBitS(msg, p + 8, 9),
+        lat2: getBitS(msg, p + 17, 8),
+        lon2: getBitS(msg, p + 25, 9),
+        square: getBitU(msg, p + 34, 1) === 1,
+      });
+    }
+    this.mt27.msgs.set(svcNum, { priority, udreInside, regions });
+    return true;
+  }
+
+  /** δUDRE multiplier (DO-229D Table A-21) for a user location from the MT27
+   *  set: the highest-priority containing region wins (ties → lower δUDRE),
+   *  else the outside value. 1 when no MT27 has been received. */
+  deltaUdre(latDeg: number, lonDeg: number): number {
+    const s = this.mt27;
+    if (!s) return 1;
+    let best: number | null = null;
+    let bestPri = -1;
+    for (const m of s.msgs.values()) {
+      for (const rg of m.regions) {
+        if (!pointInRegion(latDeg, lonDeg, rg)) continue;
+        const val = DELTA_UDRE[m.udreInside] ?? 1;
+        if (m.priority > bestPri) {
+          bestPri = m.priority;
+          best = val;
+        } else if (m.priority === bestPri && best !== null) {
+          best = Math.min(best, val);
+        }
+      }
+    }
+    return best ?? DELTA_UDRE[s.udreOutside] ?? 1;
   }
 
   private decodeMixed(msg: Uint8Array, week: number, tow: number): boolean {
@@ -606,7 +728,9 @@ export class SbasProcessor {
   satCorrection(
     prn: string,
     week: number,
-    tow: number
+    tow: number,
+    userLatRad?: number,
+    userLonRad?: number
   ): SbasSatCorrection | null {
     const idx = this.satIdx.get(prn);
     if (idx === undefined) return null;
@@ -638,7 +762,16 @@ export class SbasProcessor {
     // broadcast UDRE variance; the degradation terms grow it with correction
     // age. εrrc and εer are 0 here (we apply no range-rate extrapolation, and
     // this is en-route-equivalent SPP, not an LPV/LNAV-VNAV approach).
-    const sigUdre = Math.sqrt(varfcorr(s.fcorr.udre)); // δUDRE = 1 (no MT27/28)
+    // δUDRE (§A.4.4.13, Table A-21) inflates σ_UDRE by the MT27 service region
+    // the user is in; 1 without MT27 or a user location. (MT28 is separate.)
+    const dudre =
+      userLatRad != null && userLonRad != null
+        ? this.deltaUdre(
+            (userLatRad * 180) / Math.PI,
+            (userLonRad * 180) / Math.PI
+          )
+        : 1;
+    const sigUdre = Math.sqrt(varfcorr(s.fcorr.udre)) * dudre;
     const efc = (degfcorr(s.fcorr.ai) * tf * tf) / 2; // §A.4.5.1.1 (A-51)
     const eltc =
       this.degr && s.lcorr && s.lcorr.t0s !== 0

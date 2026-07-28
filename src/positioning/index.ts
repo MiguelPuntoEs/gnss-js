@@ -82,7 +82,11 @@ export interface SbasCorrectionSource {
   satCorrection(
     prn: string,
     week: number,
-    tow: number
+    tow: number,
+    /** User geodetic lat/lon (rad) for the MT27 service-region δUDRE, when
+     *  known (the final protection-level pass). Omitted during iteration. */
+    userLatRad?: number,
+    userLonRad?: number
   ): {
     dPos: [number, number, number];
     dClkS: number;
@@ -606,7 +610,7 @@ export function solveSpp(
       used.push(prn);
       azels.push(azel);
       if (sbas) {
-        const sc = sbas.satCorrection(prn, gpsWeek, gpsTow);
+        const sc = sbas.satCorrection(prn, gpsWeek, gpsTow, rxLat, rxLon);
         const si = sbas.ionoDelay(
           gpsWeek,
           gpsTow,
