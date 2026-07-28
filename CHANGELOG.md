@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.64.0
+
+### New — SSR correction decoding (RTCM-SSR 1057–1068 + IGS-SSR 4076)
+
+- `decodeSsr(frame)` decodes the RTCM3 State Space Representation messages (RTCM 10403.2 §3.5.12): GPS 1057–1062 and GLONASS 1063–1068 — orbit (radial/along/cross + rates), clock (C0/C1/C2 polynomial), per-signal code bias, combined orbit+clock, URA (class/value → 1σ mm) and high-rate clock. Returns SI units with the SSR header (epoch, update interval, IOD SSR, provider/solution ID, multiple-message flag, satellite reference datum). `isSsrMessage(type)` classifies 1057–1068.
+- `decodeIgsSsr(frame)` decodes the IGS-SSR message 4076 (IGS SSR Format v1.00): the multi-GNSS successor carrying the same orbit/clock/code-bias/URA plus **phase biases** (integer/wide-lane/discontinuity flags, for PPP-AR) across GPS/GLONASS/Galileo/QZSS/BDS/SBAS, selected by the IGS-message-number subtype, and an ionosphere VTEC (spherical-harmonic) summary. These are what the IGS real-time streams (BKG `products.igs-ip.net`) broadcast. Decode-and-inspect; applying corrections to a solve is a separate step.
+- Both unit-tested against synthetic frames (combined orbit+clock, nested code/phase biases, per-GNSS satellite-ID mapping, URA).
+
 ## 1.63.0
 
 ### New — legacy (pre-MSM) RTCM3 observation decoding
