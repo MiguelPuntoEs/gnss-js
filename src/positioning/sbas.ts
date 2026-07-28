@@ -60,6 +60,31 @@ const DEGF = [
 ];
 const degfcorr = (ai: number) => (ai > 0 && ai <= 15 ? DEGF[ai]! : 0.0058);
 
+/**
+ * Long-term correction degradation ε_ltc (m) — DO-229D §A.4.5.1.3, eqs A-54
+ * (velocity code 1) and A-55 (velocity code 0). `ageSec` = t − t₀ (s).
+ */
+export function sbasLongTermDeg(
+  d: Degradation,
+  vel: boolean,
+  ageSec: number
+): number {
+  if (vel) {
+    if (ageSec > 0 && ageSec < d.iltcV1) return 0;
+    return d.cltcLsb + d.cltcV1 * Math.max(0, -ageSec, ageSec - d.iltcV1);
+  }
+  return d.cltcV0 * Math.floor(Math.abs(ageSec) / d.iltcV0);
+}
+
+/**
+ * Ionospheric-correction degradation ε_iono (m) — DO-229D §A.4.5.2, eq A-59.
+ * `ageSec` = t − t_iono (s) of the grid point.
+ */
+export function sbasIonoDeg(d: Degradation, ageSec: number): number {
+  const dt = Math.abs(ageSec);
+  return d.cionoStep * Math.floor(dt / d.iiono) + d.cionoRamp * dt;
+}
+
 // ── SBAS ionospheric grid-point (IGP) band definitions (DO-229 A.4.4.10) ──
 // prettier-ignore
 const x1 = [-75,-65,-55,-50,-45,-40,-35,-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30,35,40,45,50,55,65,75,85];
@@ -116,6 +141,27 @@ interface LongCorr {
   daf0: number; // clock correction (s)
   daf1: number; // clock drift correction (s/s)
   t0s: number; // applicability epoch (seconds of GPS time)
+  vel: boolean; // velocity code (true = Type 25 v=1, per-sat velocity)
+}
+
+/** MT10 degradation parameters (DO-229D Table A-9), needed for the residual
+ *  variances σ²_flt / σ²_ionogrid (§A.4.5, §J.2.2). */
+export interface Degradation {
+  brrc: number;
+  cltcLsb: number;
+  cltcV1: number;
+  iltcV1: number;
+  cltcV0: number;
+  iltcV0: number;
+  cgeoLsb: number;
+  cgeoV: number;
+  igeo: number;
+  cer: number;
+  cionoStep: number;
+  iiono: number;
+  cionoRamp: number;
+  rssUdre: boolean;
+  rssIono: boolean;
 }
 interface SatEntry {
   prn: string | null; // PRN string (e.g. 'G05'), or null for a masked slot we don't map
@@ -207,6 +253,7 @@ export class SbasProcessor {
   private satIdx = new Map<string, number>();
   private iodp = -1;
   private tlat = 0;
+  private degr: Degradation | null = null;
   private ion: IonBand[] = [];
   /** GEO PRN(s) whose messages have been ingested. */
   readonly geoPrns = new Set<string>();
@@ -234,6 +281,8 @@ export class SbasProcessor {
         return this.decodeIntegrity(msg) ? type : -1;
       case 7:
         return this.decodeDegradation(msg) ? type : -1;
+      case 10:
+        return this.decodeMt10(msg) ? type : -1;
       case 18:
         return this.decodeIgpMask(msg) ? type : -1;
       case 24:
@@ -314,6 +363,31 @@ export class SbasProcessor {
     return true;
   }
 
+  /** MT10 degradation factors (DO-229D Table A-9). Fields follow the 8-bit
+   *  preamble + 6-bit type (start bit 14), MSB-first, with the listed LSBs.
+   *  Iiono / Iltc_v0 of 0 must be read as 1 (Table A-9, Note 3). */
+  private decodeMt10(msg: Uint8Array): boolean {
+    const u = (p: number, n: number) => getBitU(msg, p, n);
+    this.degr = {
+      brrc: u(14, 10) * 0.002,
+      cltcLsb: u(24, 10) * 0.002,
+      cltcV1: u(34, 10) * 0.00005,
+      iltcV1: u(44, 9),
+      cltcV0: u(53, 10) * 0.002,
+      iltcV0: u(63, 9) || 1,
+      cgeoLsb: u(72, 10) * 0.0005,
+      cgeoV: u(82, 10) * 0.00005,
+      igeo: u(92, 9),
+      cer: u(101, 6) * 0.5,
+      cionoStep: u(107, 10) * 0.001,
+      iiono: u(117, 9) || 1,
+      cionoRamp: u(126, 10) * 0.000005,
+      rssUdre: u(136, 1) === 1,
+      rssIono: u(137, 1) === 1,
+    };
+    return true;
+  }
+
   private decodeMixed(msg: Uint8Array, week: number, tow: number): boolean {
     if (this.iodp !== getBitU(msg, 110, 2)) return false;
     const blk = getBitU(msg, 112, 2);
@@ -373,6 +447,7 @@ export class SbasProcessor {
       daf0: getBitS(msg, p + 41, 10) * P2_31,
       daf1: 0,
       t0s: gpsSeconds(week, tow),
+      vel: false,
     };
     return true;
   }
@@ -403,6 +478,7 @@ export class SbasProcessor {
       daf0: getBitS(msg, p + 47, 11) * P2_31,
       daf1: getBitS(msg, p + 82, 8) * P2_39,
       t0s: gpsSeconds(week, tow + t),
+      vel: true,
     };
     return true;
   }
@@ -554,9 +630,27 @@ export class SbasProcessor {
     const tf = now - s.fcorr.t0s + this.tlat;
     if (Math.abs(tf) > MAXSBSAGEF || s.fcorr.udre >= 15) return null;
     const prc = s.fcorr.prc;
-    const varM2 = varfcorr(s.fcorr.udre) + (degfcorr(s.fcorr.ai) * tf * tf) / 2;
+
+    // Fast/long-term residual variance σ²_flt (DO-229D §J.2.2). σ_UDRE is the
+    // broadcast UDRE variance; the degradation terms grow it with correction
+    // age. εrrc and εer are 0 here (we apply no range-rate extrapolation, and
+    // this is en-route-equivalent SPP, not an LPV/LNAV-VNAV approach).
+    const sigUdre = Math.sqrt(varfcorr(s.fcorr.udre)); // δUDRE = 1 (no MT27/28)
+    const efc = (degfcorr(s.fcorr.ai) * tf * tf) / 2; // §A.4.5.1.1 (A-51)
+    const eltc =
+      this.degr && s.lcorr && s.lcorr.t0s !== 0
+        ? sbasLongTermDeg(this.degr, s.lcorr.vel, now - s.lcorr.t0s)
+        : 0; // §A.4.5.1.3
+    const varM2 = this.degr?.rssUdre
+      ? sigUdre * sigUdre + efc * efc + eltc * eltc
+      : (sigUdre + efc + eltc) ** 2;
 
     return { dPos: drs, dClkS: dclk + prc / C_LIGHT, prcM: prc, varM2, iode };
+  }
+
+  /** The last-decoded MT10 degradation factors, or null if none seen. */
+  get degradation(): Readonly<Degradation> | null {
+    return this.degr;
   }
 
   /**
@@ -617,14 +711,23 @@ export class SbasProcessor {
 
     const now = gpsSeconds(week, tow);
     let delay = 0;
-    let varM2 = 0;
+    let varVert = 0; // σ²_UIVE = Σ Wn·σ²_ionogrid,n (DO-229D §A.4.4.10.4)
     for (let i = 0; i < 4; i++) {
       const g = pts[i];
       if (!g) continue;
       delay += w[i]! * g.delay;
-      varM2 += w[i]! * varicorr(g.give) * 9e-8 * Math.abs(now - g.t0s);
+      // Per-IGP σ²_ionogrid (DO-229D §A.4.5.2, A-58/A-59): the GIVE variance
+      // grown by the iono degradation εiono with grid-point age (MT10).
+      const sigGive = Math.sqrt(varicorr(g.give));
+      const d = this.degr;
+      const eiono = d ? sbasIonoDeg(d, now - g.t0s) : 0;
+      const sig2 = d?.rssIono
+        ? sigGive * sigGive + eiono * eiono
+        : (sigGive + eiono) ** 2;
+      varVert += w[i]! * sig2;
     }
-    return { delayM: delay * fp, varM2: varM2 * fp * fp };
+    // Slant: σ_UIRE = Fpp·σ_UIVE, so the variance scales by fp².
+    return { delayM: delay * fp, varM2: varVert * fp * fp };
   }
 
   /** Find the four IGPs bracketing a pierce point (RTKLIB `searchigp`). */
