@@ -685,7 +685,7 @@ export type {
 export { applyOrbitClock, hasToOrbitClock } from './ssr-apply';
 export type { OrbitClockCorrection, AppliedOrbitClock } from './ssr-apply';
 
-export { solvePpp } from './ppp';
+export { solvePpp, Sp3EphemerisSource } from './ppp';
 export type {
   PppSatObs,
   PppEpoch,
@@ -694,6 +694,8 @@ export type {
   PppSolution,
   PppArc,
   PppFixState,
+  PppEphemerisSource,
+  SatSample,
 } from './ppp';
 export { niellMapping } from './ppp-tropo';
 export type { TropoMapping } from './ppp-tropo';

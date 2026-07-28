@@ -255,6 +255,56 @@ function ifCoeffs(f1: number, f2: number): { g: number; lambdaIf: number } {
 }
 
 /* ================================================================== */
+/*  Precise satellite source (SP3/CLK today, SSR/HAS via an adapter)   */
+/* ================================================================== */
+
+/** A raw satellite sample at an emission time: ECEF position + velocity
+ *  (m, m/s) and the clock offset (s) WITHOUT the periodic relativistic term —
+ *  the PPP light-time loop adds relativity + Sagnac. Null when unavailable. */
+export interface SatSample {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  clkS: number;
+}
+
+/** Supplies precise satellite state to the PPP filter. Implemented by the SP3
+ *  path (default) and by an SSR/HAS source (broadcast eph + corrections), so
+ *  the same filter runs on precise products or a real-time correction stream. */
+export interface PppEphemerisSource {
+  satState(prn: string, tEmitMs: number): SatSample | null;
+}
+
+/** Default source: SP3 orbits + clocks, with optional high-rate CLK. Velocity
+ *  is a central finite difference (±0.5 s); the clock prefers the high-rate CLK
+ *  and falls back to the SP3 5-minute clock — matching the original solver. */
+export class Sp3EphemerisSource implements PppEphemerisSource {
+  constructor(
+    private readonly sp3: Sp3File,
+    private readonly clk?: ClkFile
+  ) {}
+  satState(prn: string, tEmitMs: number): SatSample | null {
+    const p = sp3Position(this.sp3, prn, tEmitMs);
+    if (!p || p.clk == null) return null;
+    const pPlus = sp3Position(this.sp3, prn, tEmitMs + 500);
+    const pMinus = sp3Position(this.sp3, prn, tEmitMs - 500);
+    let vx = 0;
+    let vy = 0;
+    let vz = 0;
+    if (pPlus && pMinus) {
+      vx = pPlus.x - pMinus.x;
+      vy = pPlus.y - pMinus.y;
+      vz = pPlus.z - pMinus.z;
+    }
+    const clkS = (this.clk ? clkBias(this.clk, prn, tEmitMs) : null) ?? p.clk;
+    return { x: p.x, y: p.y, z: p.z, vx, vy, vz, clkS };
+  }
+}
+
+/* ================================================================== */
 /*  Satellite state (position, velocity, clock) at emission            */
 /* ================================================================== */
 
@@ -284,11 +334,10 @@ function sagnacRotate(
  * missing. `travelS` in/out via the returned geometry range.
  */
 function satStateAtEmission(
-  sp3: Sp3File,
+  source: PppEphemerisSource,
   prn: string,
   recvTimeMs: number,
-  rcv: [number, number, number],
-  clk?: ClkFile
+  rcv: [number, number, number]
 ): { state: SatState; travelS: number } | null {
   let travelS = 0.075; // ~ 20000 km / c initial guess
   let sx = 0;
@@ -298,20 +347,12 @@ function satStateAtEmission(
   let velDotPos = 0;
   for (let iter = 0; iter < 3; iter++) {
     const tEmit = recvTimeMs - travelS * 1000;
-    const p = sp3Position(sp3, prn, tEmit);
-    if (!p || p.clk == null) return null;
-    // Velocity by central finite difference (0.5 s) for relativity.
-    const pPlus = sp3Position(sp3, prn, tEmit + 500);
-    const pMinus = sp3Position(sp3, prn, tEmit - 500);
-    if (pPlus && pMinus) {
-      const vx = (pPlus.x - pMinus.x) / 1.0;
-      const vy = (pPlus.y - pMinus.y) / 1.0;
-      const vz = (pPlus.z - pMinus.z) / 1.0;
-      velDotPos = p.x * vx + p.y * vy + p.z * vz;
-    }
-    // Prefer the high-rate CLK offset; fall back to the SP3 5-min clock.
-    clkS = (clk && clkBias(clk, prn, tEmit)) ?? p.clk;
-    const [rx, ry, rz] = sagnacRotate(p.x, p.y, p.z, travelS);
+    const s = source.satState(prn, tEmit);
+    if (!s) return null;
+    // r·v (un-rotated) for the periodic relativistic term.
+    velDotPos = s.x * s.vx + s.y * s.vy + s.z * s.vz;
+    clkS = s.clkS;
+    const [rx, ry, rz] = sagnacRotate(s.x, s.y, s.z, travelS);
     sx = rx;
     sy = ry;
     sz = rz;
@@ -344,9 +385,16 @@ const POS_VAR = 60 * 60; // kinematic white-noise position variance (σ = 60 m)
 
 export function solvePpp(
   epochs: PppEpoch[],
-  sp3: Sp3File,
+  sp3OrSource: Sp3File | PppEphemerisSource,
   opts: PppOptions
 ): PppSolution {
+  // Precise satellite state comes from a source: an SP3/CLK file (the default,
+  // wrapped here so existing callers pass an Sp3File unchanged) or any
+  // PppEphemerisSource — e.g. an SSR/HAS-fed one for real-time PPP.
+  const source: PppEphemerisSource =
+    'satState' in sp3OrSource
+      ? sp3OrSource
+      : new Sp3EphemerisSource(sp3OrSource, opts.clk);
   const elevMask = ((opts.elevationMaskDeg ?? 10) * Math.PI) / 180;
   const codeSigma = opts.codeSigma ?? 3.0;
   const phaseSigma = opts.phaseSigma ?? 0.01;
@@ -533,7 +581,7 @@ export function solvePpp(
     for (const o of epoch.obs) {
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
       const slip = detectSlip(o, ei);
-      const sat = satStateAtEmission(sp3, o.prn, epoch.timeMs, rcv, opts.clk);
+      const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv);
       if (!sat) continue;
       const [elRad, azRad] = getAer(
         sat.state.x,
