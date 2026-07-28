@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0
+
+### New — SSR/HAS → PPP: apply corrections + a streaming PPP engine
+
+The bridge from the decode-only SSR/HAS decoders to a solve, plus a live PPP filter.
+
+- **`applyOrbitClock(eph, corr, timeMs)`** + **`hasToOrbitClock(...)`** (`positioning/ssr-apply.ts`): combine a broadcast ephemeris with a normalized `OrbitClockCorrection` (RAC orbit deltas + rate, clock polynomial) → corrected ECEF position + clock offset. Builds the satellite radial/along/cross frame from position+velocity, matches IOD, enforces validity. The HAS adapter uses the additive convention (RTCM/IGS SSR adapters negate the orbit sign). Validated on a 45-min Galileo-HAS capture (correct sign, sub-metre orbit corrections, ~2× faster PPP convergence).
+- **`PppEphemerisSource`** provider seam for `solvePpp`: precise satellite state now comes from a `satState(prn, tEmit)` provider, with **`Sp3EphemerisSource`** wrapping the existing SP3/CLK path as the default. `solvePpp` still accepts an `Sp3File` positionally — existing behaviour is unchanged. An SSR/HAS-fed source plugs in here for real-time PPP.
+- **`PppEngine`** — a streaming PPP filter (`constructor(opts, source)`, `process(epoch)`, `reset()`, `solution()`) mirroring `RtkFloatEngine`; `solvePpp` is now a thin wrapper over it (behaviour identical).
+- **Satellite code (OSB) biases**: `PppSatObs` gains optional `code1`/`code2` (RINEX-3 codes) and `PppEphemerisSource` an optional `codeBias(prn, signal, t)`, so the iono-free code build can subtract per-signal biases to stay consistent with an SSR/HAS clock reference (no-op for SP3/CLK).
+
 ## 2.0.0
 
 ### Breaking — observation types renamed (MSM → Obs)
