@@ -22,6 +22,7 @@ export interface StationMeta {
   receiverFirmware: string | null; // from 1033
   receiverSerial: string | null; // from 1033
   description: string | null; // from 1029 (Unicode text)
+  physicalRefStationId: number | null; // from 1032 (physical station behind a VRS)
 }
 
 export function createStationMeta(): StationMeta {
@@ -37,6 +38,7 @@ export function createStationMeta(): StationMeta {
     receiverFirmware: null,
     receiverSerial: null,
     description: null,
+    physicalRefStationId: null,
   };
 }
 
@@ -69,6 +71,21 @@ function decodeStationARP(
   if (msgType === 1006) {
     meta.antennaHeight = r.readU(16) * 0.0001;
   }
+}
+
+/** Decode the physical reference station position (message 1032) — the real
+ *  station behind a non-physical/computed (VRS) station (RTCM 10403.2 §3.5.10). */
+function decodeStation1032(payload: Uint8Array, meta: StationMeta): void {
+  if (payload.length < 19) return;
+  const r = new BitReader(payload);
+  r.skip(12); // message type
+  meta.stationId = r.readU(12); // DF003 non-physical reference station ID
+  meta.physicalRefStationId = r.readU(12); // DF226
+  meta.itrf = r.readU(6); // DF021
+  const x = r.readS(38) * 0.0001; // DF025
+  const y = r.readS(38) * 0.0001; // DF026
+  const z = r.readS(38) * 0.0001; // DF027
+  if (x !== 0 || y !== 0 || z !== 0) meta.position = [x, y, z];
 }
 
 /** Decode antenna descriptor from message 1007 or 1008. */
@@ -175,6 +192,9 @@ export function updateStationMeta(
       case 1005:
       case 1006:
         decodeStationARP(frame.payload, frame.messageType, meta);
+        return true;
+      case 1032:
+        decodeStation1032(frame.payload, meta);
         return true;
       case 1007:
       case 1008:

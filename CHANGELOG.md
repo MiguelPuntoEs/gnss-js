@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.65.0
+
+### New — RTCM3 System Parameters (1013) + Physical Reference Station (1032)
+
+- `decodeSystemParams(frame)` decodes message 1013 (RTCM 10403.2 §3.5.5): the station's reference epoch (Modified Julian Day + seconds of day), the current **GPS−UTC leap seconds**, and the **message schedule** — the list of message types the station transmits, each with a sync flag and broadcast interval.
+- Message 1032 (Physical Reference Station Position) now decodes via `updateStationMeta`: the physical station behind a non-physical/computed (VRS) station — its ID (`physicalRefStationId`, new on `StationMeta`), ITRF year and ECEF position.
+- Unit-tested (leap seconds + schedule; 1032 ECEF/IDs).
+
 ## 1.64.0
 
 ### New — SSR correction decoding (RTCM-SSR 1057–1068 + IGS-SSR 4076)
