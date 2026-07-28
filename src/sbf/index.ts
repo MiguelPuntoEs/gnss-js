@@ -932,9 +932,25 @@ export {
 
 export {
   parseSbfGeoNav,
+  parseSbfGeoL5,
   feedGeoBlock,
+  feedGeoL5Block,
   type SbfGeoNavResult,
+  type SbfGeoL5Result,
+  type GeoL5Result,
+  type DfmcCensus,
+  type SbasMessageCb,
+  type DfmcMessageCb,
 } from './rawnav-sbas';
+
+export {
+  SBAS_L5_MT_NAMES,
+  SBAS_L5_PREAMBLE_UW,
+  sbasL5MessageType,
+  sbasL5MessageName,
+  isSbasL5Correction,
+  isSbasL1Preamble,
+} from '../navbits/sbas-l5';
 
 export {
   parseSbfHas,

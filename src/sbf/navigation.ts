@@ -21,7 +21,7 @@
  */
 
 import type { Ephemeris } from '../rinex/nav';
-import { scanSbfFrames } from './frame';
+import { scanSbfFrames, svidToPrn } from './frame';
 import {
   decodeGpsQzsNav,
   decodeGalNav,
@@ -36,7 +36,8 @@ import {
 import { feedGalBlock, newGalAssemblers } from './rawnav-gal';
 import { feedBdsBlock, feedGloBlock } from './rawnav-bds';
 import { feedGpsLnavBlock } from './rawnav-gps';
-import { feedGeoBlock } from './rawnav-sbas';
+import { feedGeoBlock, feedGeoL5Block } from './rawnav-sbas';
+import type { DfmcCensus, DfmcMessageCb } from './rawnav-sbas';
 import { BdsAssembler } from '../navbits/bds';
 import { GloStringAssembler } from '../navbits/glo';
 import { GpsLnavAssembler } from '../navbits';
@@ -59,6 +60,8 @@ export interface SbfNavCounts {
   bdsRaw: number;
   /** Raw SBAS L1 GEO message blocks (GEORawL1). */
   sbasRaw: number;
+  /** Raw SBAS L5 GEO message blocks (GEORawL5) — DO-229-on-L5 + native DFMC. */
+  sbasL5Raw: number;
   /** Frames dropped by a CRC/parity check across all raw decoders. */
   badFrames: number;
 }
@@ -79,6 +82,9 @@ export interface SbfNavigation {
   ionoCorrections: Record<string, number[]>;
   /** GPS-UTC ΔtLS from the last GPSUtc block, if any. */
   leapSeconds: number | null;
+  /** SBAS L5 (DFMC) native-frame census — message-type counts + GEO PRNs. The
+   *  correction content is not field-decoded (see navbits/sbas-l5). */
+  dfmc: DfmcCensus;
   counts: SbfNavCounts;
 }
 
@@ -105,6 +111,9 @@ export function decodeSbfNavigation(
       week: number,
       tow: number
     ) => void;
+    /** Called for every CRC-valid native-DFMC (L5) message, with its Table
+     *  B-98 type — for inspection; the payload is not field-decoded. */
+    onDfmcMessage?: DfmcMessageCb;
   } = {}
 ): SbfNavigation {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -122,8 +131,12 @@ export function decodeSbfNavigation(
     gloRaw: 0,
     bdsRaw: 0,
     sbasRaw: 0,
+    sbasL5Raw: 0,
     badFrames: 0,
   };
+  // SBAS L5 (DFMC) native-frame census.
+  const dfmcByType: Record<number, number> = {};
+  const dfmcPrns = new Set<string>();
 
   // Assemblers are stateful across the whole scan (one instance each).
   const cnavAsm = newCnavAssemblers();
@@ -243,6 +256,27 @@ export function decodeSbfNavigation(
         else if (r.badCrc) counts.badFrames++;
         return;
       }
+      case 4021: {
+        // GEORawL5 — DO-229 content relayed on L5 (fed to the L1 SBAS path)
+        // plus native DFMC frames (CRC-gated + censused, not field-decoded).
+        if (len < 52) return;
+        counts.sbasL5Raw++;
+        const r = feedGeoL5Block(
+          view,
+          b,
+          opts.onSbasMessage,
+          opts.onDfmcMessage
+        );
+        if (r.badCrc) counts.badFrames++;
+        else if (r.kind === 'l1') {
+          if (r.eph) addEph(r.eph);
+        } else if (r.kind === 'l5' && r.dfmcType !== undefined) {
+          dfmcByType[r.dfmcType] = (dfmcByType[r.dfmcType] ?? 0) + 1;
+          const s = svidToPrn(view.getUint8(b + 14));
+          if (s) dfmcPrns.add(s);
+        }
+        return;
+      }
 
       /* ---- iono / UTC ---- */
       case 5893: // GPSIon
@@ -270,5 +304,10 @@ export function decodeSbfNavigation(
     }
   });
 
-  return { ephemerides, cnav, ionoCorrections, leapSeconds, counts };
+  const dfmc: DfmcCensus = {
+    byType: dfmcByType,
+    prns: [...dfmcPrns].sort(),
+    messages: Object.values(dfmcByType).reduce((a, v) => a + v, 0),
+  };
+  return { ephemerides, cnav, ionoCorrections, leapSeconds, dfmc, counts };
 }
