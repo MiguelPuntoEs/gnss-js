@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.66.0
+
+### New — RTCM 2.x decoding (`gnss-js/rtcm2`)
+
+- A full decoder for the legacy RTCM 2.x format (RTCM 10402.3) — a wholly different wire format from RTCM3: 30-bit GPS-style words (24 data + 6 parity bits) carried "6-of-8" (low 6 bits of each byte; every byte 0x40–0x7F), with the D30\* bit inverting the following data exactly like GPS LNAV. `Rtcm2Decoder` strips the encoding, GPS-parity-checks each word (faithful port of RTKLIB `input_rtcm2` + `decode_word`), syncs on the 0x66 preamble, and returns message frames (header + packed body). Body decoders: `rtcm2Station` (Type 3 ARP ECEF, Type 22 extended), `rtcm2Observation` (Type 18/19 RTK carrier phase + pseudorange records), `rtcm2Dgps` (Type 1/9 GPS, Type 31 GLONASS differential corrections), `rtcm2Time` (Type 14), `rtcm2Text` (Type 16). `looksLikeRtcm2` detects the format; `RTCM2_MESSAGE_NAMES` for the census.
+- **Validated against a real RTCM 2.3 stream** (a live Spanish CORS, AVL12): 135 frames all parity-valid, the Type 3 reference position decodes onto the Earth's surface at the station's location, and Types 1/3/18/19/22/31 all decode. Test fixture `test-fixtures/rtcm2_avl12_slice.bin`.
+
 ## 1.65.0
 
 ### New — RTCM3 System Parameters (1013) + Physical Reference Station (1032)

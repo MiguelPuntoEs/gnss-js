@@ -11,6 +11,7 @@ export default defineConfig({
     positioning: './src/positioning/index.ts',
     constants: './src/constants/index.ts',
     rinex: './src/rinex/index.ts',
+    rtcm2: './src/rtcm2/index.ts',
     rtcm3: './src/rtcm3/index.ts',
     ubx: './src/ubx/index.ts',
     sbf: './src/sbf/index.ts',
