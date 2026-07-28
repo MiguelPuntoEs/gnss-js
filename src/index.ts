@@ -1,3 +1,4 @@
+export type { ReceiverPvt } from './receiver-pvt';
 export * from './constants/index';
 export * from './types/time';
 export * from './types/enums';
