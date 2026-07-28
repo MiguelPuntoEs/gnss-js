@@ -377,14 +377,26 @@ export class SbasProcessor {
   }
 
   private decodeMask(msg: Uint8Array): boolean {
-    const sats: SatEntry[] = [];
+    const iodp = getBitU(msg, 224, 2);
+    const prns: (string | null)[] = [];
     for (let i = 1; i <= 210; i++) {
-      if (getBitU(msg, 13 + i, 1)) sats.push({ prn: maskPrn(i) });
+      if (getBitU(msg, 13 + i, 1)) prns.push(maskPrn(i));
     }
-    this.iodp = getBitU(msg, 224, 2);
-    this.sats = sats;
+    // A re-broadcast of the *same* mask must not wipe the fast/long-term
+    // corrections already accumulated against it. SBAS repeats MT1 every few
+    // seconds; rebuilding the sat list each time would reset every correction
+    // to "none" and blank the solution until MT2–5/25 refill (the corrected
+    // count then oscillates to zero). Rebuild only on a genuine mask change.
+    if (
+      this.iodp === iodp &&
+      this.sats.length === prns.length &&
+      this.sats.every((s, k) => s.prn === prns[k])
+    )
+      return true;
+    this.iodp = iodp;
+    this.sats = prns.map((prn) => ({ prn }));
     this.satIdx.clear();
-    sats.forEach((s, k) => {
+    this.sats.forEach((s, k) => {
       if (s.prn) this.satIdx.set(s.prn, k);
     });
     return true;
@@ -636,7 +648,21 @@ export class SbasProcessor {
         break;
       }
     }
-    this.ion[band] = { iodi: getBitU(msg, 22, 2), igp };
+    // Same as MT1: a re-broadcast of the same IGP mask must not wipe the MT26
+    // delays already accumulated for this band. Rebuilding the (empty) igp list
+    // on every MT18 resets give=0 for the whole band, so the grid-covered
+    // count collapses between MT26 refills. Keep the delays when the band mask
+    // is unchanged; rebuild only when the IODI or the IGP set actually changes.
+    const iodi = getBitU(msg, 22, 2);
+    const cur = this.ion[band];
+    if (
+      cur &&
+      cur.iodi === iodi &&
+      cur.igp.length === igp.length &&
+      cur.igp.every((g, k) => g.lat === igp[k]!.lat && g.lon === igp[k]!.lon)
+    )
+      return true;
+    this.ion[band] = { iodi, igp };
     return true;
   }
 
