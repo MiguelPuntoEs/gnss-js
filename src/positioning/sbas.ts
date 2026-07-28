@@ -470,6 +470,56 @@ export class SbasProcessor {
   }
 
   /**
+   * Correction-coverage census at a GPS week/time — a diagnostic funnel over
+   * the current state, explaining how many masked satellites are actually
+   * correctable. Each stage subsumes the requirement of the previous one for a
+   * full range/clock correction: a satellite is `corrected` only when it has
+   * both a fresh fast correction and (for non-SBAS satellites) a fresh
+   * long-term correction (exactly {@link satCorrection}'s gate). `ionoGrid` is
+   * the total number of valid grid points — the additional requirement for the
+   * *iono*-corrected subset a solver forms per pierce point.
+   *
+   * Use it to tell "no corrections applied" (mask empty / products stale) apart
+   * from "corrections applied but the pierce points aren't grid-covered yet".
+   */
+  coverage(
+    week: number,
+    tow: number
+  ): {
+    masked: number;
+    fast: number;
+    long: number;
+    corrected: number;
+    ionoGrid: number;
+  } {
+    const now = gpsSeconds(week, tow);
+    let masked = 0;
+    let fast = 0;
+    let long = 0;
+    let corrected = 0;
+    for (const s of this.sats) {
+      if (!s.prn) continue;
+      masked++;
+      if (
+        s.fcorr &&
+        s.fcorr.t0s !== 0 &&
+        s.fcorr.udre < 15 &&
+        Math.abs(now - s.fcorr.t0s + this.tlat) <= MAXSBSAGEF
+      )
+        fast++;
+      if (
+        s.prn[0] === 'S' ||
+        (s.lcorr &&
+          s.lcorr.t0s !== 0 &&
+          Math.abs(now - s.lcorr.t0s) <= MAXSBSAGEL)
+      )
+        long++;
+      if (this.satCorrection(s.prn, week, tow)) corrected++;
+    }
+    return { masked, fast, long, corrected, ionoGrid: this.ionoGridPoints() };
+  }
+
+  /**
    * Satellite range/clock correction for a PRN at a GPS week/tow, or null if
    * no valid (unexpired) long-term + fast correction is available. Add `dPos`
    * to the satellite ECEF position and `dClkS` to its clock bias.
