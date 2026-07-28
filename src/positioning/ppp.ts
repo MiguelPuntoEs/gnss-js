@@ -52,6 +52,10 @@ export interface PppSatObs {
    * the antenna corrections; optional if corrections are off. */
   band1?: string;
   band2?: string;
+  /** RINEX-3 tracking codes for the two bands (e.g. '1C','2W'). Used to look
+   * up satellite code (OSB) biases from an SSR/HAS source; optional. */
+  code1?: string;
+  code2?: string;
   /** True if a cycle slip is flagged on either band (LLI or detected). */
   slip: boolean;
 }
@@ -276,6 +280,11 @@ export interface SatSample {
  *  the same filter runs on precise products or a real-time correction stream. */
 export interface PppEphemerisSource {
   satState(prn: string, tEmitMs: number): SatSample | null;
+  /** Optional satellite code (OSB) bias (m) for a RINEX-3 tracking code, to
+   *  make the pseudorange consistent with the (SSR/HAS) clock reference. The
+   *  corrected code is `observed − codeBias`. SP3/CLK sources omit this (the
+   *  float ambiguity + broadcast clock reference absorb it). */
+  codeBias?(prn: string, signalCode: string, tEmitMs: number): number | null;
 }
 
 /** Default source: SP3 orbits + clocks, with optional high-rate CLK. Velocity
@@ -645,7 +654,11 @@ export class PppEngine {
       const lam1 = C_LIGHT / o.f1;
       const lam2 = C_LIGHT / o.f2;
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
-      const pIf = g * o.c1 - (g - 1) * o.c2;
+      // Satellite code (OSB) biases — align the pseudoranges with the SSR/HAS
+      // clock reference. No-op when the source doesn't provide them (SP3/CLK).
+      const b1 = source.codeBias?.(o.prn, o.code1 ?? '', epoch.timeMs) ?? 0;
+      const b2 = source.codeBias?.(o.prn, o.code2 ?? '', epoch.timeMs) ?? 0;
+      const pIf = g * (o.c1 - b1) - (g - 1) * (o.c2 - b2);
       const lIf = g * (o.l1 * lam1) - (g - 1) * (o.l2 * lam2);
       if (!Number.isFinite(pIf) || !Number.isFinite(lIf)) continue;
 
