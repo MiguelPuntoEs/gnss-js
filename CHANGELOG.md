@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.59.0
+
+### Fixed — SBAS long-term correction time-out (DO-229D Table A-25)
+
+- Long-term corrections were held valid for 1800 s (the RTKLIB constant); DO-229D Table A-25 times them out at 360 s (En Route/Terminal). Trusting them ~5× too long inflated coverage and could apply stale ephemeris/clock corrections. Fast corrections keep the conservative 30 s floor (Table A-8 by degradation index).
+
+## 1.58.0
+
+### New — MOPS-exact SBAS protection-level variances (DO-229D)
+
+- `SbasProcessor` now decodes MT10 degradation factors (Table A-9, exposed via `SbasProcessor.degradation`), and the residual variances grow with correction age instead of using the base UDRE/GIVE only — which had made HPL/VPL optimistic when corrections went stale. σ²_flt (§J.2.2) adds ε_fc (A-51) + ε_ltc (A-54/A-55); σ²_ionogrid (§A.4.5.2) adds ε_iono (A-59) — combined per the broadcast RSSUDRE/RSSiono flags. The iono term in particular replaces a near-zero approximation that under-bounded VPL. σ_air (§J.2.4) uses the 0.36 m AAD-A noise+divergence bound (multipath & troposphere already matched).
+- ε_ltc/ε_iono are exported as pure functions (`sbasLongTermDeg`, `sbasIonoDeg`) and unit-tested against the DO-229D equations; MT10 decode is tested against Table A-9. ε_rrc/ε_er are 0 (no range-rate extrapolation is applied; en-route-equivalent SPP, not an LPV/LNAV-VNAV approach), and δUDRE = 1 (MT27/28 not yet decoded).
+
+## 1.57.0
+
+### New — SBAS L5 / DFMC framing + GEORawL5 routing
+
+- SBF GEORawL5 (block 4021) is routed instead of dropped. The L5 signal carries a mix: GEOs relaying DO-229 (L1-format) content on L5 — fed to the existing L1 `SbasProcessor` and decoded for GEO ephemerides — and GEOs broadcasting native DFMC frames, which are CRC-24Q-gated and censused by ICAO Annex 10 Table B-98 message type (not field-decoded: no accessible stream broadcasts DFMC corrections yet — EGNOS V3 / WAAS send only MT0/MT63 placeholders).
+- `navbits/sbas-l5` (4-bit preamble unique word 0x5C693A, type at bit offset 4, shared 226-bit CRC-24Q), `parseSbfGeoL5`, and a `dfmc` census + `onDfmcMessage` hook on `decodeSbfNavigation`. Validated on a real DLF500 GEORawL5 slice (S27/S36 relay DO-229 → full 32-GPS mask; S21/S23 are native DFMC, MT0/63 only).
+
+## 1.56.0
+
+### New — SBAS correction-coverage funnel
+
+- `SbasProcessor.coverage(week, tow)` returns a diagnostic census — masked / fast / long / fully-corrected satellites plus valid iono-grid points — so a consumer can tell "no corrections applied yet" from "corrections applied but the pierce points aren't grid-covered". Validated on the F9P EGNOS/WAAS fixture.
+
 ## 1.55.0
 
 ### Fixed — no more SBAS cycle-slip false-positive storm
