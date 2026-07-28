@@ -11,6 +11,7 @@
  * to null.
  */
 import { scanSbfFrames } from './frame';
+import type { ReceiverPvt } from '../receiver-pvt';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 const RAD2DEG = 180 / Math.PI;
@@ -30,26 +31,9 @@ const MODE_LABELS: Record<number, string> = {
   10: 'ppp',
 };
 
-export interface SbfPvt {
-  /** GPS-scale epoch time (ms). */
-  timeMs: number;
-  week: number;
-  /** Time of week (s). */
-  tow: number;
-  /** PVT solution type (Mode & 0x0F). */
+export interface SbfPvt extends ReceiverPvt {
+  /** PVT solution type (Mode & 0x0F) — the raw Septentrio code. */
   modeType: number;
-  /** Human label for `modeType` ('standalone', 'sbas-aided', 'rtk-fixed', …). */
-  mode: string;
-  /** Geodetic position, or null when the receiver has no fix this epoch. */
-  latDeg: number | null;
-  lonDeg: number | null;
-  heightM: number | null;
-  /** Satellites used in the receiver's solution. */
-  nrSV: number | null;
-  /** Receiver 2-σ horizontal accuracy estimate (m), or null. */
-  hAccuracyM: number | null;
-  /** Receiver 2-σ vertical accuracy estimate (m), or null. */
-  vAccuracyM: number | null;
 }
 
 export interface SbfPvtResult {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.54.0
+
+### New — receiver PVT across NovAtel + u-blox (unified `ReceiverPvt`)
+
+- `parseNovatelPvt` (`novatel`, BESTPOS message 42) and `parseUbxPvt` (`ubx`, UBX-NAV-PVT 0x01/0x07) decode the receiver's own position solution — mode ('standalone', 'sbas-aided', 'rtk-float', 'rtk-fixed', 'ppp', …), latitude/longitude/ellipsoidal height, satellites used, and H/V accuracy — normalised to the same `ReceiverPvt` shape as the SBF `parseSbfPvt` (whose `SbfPvt` now extends it). Any of the three receiver families can now serve as the truth/reference for validating an independent SPP/SBAS solution (and its protection level). Synthesised-frame tests validate the field offsets. (Trimble RT27 carries no position record — deferred.)
+
 ## 1.53.0
 
 ### New — SBF PVTGeodetic decoder (`parseSbfPvt`)

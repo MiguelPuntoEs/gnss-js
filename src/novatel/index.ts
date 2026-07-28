@@ -22,6 +22,9 @@ export { crc32, OEM4_HLEN, oem4Frames } from './frame';
 export type { Oem4Frame } from './frame';
 export { parseNovatelNav } from './nav';
 export type { NovatelNavResult } from './nav';
+export { parseNovatelPvt } from './pvt';
+export type { NovatelPvtResult } from './pvt';
+export type { ReceiverPvt } from '../receiver-pvt';
 
 export interface NovatelMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23", "J01". */

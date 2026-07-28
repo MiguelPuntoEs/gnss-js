@@ -170,3 +170,6 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
 
 export { parseUbxRawNav } from './rawnav';
 export type { UbxRawNavOptions, UbxRawNavResult } from './rawnav';
+export { parseUbxPvt } from './pvt';
+export type { UbxPvtResult } from './pvt';
+export type { ReceiverPvt } from '../receiver-pvt';
