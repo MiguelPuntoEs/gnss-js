@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.61.0
+
+### Fixed — SBAS re-broadcast wiped accumulated corrections
+
+- `SbasProcessor` reset its correction state on every re-broadcast of the PRN mask (MT1) and the ionospheric grid mask (MT18), not only when the mask actually changed. SBAS repeats MT1/MT18 every few seconds, so each one blanked the fast/long-term corrections (MT1) and the MT26 grid delays (MT18) accumulated since the last one — the corrected-satellite count and the grid-covered count sagged toward zero between refills and never held steady (observed live on EGNOS via a Septentrio stream: the corrected count and HPL/VPL oscillated, and grid-iono coverage collapsed to 0 seconds after filling). `decodeMask`/`decodeIgpMask` now rebuild only on a genuine change (new IODP/IODI or a different masked set) and otherwise preserve the accumulated corrections, per DO-229 (the mask is quasi-static; corrections accrue against it). Regression-tested that a repeated mask keeps its corrections while a changed mask resets them; validated against real DLF500 (TU Delft) captures where per-GEO range settles at 13–14 corrected and the EGNOS iono grid fills to full local coverage and stays.
+
 ## 1.60.0
 
 ### New — MT27 service-region δUDRE (DO-229D §A.4.4.13)
