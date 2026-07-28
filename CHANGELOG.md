@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.63.0
+
+### New — legacy (pre-MSM) RTCM3 observation decoding
+
+- `decodeLegacyObs(frame)` decodes the classic fixed-layout RTCM3 observation messages — GPS 1001/1002/1003/1004 and GLONASS 1009/1010/1011/1012 (RTCM 10403.2 §3.5.1/§3.5.4) — into the same `MsmEpoch` shape as `decodeMsmFull`, so the RINEX writer, SPP and QC work unchanged. Extracts code, carrier phase (cycles), C/N0 and lock time per satellite/signal; reconstructs the full pseudorange from the integer modulus ambiguity on the extended types (1002/1004/1010/1012 — the basic types omit it and give a modulo-only range). GLONASS wavelength comes from the inline frequency channel (DF040). Many national CORS networks still broadcast only these legacy messages; they were previously counted but not field-decoded. Unit-tested against synthetic 1004/1012 frames.
+
 ## 1.62.0
 
 ### New — expose the SBAS ionospheric grid (IGP + GIVE)
