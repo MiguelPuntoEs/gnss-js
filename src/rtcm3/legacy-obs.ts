@@ -5,7 +5,7 @@
  *
  * These carry code+phase(+C/N0) exactly like MSM but in the older fixed layout,
  * and are still broadcast by many national CORS networks. Decoded into the same
- * {@link MsmEpoch} shape as {@link decodeMsmFull} so every consumer (RINEX
+ * {@link ObsEpoch} shape as {@link decodeMsmFull} so every consumer (RINEX
  * writer, SPP, QC) works unchanged.
  *
  * Reconstruction (RTCM 10403.2 data-field notes):
@@ -23,6 +23,7 @@
  */
 import { BitReader } from './decoder';
 import type { Rtcm3Frame } from './decoder';
+import { decodeMsmFull } from './msm';
 import {
   C_LIGHT,
   GLO_F1_BASE,
@@ -30,7 +31,7 @@ import {
   GLO_F2_BASE,
   GLO_F2_STEP,
 } from '../constants/gnss';
-import type { MsmEpoch, MsmSatObs, MsmSignal } from './msm';
+import type { ObsEpoch, ObsSatObs, ObsSignal } from './msm';
 
 const PRUNIT_GPS = 299792.458;
 const PRUNIT_GLO = 599584.916;
@@ -56,9 +57,9 @@ const two = (n: number) => n.toString().padStart(2, '0');
 
 /**
  * Decode a legacy RTCM3 observation frame (1001–1004 GPS, 1009–1012 GLONASS)
- * into an {@link MsmEpoch}, or null for any other message type.
+ * into an {@link ObsEpoch}, or null for any other message type.
  */
-export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
+export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
   const type = frame.messageType;
   const gps = type >= 1001 && type <= 1004;
   const glo = type >= 1009 && type <= 1012;
@@ -85,7 +86,7 @@ export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
     nsat = r.readU(5); // DF035
     r.readU(1); // DF036
     r.readU(3); // DF037
-    // MSM-compatible packing for msmEpochToDate: high bits carry the day of
+    // MSM-compatible packing for obsEpochToDate: high bits carry the day of
     // week. Legacy frames don't include it, so derive it from the wall clock
     // (GLONASS = UTC+3h) — correct for a live stream; for offline replay of an
     // old capture the day may be off (the ms-of-day is always exact).
@@ -93,7 +94,7 @@ export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
     epochMs = ((gloDow << 27) | tk) >>> 0;
   }
 
-  const observations: MsmSatObs[] = [];
+  const observations: ObsSatObs[] = [];
   for (let s = 0; s < nsat; s++) {
     const satId = r.readU(6); // DF009 / DF038
     const code1 = r.readU(1); // DF010 / DF039
@@ -131,10 +132,10 @@ export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
     const lamL1 = gps ? LAM_GPS_L1 : C_LIGHT / (GLO_F1_BASE + k * GLO_F1_STEP);
     const lamL2 = gps ? LAM_GPS_L2 : C_LIGHT / (GLO_F2_BASE + k * GLO_F2_STEP);
 
-    const signals: MsmSignal[] = [];
+    const signals: ObsSignal[] = [];
     // L1
     {
-      const sig: MsmSignal = {
+      const sig: ObsSignal = {
         rinexCode: gps ? (code1 ? '1W' : '1C') : code1 ? '1P' : '1C',
         pseudorange: pr1,
         wavelength: lamL1,
@@ -146,7 +147,7 @@ export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
     }
     // L2 (dual-frequency types only)
     if (dual) {
-      const sig: MsmSignal = {
+      const sig: ObsSignal = {
         rinexCode: gps
           ? code2 === 0
             ? '2X'
@@ -171,4 +172,16 @@ export function decodeLegacyObs(frame: Rtcm3Frame): MsmEpoch | null {
   }
 
   return { messageType: type, epochMs, system, observations };
+}
+
+/**
+ * Decode any RTCM3 observation frame into an {@link ObsEpoch}: MSM4–7 first
+ * ({@link decodeMsmFull}), then the legacy fixed-layout obs (1001–1004 GPS,
+ * 1009–1012 GLONASS) via {@link decodeLegacyObs}. Returns null for any
+ * non-observation message. This is the single obs entry point every consumer
+ * (stream stats, live SPP/QC/RTK, station monitor) should call, so a new obs
+ * source is added here once rather than at every call site.
+ */
+export function decodeObs(frame: Rtcm3Frame): ObsEpoch | null {
+  return decodeMsmFull(frame) ?? decodeLegacyObs(frame);
 }

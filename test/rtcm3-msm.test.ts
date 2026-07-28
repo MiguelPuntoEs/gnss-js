@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   decodeMsmFull,
-  msmEpochToDate,
+  obsEpochToDate,
   resetGloFreqCache,
 } from '../src/rtcm3/msm';
 import type { Rtcm3Frame } from '../src/rtcm3/decoder';
@@ -320,12 +320,12 @@ describe('decodeMsmFull', () => {
   });
 });
 
-describe('msmEpochToDate', () => {
+describe('obsEpochToDate', () => {
   it('converts GPS epoch time', () => {
     // epochMs = 86400000 means 1 day into the GPS week
     // With any ref time, the result should be a valid date near the ref
     const refTime = new Date('2024-03-10T12:00:00Z');
-    const date = msmEpochToDate('G', 86400000, refTime);
+    const date = obsEpochToDate('G', 86400000, refTime);
     expect(date).toBeInstanceOf(Date);
     // Should be within a week of the reference time
     expect(Math.abs(date.getTime() - refTime.getTime())).toBeLessThan(
@@ -335,7 +335,7 @@ describe('msmEpochToDate', () => {
 
   it('converts BDS epoch time', () => {
     const refTime = new Date('2024-03-10T12:00:00Z');
-    const date = msmEpochToDate('C', 0, refTime);
+    const date = obsEpochToDate('C', 0, refTime);
     // BDS week start
     expect(date).toBeInstanceOf(Date);
     expect(date.getTime()).toBeGreaterThan(0);
@@ -472,27 +472,27 @@ describe('lockTimeSec via MSM7 decode', () => {
   });
 });
 
-describe('msmEpochToDate BDS convention', () => {
+describe('obsEpochToDate BDS convention', () => {
   it('a BDS sow maps to the same instant as GPS sow + 14 s', () => {
     // BDT = GPS − 14 s: the BDT instant with sow s equals the GPS
     // instant with sow s + 14, so both branches must return the same
     // UTC Date (both apply the fixed 18 s GPS→UTC leap offset).
     const ref = new Date('2024-03-10T12:00:00Z');
     const sowBds = 40_000_000; // ms into the BDT week
-    const bds = msmEpochToDate('C', sowBds, ref);
-    const gps = msmEpochToDate('G', sowBds + 14_000, ref);
+    const bds = obsEpochToDate('C', sowBds, ref);
+    const gps = obsEpochToDate('G', sowBds + 14_000, ref);
     expect(bds.getTime()).toBe(gps.getTime());
   });
 });
 
-describe('msmEpochToDate — GPS-scale convention', () => {
+describe('obsEpochToDate — GPS-scale convention', () => {
   // Real DELF00NLD0 capture, cross-checked against RTKLIB convbin:
   // GPS tow 355229000 ms in week 2427+? tagged 2026-07-23 02:40:29 GPS.
   // The old implementation subtracted leap seconds (returning UTC),
   // which put every downstream satellite position 18 s early.
   it('maps a GPS MSM epoch to the GPS clock face, not UTC', () => {
     const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
-    const d = msmEpochToDate('G', 355229000, ref);
+    const d = obsEpochToDate('G', 355229000, ref);
     expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
   });
 
@@ -502,14 +502,14 @@ describe('msmEpochToDate — GPS-scale convention', () => {
     const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
     const msOfDay = ((5 * 60 + 40) * 60 + 11) * 1000;
     const epochMs = (4 << 27) | msOfDay;
-    const d = msmEpochToDate('R', epochMs, ref);
+    const d = obsEpochToDate('R', epochMs, ref);
     expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
   });
 
   it('keeps BDS on the same scale (BDT = GPS − 14 s)', () => {
     // Same instant in BDS SOW: GPS tow 355229 s − 14 s = 355215 s
     const ref = new Date(Date.UTC(2026, 6, 23, 2, 43, 0));
-    const d = msmEpochToDate('C', 355215000, ref);
+    const d = obsEpochToDate('C', 355215000, ref);
     expect(d.toISOString()).toBe('2026-07-23T02:40:29.000Z');
   });
 });

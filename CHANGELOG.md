@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.0.0
+
+### Breaking — observation types renamed (MSM → Obs)
+
+The observation-epoch types were named for MSM back when MSM was the only source, but the same shapes now carry legacy RTCM3 obs (1001–1012) and are the neutral obs representation across the library. Renamed accordingly:
+
+- `MsmEpoch` → `ObsEpoch`
+- `MsmSatObs` → `ObsSatObs`
+- `MsmSignal` → `ObsSignal`
+- `msmEpochToDate(...)` → `obsEpochToDate(...)`
+
+`decodeMsmFull` keeps its name — it genuinely is the MSM4–7 decoder. Migration is a mechanical find-and-replace of the four names; no behaviour or field changes.
+
+### New — `decodeObs` observation dispatcher
+
+- `decodeObs(frame)` returns an `ObsEpoch` for any RTCM3 observation frame: MSM4–7 first (`decodeMsmFull`), then the legacy fixed-layout obs (`decodeLegacyObs`), else `null`. This is the single obs entry point consumers should call, so a new obs source is added in one place rather than at every call site. `updateStreamStats` now routes through it.
+
+### Internal — SSR decoder dedup
+
+- The RTCM-SSR (1057–1068) and IGS-SSR (4076) decoders now share their identical orbit/clock field readers and the update-interval / URA tables via an internal `ssr-common` module (IGS-SSR mirrors RTCM-SSR's encoding field-for-field). No API or output change. Removed a dead `BitReader.bitsLeft` getter.
+
 ## 1.66.0
 
 ### New — RTCM 2.x decoding (`gnss-js/rtcm2`)

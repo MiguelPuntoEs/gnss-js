@@ -286,7 +286,7 @@ function signalTable(sys: string): SignalDef[] {
 /* ================================================================== */
 
 /** Single signal observation for one satellite */
-export interface MsmSignal {
+export interface ObsSignal {
   /** RINEX 2-char obs code, e.g. "1C", "5X" */
   rinexCode: string;
   /** Pseudorange in meters (undefined if invalid) */
@@ -306,17 +306,21 @@ export interface MsmSignal {
 }
 
 /** All observations for one satellite in one epoch */
-export interface MsmSatObs {
+export interface ObsSatObs {
   /** PRN string, e.g. "G01", "R15", "E04" */
   prn: string;
   /** System letter: G, R, E, C, J, I, S */
   system: string;
   /** Signal observations */
-  signals: MsmSignal[];
+  signals: ObsSignal[];
 }
 
-/** One decoded MSM epoch */
-export interface MsmEpoch {
+/**
+ * One decoded observation epoch. Originally the MSM4–7 output shape, now the
+ * neutral shape every RTCM3 obs source fills: MSM (`decodeMsmFull`), legacy
+ * 1001–1012 (`decodeLegacyObs`), via the `decodeObs` dispatcher.
+ */
+export interface ObsEpoch {
   /** Message type (1074, 1077, etc.) */
   messageType: number;
   /** Epoch time as GPS milliseconds of week (or GLONASS day-of-week ms, BDS SOW) */
@@ -324,7 +328,7 @@ export interface MsmEpoch {
   /** System letter */
   system: string;
   /** Observations per satellite */
-  observations: MsmSatObs[];
+  observations: ObsSatObs[];
 }
 
 /* ================================================================== */
@@ -397,7 +401,7 @@ function satPrn(sys: string, satIdx1: number): string {
  * Decode a single RTCM3 MSM4-7 frame into full observations.
  * Returns null for non-MSM or MSM1-3 frames.
  */
-export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
+export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
   const type = frame.messageType;
   const sys = msmSystem(type);
   if (!sys) return null;
@@ -540,7 +544,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
 
     // ── Reconstruct observations ──
     const sigTable = signalTable(sys);
-    const observations: MsmSatObs[] = [];
+    const observations: ObsSatObs[] = [];
 
     let cellIdx = 0;
     for (let s = 0; s < numSat; s++) {
@@ -550,7 +554,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
       const roughRange_m = (roughRange_ms * C_LIGHT) / 1000.0;
       const roughRate_ms = rdop[s]!; // m/s
 
-      const signals: MsmSignal[] = [];
+      const signals: ObsSignal[] = [];
 
       for (let g = 0; g < numSig; g++) {
         const maskIdx = s * numSig + g;
@@ -573,7 +577,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): MsmEpoch | null {
           wavelength = 0;
         }
 
-        const signal: MsmSignal = {
+        const signal: ObsSignal = {
           rinexCode: sigDef.code,
           wavelength,
         };
@@ -639,7 +643,7 @@ const GPS_EPOCH = START_GPS_TIME.getTime();
 const MS_PER_WEEK = MILLISECONDS_IN_WEEK;
 
 /**
- * Convert MSM epoch timestamp to a Date.
+ * Convert an observation epoch timestamp to a Date.
  * For GPS/Galileo/BDS/QZSS: epochMs is ms of GPS week.
  * For GLONASS: epochMs is day-of-week × 86400000 + ms of day (UTC+3).
  *
@@ -653,7 +657,7 @@ const MS_PER_WEEK = MILLISECONDS_IN_WEEK;
  * 18 s (the current leap-second count) off — a ±14 km per-satellite
  * range error that scattered live SPP solutions by kilometres.
  */
-export function msmEpochToDate(
+export function obsEpochToDate(
   sys: string,
   epochMs: number,
   refTime: Date = new Date()
