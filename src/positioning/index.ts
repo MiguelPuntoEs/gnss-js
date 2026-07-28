@@ -682,6 +682,9 @@ export type {
   Degradation,
 } from './sbas';
 
+export { applyOrbitClock, hasToOrbitClock } from './ssr-apply';
+export type { OrbitClockCorrection, AppliedOrbitClock } from './ssr-apply';
+
 export { solvePpp } from './ppp';
 export type {
   PppSatObs,
