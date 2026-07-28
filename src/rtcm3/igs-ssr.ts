@@ -19,11 +19,12 @@ import type {
   SsrCodeBias,
   SsrPhaseBias,
 } from './ssr';
-
-/** DF391/IDF004 SSR Update Interval enum → seconds. */
-const UPDATE_INTERVAL_S = [
-  1, 2, 5, 10, 15, 30, 60, 120, 240, 300, 600, 900, 1800, 3600, 7200, 10800,
-];
+import {
+  UPDATE_INTERVAL_S,
+  ssrUraMm,
+  readSsrOrbit,
+  readSsrClock,
+} from './ssr-common';
 
 /** IGS Message Number → GNSS system letter (by the 20-wide block). */
 const SYSTEM_BY_BASE: Record<number, 'G' | 'R' | 'E' | 'J' | 'C' | 'S'> = {
@@ -87,14 +88,6 @@ function prnFor(system: string, id: number): string {
   return `${system}${two(id)}`;
 }
 
-/** IDF034 SSR URA (6-bit CLASS/VALUE) → 1σ mm, or null if undefined. */
-function ssrUraMm(v: number): number | null {
-  if (v === 0) return null;
-  const cls = (v >> 3) & 0x7;
-  const val = v & 0x7;
-  return 3 ** cls * (1 + val / 4) - 1;
-}
-
 /**
  * Decode an RTCM3 IGS-SSR message (4076) into an {@link IgsSsrMessage}, or null
  * if the frame is not 4076 or carries an unrecognised subtype.
@@ -130,27 +123,12 @@ export function decodeIgsSsr(frame: Rtcm3Frame): IgsSsrMessage | null {
   }
   const nsat = r.readU(6); // IDF010
 
-  const readOrbit = (s: SsrSatCorrection) => {
-    s.iode = r.readU(8); // IDF012
-    s.deltaRadial = r.readS(22) * 0.0001; // IDF013 0.1 mm
-    s.deltaAlongTrack = r.readS(20) * 0.0004; // IDF014 0.4 mm
-    s.deltaCrossTrack = r.readS(20) * 0.0004; // IDF015 0.4 mm
-    s.dotRadial = r.readS(21) * 0.000001; // IDF016 0.001 mm/s
-    s.dotAlongTrack = r.readS(19) * 0.000004; // IDF017 0.004 mm/s
-    s.dotCrossTrack = r.readS(19) * 0.000004; // IDF018 0.004 mm/s
-  };
-  const readClock = (s: SsrSatCorrection) => {
-    s.c0 = r.readS(22) * 0.0001; // IDF019
-    s.c1 = r.readS(21) * 0.000001; // IDF020
-    s.c2 = r.readS(27) * 0.00000002; // IDF021
-  };
-
   const satellites: SsrSatCorrection[] = [];
   for (let i = 0; i < nsat; i++) {
     const id = r.readU(6); // IDF011
     const sat: SsrSatCorrection = { prn: prnFor(system, id) };
-    if (kind === 'orbit' || kind === 'combined') readOrbit(sat);
-    if (kind === 'clock' || kind === 'combined') readClock(sat);
+    if (kind === 'orbit' || kind === 'combined') readSsrOrbit(r, sat);
+    if (kind === 'clock' || kind === 'combined') readSsrClock(r, sat);
     else if (kind === 'ura')
       sat.uraMm = ssrUraMm(r.readU(6)); // IDF034
     else if (kind === 'highRateClock')

@@ -8,7 +8,8 @@ import type { EphemerisInfo } from './ephemeris';
 import { decodeEphemeris } from './ephemeris';
 import type { StationMeta } from './station';
 import { createStationMeta, updateStationMeta } from './station';
-import { decodeMsmFull, setGloFreqNumber } from './msm';
+import { setGloFreqNumber } from './msm';
+import { decodeObs } from './legacy-obs';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -47,7 +48,7 @@ export interface StreamStats {
   messageTypes: Map<number, MessageTypeStats>;
   bytesPerSecond: number;
   framesPerSecond: number;
-  /** Per-satellite C/N0 from MSM messages. Key = PRN (e.g. "G01"). */
+  /** Per-satellite C/N0 from observation messages. Key = PRN (e.g. "G01"). */
   satellites: Map<string, SatCn0>;
   /** Per-satellite ephemeris data. Key = PRN (e.g. "G01"). */
   ephemerides: Map<string, EphemerisInfo>;
@@ -233,10 +234,11 @@ export function updateStreamStats(
     entry.lastSeen = now;
     entry.totalBytes += frame.length + 6;
 
-    // Decode full MSM observations (C/N0, obs types)
-    const msmEpoch = decodeMsmFull(frame);
-    if (msmEpoch) {
-      for (const obs of msmEpoch.observations) {
+    // Decode observations — MSM4–7 or the legacy fixed-layout obs (1001–1004
+    // GPS, 1009–1012 GLONASS), so legacy CORS satellites show in the census.
+    const obsEpoch = decodeObs(frame);
+    if (obsEpoch) {
+      for (const obs of obsEpoch.observations) {
         const signals: SignalCn0[] = [];
         let bestCn0 = 0;
         for (const sig of obs.signals) {
@@ -245,7 +247,9 @@ export function updateStreamStats(
             if (sig.cn0 > bestCn0) bestCn0 = sig.cn0;
           }
         }
-        if (signals.length > 0) {
+        // Record the satellite whenever it has an observation — legacy obs
+        // carry no C/N0, so keying on cn0-bearing signals would drop them.
+        if (obs.signals.length > 0) {
           stats.satellites.set(obs.prn, {
             prn: obs.prn,
             system: obs.system,

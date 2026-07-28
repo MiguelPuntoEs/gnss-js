@@ -16,6 +16,12 @@
  */
 import { BitReader } from './decoder';
 import type { Rtcm3Frame } from './decoder';
+import {
+  UPDATE_INTERVAL_S,
+  ssrUraMm,
+  readSsrOrbit,
+  readSsrClock,
+} from './ssr-common';
 
 /** One code bias for a specific signal (DF380/DF381 + DF383). */
 export interface SsrCodeBias {
@@ -90,11 +96,6 @@ export interface SsrMessage {
   satellites: SsrSatCorrection[];
 }
 
-/** DF391 SSR Update Interval enum → seconds. */
-const UPDATE_INTERVAL_S = [
-  1, 2, 5, 10, 15, 30, 60, 120, 240, 300, 600, 900, 1800, 3600, 7200, 10800,
-];
-
 /** DF380 — GPS signal & tracking-mode indicator names. */
 const GPS_SIGNAL: Record<number, string> = {
   0: 'L1 C/A',
@@ -133,14 +134,6 @@ const SSR_KIND: Record<number, { system: 'G' | 'R'; kind: SsrKind }> = {
   1068: { system: 'R', kind: 'highRateClock' },
 };
 
-/** DF389 SSR URA (6-bit CLASS/VALUE) → 1σ metres, or null if undefined. */
-function ssrUraMm(v: number): number | null {
-  if (v === 0) return null; // undefined / unknown
-  const cls = (v >> 3) & 0x7;
-  const val = v & 0x7;
-  return 3 ** cls * (1 + val / 4) - 1; // millimetres
-}
-
 const two = (n: number) => n.toString().padStart(2, '0');
 
 /**
@@ -168,30 +161,13 @@ export function decodeSsr(frame: Rtcm3Frame): SsrMessage | null {
   const sigName = gps ? GPS_SIGNAL : GLO_SIGNAL;
   const satellites: SsrSatCorrection[] = [];
 
-  const readOrbit = (sat: SsrSatCorrection) => {
-    sat.deltaRadial = r.readS(22) * 0.0001; // DF365 0.1 mm
-    sat.deltaAlongTrack = r.readS(20) * 0.0004; // DF366 0.4 mm
-    sat.deltaCrossTrack = r.readS(20) * 0.0004; // DF367 0.4 mm
-    sat.dotRadial = r.readS(21) * 0.000001; // DF368 0.001 mm/s
-    sat.dotAlongTrack = r.readS(19) * 0.000004; // DF369 0.004 mm/s
-    sat.dotCrossTrack = r.readS(19) * 0.000004; // DF370 0.004 mm/s
-  };
-  const readClock = (sat: SsrSatCorrection) => {
-    sat.c0 = r.readS(22) * 0.0001; // DF376 0.1 mm
-    sat.c1 = r.readS(21) * 0.000001; // DF377 0.001 mm/s
-    sat.c2 = r.readS(27) * 0.00000002; // DF378 0.00002 mm/s²
-  };
-
   for (let i = 0; i < nsat; i++) {
     const satId = gps ? r.readU(6) : r.readU(5); // DF068 / DF384
     const sat: SsrSatCorrection = { prn: `${system}${two(satId)}` };
 
-    if (kind === 'orbit' || kind === 'combined') {
-      sat.iode = r.readU(8); // DF071 (GPS) / DF392 (GLONASS), both 8 bits
-      readOrbit(sat);
-    }
-    if (kind === 'combined') readClock(sat);
-    else if (kind === 'clock') readClock(sat);
+    if (kind === 'orbit' || kind === 'combined') readSsrOrbit(r, sat);
+    if (kind === 'combined') readSsrClock(r, sat);
+    else if (kind === 'clock') readSsrClock(r, sat);
     else if (kind === 'ura')
       sat.uraMm = ssrUraMm(r.readU(6)); // DF389
     else if (kind === 'highRateClock')

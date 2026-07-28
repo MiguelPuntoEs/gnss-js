@@ -85,10 +85,6 @@ export class BitReader {
   skip(n: number): void {
     this.bitPos += n;
   }
-
-  get bitsLeft(): number {
-    return this.data.length * 8 - this.bitPos;
-  }
 }
 
 /* ================================================================== */
