@@ -56,6 +56,12 @@ const VAR_ICORR = [
 const varicorr = (give: number) =>
   give > 0 && give <= 15 ? VAR_ICORR[give - 1]! : 0;
 
+/** GIVE — the grid ionospheric vertical error 99.9% bound (m) by GIVEI
+ *  (DO-229D Table A-17, "GIVEi Meters" column). GIVEI 15 = not monitored. */
+const GIVE_METERS = [
+  0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.6, 4.5, 6.0, 15.0, 45.0,
+];
+
 /** Fast-correction degradation factor (m/s²) by AI index. */
 const DEGF = [
   0.0, 0.00005, 0.00009, 0.00012, 0.00015, 0.0002, 0.0003, 0.00045, 0.0006,
@@ -271,6 +277,26 @@ export interface SbasIonoDelay {
   delayM: number;
   /** Variance (m²). */
   varM2: number;
+}
+
+/** One ionospheric grid point (IGP) of the SBAS grid — its location, the
+ *  broadcast vertical delay and its GIVE (grid ionospheric vertical error).
+ *  For visualising the SBAS ionosphere (MT18 mask + MT26 delays). */
+export interface SbasIgp {
+  /** IGP geodetic latitude (deg). */
+  latDeg: number;
+  /** IGP geodetic longitude (deg, −180..180). */
+  lonDeg: number;
+  /** SBAS band index (0..10) the point belongs to. */
+  band: number;
+  /** Broadcast vertical L1 ionospheric delay (m). */
+  delayM: number;
+  /** GIVEI (0..14) — the broadcast grid-ionospheric-vertical-error indicator. */
+  givei: number;
+  /** GIVE — the 99.9% vertical-error bound (m), DO-229D Table A-17. */
+  giveMeters: number;
+  /** Age of the delay estimate (s) at the query epoch. */
+  ageSec: number;
 }
 
 /** GPS→GPS-epoch seconds. */
@@ -694,6 +720,36 @@ export class SbasProcessor {
     let n = 0;
     for (const b of this.ion) if (b) for (const g of b.igp) if (g.give > 0) n++;
     return n;
+  }
+
+  /**
+   * The current ionospheric grid — every IGP that carries a valid broadcast
+   * vertical delay (MT18 mask populated by MT26 delays), across all bands, with
+   * its GIVE (DO-229D Table A-17). For visualising the SBAS ionosphere; the
+   * count matches {@link ionoGridPoints}. `week`/`tow` set the reference epoch
+   * for each point's `ageSec` (the same argument the solver passes).
+   */
+  ionoGrid(week: number, tow: number): SbasIgp[] {
+    const now = gpsSeconds(week, tow);
+    const out: SbasIgp[] = [];
+    for (let band = 0; band < this.ion.length; band++) {
+      const b = this.ion[band];
+      if (!b) continue;
+      for (const g of b.igp) {
+        if (g.give <= 0) continue; // 0 = not monitored / no delay yet
+        const givei = g.give - 1; // stored give = GIVEI + 1
+        out.push({
+          latDeg: g.lat,
+          lonDeg: g.lon,
+          band,
+          delayM: g.delay,
+          givei,
+          giveMeters: GIVE_METERS[givei] ?? NaN,
+          ageSec: g.t0s ? now - g.t0s : NaN,
+        });
+      }
+    }
+    return out;
   }
 
   /**

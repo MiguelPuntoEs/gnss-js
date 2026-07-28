@@ -675,7 +675,12 @@ export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
 
 export { SbasProcessor, sbasLongTermDeg, sbasIonoDeg } from './sbas';
-export type { SbasSatCorrection, SbasIonoDelay, Degradation } from './sbas';
+export type {
+  SbasSatCorrection,
+  SbasIonoDelay,
+  SbasIgp,
+  Degradation,
+} from './sbas';
 
 export { solvePpp } from './ppp';
 export type {

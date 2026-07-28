@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.62.0
+
+### New — expose the SBAS ionospheric grid (IGP + GIVE)
+
+- `SbasProcessor.ionoGrid(week, tow)` returns the current ionospheric grid as `SbasIgp[]` — every grid point (IGP) carrying a valid broadcast vertical delay (MT18 mask populated by MT26 delays), across all bands, with its location (`latDeg`/`lonDeg`), `band`, vertical `delayM`, `givei` (0–14), the `giveMeters` 99.9% error bound (DO-229D Table A-17), and the delay's `ageSec` at the query epoch. The count matches `ionoGridPoints()`. This surfaces the grid state that `ionoDelay()` interpolates internally, for visualising the SBAS ionosphere and its integrity (GIVE) — no new decoding, just exposure of already-decoded state. `SbasIgp` is exported from `gnss-js/positioning`.
+
 ## 1.61.0
 
 ### Fixed — SBAS re-broadcast wiped accumulated corrections

@@ -127,5 +127,37 @@ describe.skipIf(!existsSync(UBX))(
       // Zenith ionospheric delay on L1 is realistically < ~30 m.
       expect(maxDelay).toBeLessThan(30);
     });
+
+    it('exposes the ionospheric grid with plausible IGPs and GIVE', () => {
+      const sbas = new SbasProcessor();
+      for (const m of msgs) sbas.update(m.msg, m.week, m.tow, prn);
+      const last = msgs[msgs.length - 1]!;
+      const grid = sbas.ionoGrid(last.week, last.tow);
+
+      // The exposed grid is exactly the valid-delay count.
+      expect(grid.length).toBe(sbas.ionoGridPoints());
+      expect(grid.length).toBeGreaterThan(0);
+
+      const GIVE_METERS = [
+        0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.6, 4.5, 6.0, 15.0,
+        45.0,
+      ];
+      for (const g of grid) {
+        expect(g.latDeg).toBeGreaterThanOrEqual(-90);
+        expect(g.latDeg).toBeLessThanOrEqual(90);
+        expect(g.lonDeg).toBeGreaterThanOrEqual(-180);
+        expect(g.lonDeg).toBeLessThanOrEqual(180);
+        expect(g.band).toBeGreaterThanOrEqual(0);
+        expect(g.band).toBeLessThanOrEqual(10);
+        // Delay is in the MT26 0–63.75 m range; GIVEI 0..14 maps to Table A-17.
+        expect(g.delayM).toBeGreaterThanOrEqual(0);
+        expect(g.delayM).toBeLessThanOrEqual(63.75);
+        expect(g.givei).toBeGreaterThanOrEqual(0);
+        expect(g.givei).toBeLessThanOrEqual(14);
+        expect(g.giveMeters).toBe(GIVE_METERS[g.givei]);
+        // Age is non-negative and within the long-term grid validity.
+        expect(g.ageSec).toBeGreaterThanOrEqual(0);
+      }
+    });
   }
 );
