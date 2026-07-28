@@ -5,6 +5,7 @@ export * from './types/enums';
 export * from './time/index';
 export * from './coordinates/index';
 export * from './rinex/index';
+export * from './rtcm2/index';
 export * from './rtcm3/index';
 export * from './ubx/index';
 export * from './sbf/index';
