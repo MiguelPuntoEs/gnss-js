@@ -141,6 +141,73 @@ describe('CycleSlipAccumulator', () => {
     });
   });
 
+  describe('SBAS single-frequency skip', () => {
+    // The single-frequency phase-code test is driven by pseudorange noise;
+    // on SBAS geostationary L1 C/A it false-flags almost every epoch. It is
+    // deliberately not run for system 'S'. An identical pattern on GPS still
+    // slips (see 'single-frequency detection' above), so this is the contrast.
+    it('does not raise SF slips on SBAS L1, even with a large phase jump', () => {
+      const header = makeHeader({ S: ['C1C', 'L1C'] });
+      const acc = new CycleSlipAccumulator(header);
+      const codes = ['C1C', 'L1C'];
+      const lamS1 = C_LIGHT / FREQ['S']!['1']!;
+      const baseRange = 38_000_000; // GEO-scale range
+      const rangeRate = 5; // near-static geostationary
+
+      for (let i = 0; i < 6; i++) {
+        const t = i * 30_000;
+        const range = baseRange + rangeRate * i * 30;
+        acc.onObservation(t, 'S23', codes, [range, range / lamS1 + 1_000_000]);
+      }
+      // Inject a 50-cycle (~9.5 m) phase jump — well past SF_THRESHOLD_M (3 m).
+      const t = 6 * 30_000;
+      const range = baseRange + rangeRate * 6 * 30;
+      acc.onObservation(t, 'S23', codes, [
+        range,
+        range / lamS1 + 1_000_000 + 50,
+      ]);
+
+      const result = acc.finalize();
+      expect(result.events).toHaveLength(0);
+      expect(result.satSlipCounts['S23'] ?? 0).toBe(0);
+      // The SF signal is not even counted for SBAS, so no L1 (SBAS) stat row.
+      expect(result.signalStats.some((s) => s.system === 'S')).toBe(false);
+    });
+
+    it('still runs dual-frequency MW/GF on SBAS (L1-L5)', () => {
+      const header = makeHeader({ S: ['C1C', 'L1C', 'C5I', 'L5I'] });
+      const acc = new CycleSlipAccumulator(header);
+      const codes = ['C1C', 'L1C', 'C5I', 'L5I'];
+      const lamS1 = C_LIGHT / FREQ['S']!['1']!;
+      const lamS5 = C_LIGHT / FREQ['S']!['5']!;
+      const baseRange = 38_000_000;
+
+      for (let i = 0; i < 12; i++) {
+        const t = i * 30_000;
+        const range = baseRange + 5 * i * 30;
+        acc.onObservation(t, 'S23', codes, [
+          range,
+          range / lamS1 + 1_000_000,
+          range,
+          range / lamS5 + 2_000_000,
+        ]);
+      }
+      // Jump L5 phase by 100 cycles → geometry-free L1-L5 sees a large step.
+      const t = 12 * 30_000;
+      const range = baseRange + 5 * 12 * 30;
+      acc.onObservation(t, 'S23', codes, [
+        range,
+        range / lamS1 + 1_000_000,
+        range,
+        range / lamS5 + 2_000_000 + 100,
+      ]);
+
+      const result = acc.finalize();
+      expect(result.events.length).toBeGreaterThanOrEqual(1);
+      expect(result.satSlipCounts['S23']).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   describe('arc breaks', () => {
     it('resets state on large time gap (no false slip)', () => {
       const header = makeHeader({ G: ['C1C', 'L1C', 'C2W', 'L2W'] }, 30);

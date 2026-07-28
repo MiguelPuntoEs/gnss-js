@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.55.0
+
+### Fixed — no more SBAS cycle-slip false-positive storm
+
+- `CycleSlipAccumulator` no longer runs the single-frequency phase-code test (`|Δφ − ΔP|`) on SBAS (system `S`). That fallback detector is driven by pseudorange noise, and SBAS geostationary L1 C/A code is noisy enough that it tripped the 3 m threshold almost every epoch — a false-slip storm (~900 / 1000 epochs on a GEO that isn't slipping), which dominated the cycle-slip stats and quality verdict for any stream carrying SBAS. This matches RTKLIB/teqc, which likewise don't cycle-slip-QC SBAS L1. Dual-frequency Melbourne-Wübbena / geometry-free detection on SBAS (e.g. L1-L5) is unaffected and still runs.
+
 ## 1.54.0
 
 ### New — receiver PVT across NovAtel + u-blox (unified `ReceiverPvt`)

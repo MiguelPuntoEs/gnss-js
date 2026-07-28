@@ -305,21 +305,29 @@ export class CycleSlipAccumulator {
       }
 
       // --- 3. Single-frequency phase-code fallback ---
-      for (const [band, lm] of phaseM) {
-        if (dualChecked.has(band)) continue;
-        const prevLm = prev.phase.get(band);
-        if (prevLm === undefined) continue;
-        const cm = codeM.get(band);
-        const prevCm = prev.code.get(band);
-        if (cm === undefined || prevCm === undefined) continue;
-        const dPhase = lm - prevLm;
-        const dCode = cm - prevCm;
-        const jumpM = Math.abs(dPhase - dCode);
-        const lbl = BAND_LABELS[sys]?.[band] ?? band;
-        const sigKey = `${sys}:${lbl}`;
-        this.countEpoch(sigKey);
-        if (jumpM > SF_THRESHOLD_M) {
-          this.recordSlip(sigKey, time, prn, lbl, jumpM, new Set([band]));
+      // Skipped for SBAS: the SF test |Δφ − ΔP| is driven by pseudorange noise,
+      // and SBAS geostationary L1 C/A code is noisy enough (metre-level jitter
+      // epoch-to-epoch) that it trips the threshold almost every epoch — a
+      // false-slip storm (~900/1000) on a satellite that isn't slipping. RTKLIB
+      // and teqc likewise don't cycle-slip-QC SBAS L1. Dual-frequency MW/GF on
+      // SBAS (L1-L5) is unaffected and still runs above.
+      if (sys !== 'S') {
+        for (const [band, lm] of phaseM) {
+          if (dualChecked.has(band)) continue;
+          const prevLm = prev.phase.get(band);
+          if (prevLm === undefined) continue;
+          const cm = codeM.get(band);
+          const prevCm = prev.code.get(band);
+          if (cm === undefined || prevCm === undefined) continue;
+          const dPhase = lm - prevLm;
+          const dCode = cm - prevCm;
+          const jumpM = Math.abs(dPhase - dCode);
+          const lbl = BAND_LABELS[sys]?.[band] ?? band;
+          const sigKey = `${sys}:${lbl}`;
+          this.countEpoch(sigKey);
+          if (jumpM > SF_THRESHOLD_M) {
+            this.recordSlip(sigKey, time, prn, lbl, jumpM, new Set([band]));
+          }
         }
       }
     }
