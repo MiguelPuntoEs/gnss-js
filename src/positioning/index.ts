@@ -243,13 +243,18 @@ function sagnac(
  */
 function sbasAirTropoVar(elRad: number): number {
   const elDeg = (elRad * 180) / Math.PI;
-  // Airborne multipath (DO-229 App J) and a noise+divergence curve (AAD-A).
+  // Airborne receiver error (DO-229D §J.2.4): σ_air² = σ_mp² + (σ_noise²+σ_divg²).
+  // Multipath is the standard elevation curve; noise+divergence for Airborne
+  // Accuracy Designator A is bounded at 0.36 m (RSS) — the modelled worst case.
   const sigMp = 0.13 + 0.53 * Math.exp(-elDeg / 10);
-  const sigNoise = 0.15 + 0.43 * Math.exp(-elDeg / 6.9);
-  // Residual troposphere: 0.12 m × the DO-229 tropo mapping function.
+  const NOISE_DIVG_AADA = 0.36;
+  // Residual troposphere (DO-229D §A.4.2.4, eqs A-10/A-11): σ_TVE·m(el),
+  // σ_TVE = 0.12 m.
   const m = 1.001 / Math.sqrt(0.002001 + Math.sin(elRad) * Math.sin(elRad));
   const sigTropo = 0.12 * m;
-  return sigMp * sigMp + sigNoise * sigNoise + sigTropo * sigTropo;
+  return (
+    sigMp * sigMp + NOISE_DIVG_AADA * NOISE_DIVG_AADA + sigTropo * sigTropo
+  );
 }
 
 /** Invert a small square matrix by Gauss-Jordan; null if singular. */
@@ -665,8 +670,8 @@ export type {
 export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
 
-export { SbasProcessor } from './sbas';
-export type { SbasSatCorrection, SbasIonoDelay } from './sbas';
+export { SbasProcessor, sbasLongTermDeg, sbasIonoDeg } from './sbas';
+export type { SbasSatCorrection, SbasIonoDelay, Degradation } from './sbas';
 
 export { solvePpp } from './ppp';
 export type {
