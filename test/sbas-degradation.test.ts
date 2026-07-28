@@ -97,4 +97,28 @@ describe('SBAS degradation model (DO-229D §A.4.5)', () => {
     expect(got.rssUdre).toBe(false);
     expect(got.rssIono).toBe(true);
   });
+
+  it('decodes MT27 and applies the region δUDRE (Table A-20/A-21)', () => {
+    const proc = new SbasProcessor();
+    // One square region lat [40,60] × lon [0,10]; inside indicator 4 → ×2,
+    // outside indicator 0 → ×1.
+    const msg = mkMsg(27, [
+      [14, 3, 0], // IODS
+      [17, 3, 0], // Number of service messages (→1)
+      [20, 3, 0], // Service message number (→1)
+      [23, 3, 1], // Number of regions
+      [26, 2, 0], // Priority
+      [28, 4, 4], // δUDRE inside → 2
+      [32, 4, 0], // δUDRE outside → 1
+      [36, 8, 40], // C1 lat
+      [44, 9, 0], // C1 lon
+      [53, 8, 60], // C2 lat
+      [61, 9, 10], // C2 lon
+      [70, 1, 1], // square
+    ]);
+    expect(proc.update(msg, 2300, 100000)).toBe(27);
+    expect(proc.deltaUdre(50, 5)).toBe(2); // inside
+    expect(proc.deltaUdre(70, 5)).toBe(1); // outside → outside indicator (1)
+    expect(new SbasProcessor().deltaUdre(50, 5)).toBe(1); // no MT27 → 1
+  });
 });

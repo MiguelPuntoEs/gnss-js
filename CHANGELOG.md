@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.60.0
+
+### New — MT27 service-region δUDRE (DO-229D §A.4.4.13)
+
+- `SbasProcessor` decodes MT27 service messages (Table A-20): the geographic regions (triangular/square) and their δUDRE indicators. `deltaUdre(latDeg, lonDeg)` returns the Table A-21 multiplier for a user location — the highest-priority containing region wins (ties → lower δUDRE), else the outside value; 1 with no MT27. `satCorrection` takes optional user lat/lon and inflates σ_UDRE by δUDRE in σ²_flt, and `solveSpp` passes the receiver location on the protection-level pass. Region point-in-polygon is ray-cast (antimeridian-wrapping regions aren't handled — EGNOS/WAAS regions don't wrap). Decode + region logic unit-tested against Table A-20/A-21. (MT28 covariance-based δUDRE — the geometry-dependent alternative some providers broadcast — remains a follow-up.)
+
 ## 1.59.0
 
 ### Fixed — SBAS long-term correction time-out (DO-229D Table A-25)
