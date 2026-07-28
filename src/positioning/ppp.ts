@@ -383,52 +383,33 @@ const NBASE = 4; // position(3) + zenith wet delay(1)
 const CLK_VAR = 1e10; // white-noise clock variance reset each epoch (σ≈100 km)
 const POS_VAR = 60 * 60; // kinematic white-noise position variance (σ = 60 m)
 
-export function solvePpp(
-  epochs: PppEpoch[],
-  sp3OrSource: Sp3File | PppEphemerisSource,
-  opts: PppOptions
-): PppSolution {
-  // Precise satellite state comes from a source: an SP3/CLK file (the default,
-  // wrapped here so existing callers pass an Sp3File unchanged) or any
-  // PppEphemerisSource — e.g. an SSR/HAS-fed one for real-time PPP.
-  const source: PppEphemerisSource =
-    'satState' in sp3OrSource
-      ? sp3OrSource
-      : new Sp3EphemerisSource(sp3OrSource, opts.clk);
-  const elevMask = ((opts.elevationMaskDeg ?? 10) * Math.PI) / 180;
-  const codeSigma = opts.codeSigma ?? 3.0;
-  const phaseSigma = opts.phaseSigma ?? 0.01;
-  const ztdQ = opts.ztdProcessNoise ?? 1e-8;
-  const kinematic = opts.mode === 'kinematic';
-  const corrections = opts.corrections;
+/**
+ * Streaming float PPP — the forward EKF as a stateful engine fed one epoch at a
+ * time (mirrors {@link RtkFloatEngine}). `process(epoch)` returns that epoch's
+ * result and carries the filter forward; `solution()` finalises the session.
+ * `solvePpp` (below) is a thin batch wrapper. Same estimator as before — a
+ * broadcast/SP3/SSR source supplies satellite state via {@link PppEphemerisSource}.
+ */
+export class PppEngine {
+  private readonly source: PppEphemerisSource;
+  private readonly opts: PppOptions;
+  private readonly elevMask: number;
+  private readonly codeSigma: number;
+  private readonly phaseSigma: number;
+  private readonly ztdQ: number;
+  private readonly kinematic: boolean;
+  private readonly corrections?: PppCorrections;
+  private readonly truth?: [number, number, number];
 
-  // State vector and covariance. Position is estimated absolutely (metres).
-  const x: number[] = [
-    opts.aprioriPos[0],
-    opts.aprioriPos[1],
-    opts.aprioriPos[2],
-    0.1, // zenith wet delay (m) a priori
-  ];
-  const P: number[][] = [];
-  for (let i = 0; i < NBASE; i++) {
-    P.push(new Array<number>(NBASE).fill(0));
-  }
-  P[IDX_X]![IDX_X] = 100 * 100; // 100 m a priori position σ
-  P[IDX_Y]![IDX_Y] = 100 * 100;
-  P[IDX_Z]![IDX_Z] = 100 * 100;
-  P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
-
-  // Per-constellation receiver clock state indices, and float ambiguities.
-  const clkIdx = new Map<string, number>();
-  const clockSeeded = new Set<string>();
-  const ambIdx = new Map<string, number>();
-  const lastSeen = new Map<string, number>();
-
-  // Per-arc float-ambiguity collector for PPP-AR. Snapshotted each epoch a
-  // satellite is used and flushed to `arcs` when the arc ends (slip, drop, or
-  // end of run) so the recorded aIF is the arc's converged value.
-  const arcs: PppArc[] = [];
-  const arcSnap = new Map<
+  // Filter state (reset() initialises; mutated in place across epochs).
+  private x!: number[];
+  private P!: number[][];
+  private clkIdx!: Map<string, number>;
+  private clockSeeded!: Set<string>;
+  private ambIdx!: Map<string, number>;
+  private lastSeen!: Map<string, number>;
+  private arcs!: PppArc[];
+  private arcSnap!: Map<
     string,
     {
       aIF: number;
@@ -440,12 +421,58 @@ export function solvePpp(
       startMs: number;
       endMs: number;
     }
-  >();
-  const flushArc = (prn: string, minEpochs = 10) => {
-    const s = arcSnap.get(prn);
-    arcSnap.delete(prn);
+  >;
+  private mwState!: Map<string, { mean: number; n: number; lastEi: number }>;
+  private series!: PppEpochResult[];
+  private ei = 0;
+  private t0 = 0;
+  private convergenceSec: number | null = null;
+  private convergedStreak = 0;
+
+  constructor(opts: PppOptions, source: PppEphemerisSource) {
+    this.opts = opts;
+    this.source = source;
+    this.elevMask = ((opts.elevationMaskDeg ?? 10) * Math.PI) / 180;
+    this.codeSigma = opts.codeSigma ?? 3.0;
+    this.phaseSigma = opts.phaseSigma ?? 0.01;
+    this.ztdQ = opts.ztdProcessNoise ?? 1e-8;
+    this.kinematic = opts.mode === 'kinematic';
+    this.corrections = opts.corrections;
+    this.truth = opts.groundTruth;
+    this.reset();
+  }
+
+  /** Reinitialise the filter (fresh session). */
+  reset(): void {
+    const { opts } = this;
+    // State vector and covariance. Position is estimated absolutely (metres).
+    this.x = [opts.aprioriPos[0], opts.aprioriPos[1], opts.aprioriPos[2], 0.1];
+    const P: number[][] = [];
+    for (let i = 0; i < NBASE; i++) P.push(new Array<number>(NBASE).fill(0));
+    P[IDX_X]![IDX_X] = 100 * 100; // 100 m a priori position σ
+    P[IDX_Y]![IDX_Y] = 100 * 100;
+    P[IDX_Z]![IDX_Z] = 100 * 100;
+    P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
+    this.P = P;
+    this.clkIdx = new Map();
+    this.clockSeeded = new Set();
+    this.ambIdx = new Map();
+    this.lastSeen = new Map();
+    this.arcs = [];
+    this.arcSnap = new Map();
+    this.mwState = new Map();
+    this.series = [];
+    this.ei = 0;
+    this.t0 = 0;
+    this.convergenceSec = null;
+    this.convergedStreak = 0;
+  }
+
+  private flushArc(prn: string, minEpochs = 10): void {
+    const s = this.arcSnap.get(prn);
+    this.arcSnap.delete(prn);
     if (!s || s.nEpochs < minEpochs) return;
-    arcs.push({
+    this.arcs.push({
       prn,
       aIF: s.aIF,
       mwCyc: s.mwCyc,
@@ -456,79 +483,94 @@ export function solvePpp(
       startMs: s.startMs,
       endMs: s.endMs,
     });
-  };
-  // Melbourne–Wübbena running mean per satellite for cycle-slip detection
-  // (ionosphere-free + geometry-free, so it does not drift with the
-  // ionosphere — unlike a geometry-free test, which is unusable at
-  // equatorial stations).
-  const mwState = new Map<
-    string,
-    { mean: number; n: number; lastEi: number }
-  >();
+  }
 
   /** Detect a cycle slip via the Melbourne–Wübbena wide-lane ambiguity. */
-  const detectSlip = (o: PppSatObs, ei: number): boolean => {
+  private detectSlip(o: PppSatObs, ei: number): boolean {
     const lamW = C_LIGHT / (o.f1 - o.f2);
     const lw = o.l1 - o.l2; // wide-lane phase (cycles)
     const pn = (o.f1 * o.c1 + o.f2 * o.c2) / (o.f1 + o.f2); // narrow-lane code (m)
     const mw = lw - pn / lamW; // wide-lane ambiguity (cycles)
-    const st = mwState.get(o.prn);
+    const st = this.mwState.get(o.prn);
     let slip = o.slip;
     if (!st || ei - st.lastEi > 2)
       slip = true; // new arc / gap
     else if (Math.abs(mw - st.mean) > 4) slip = true; // > 4 WL cycles jump
-    if (slip) mwState.set(o.prn, { mean: mw, n: 1, lastEi: ei });
+    if (slip) this.mwState.set(o.prn, { mean: mw, n: 1, lastEi: ei });
     else {
       const n = st!.n + 1;
-      mwState.set(o.prn, {
+      this.mwState.set(o.prn, {
         mean: st!.mean + (mw - st!.mean) / Math.min(n, 100),
         n,
         lastEi: ei,
       });
     }
     return slip;
-  };
+  }
 
-  const growState = (initVal: number, initVar: number): number => {
-    const idx = x.length;
-    x.push(initVal);
-    for (const row of P) row.push(0);
-    P.push(new Array<number>(x.length).fill(0));
-    P[idx]![idx] = initVar;
+  private growState(initVal: number, initVar: number): number {
+    const idx = this.x.length;
+    this.x.push(initVal);
+    for (const row of this.P) row.push(0);
+    this.P.push(new Array<number>(this.x.length).fill(0));
+    this.P[idx]![idx] = initVar;
     return idx;
-  };
+  }
 
-  const dropState = (idx: number) => {
-    x.splice(idx, 1);
-    P.splice(idx, 1);
-    for (const row of P) row.splice(idx, 1);
+  private dropState(idx: number): void {
+    this.x.splice(idx, 1);
+    this.P.splice(idx, 1);
+    for (const row of this.P) row.splice(idx, 1);
     // Reindex ambiguities AND clocks above the dropped slot.
-    for (const [prn, i] of ambIdx) {
-      if (i === idx) ambIdx.delete(prn);
-      else if (i > idx) ambIdx.set(prn, i - 1);
+    for (const [prn, i] of this.ambIdx) {
+      if (i === idx) this.ambIdx.delete(prn);
+      else if (i > idx) this.ambIdx.set(prn, i - 1);
     }
-    for (const [sys, i] of clkIdx) {
-      if (i > idx) clkIdx.set(sys, i - 1);
+    for (const [sys, i] of this.clkIdx) {
+      if (i > idx) this.clkIdx.set(sys, i - 1);
     }
-  };
+  }
 
   /** State index of a constellation's receiver clock, creating it lazily. */
-  const clockOf = (sys: string): number => {
-    let i = clkIdx.get(sys);
+  private clockOf(sys: string): number {
+    let i = this.clkIdx.get(sys);
     if (i === undefined) {
-      i = growState(0, CLK_VAR);
-      clkIdx.set(sys, i);
+      i = this.growState(0, CLK_VAR);
+      this.clkIdx.set(sys, i);
     }
     return i;
-  };
-  const series: PppEpochResult[] = [];
-  const truth = opts.groundTruth;
-  const t0 = epochs[0]?.timeMs ?? 0;
-  let convergenceSec: number | null = null;
-  let convergedStreak = 0;
+  }
 
-  for (let ei = 0; ei < epochs.length; ei++) {
-    const epoch = epochs[ei]!;
+  /** Process one epoch, carrying the filter forward; returns its result. */
+  process(epoch: PppEpoch): PppEpochResult {
+    const {
+      source,
+      opts,
+      elevMask,
+      codeSigma,
+      phaseSigma,
+      ztdQ,
+      kinematic,
+      corrections,
+      truth,
+      x,
+      P,
+      clkIdx,
+      clockSeeded,
+      ambIdx,
+      lastSeen,
+      arcSnap,
+      mwState,
+      series,
+    } = this;
+    const flushArc = this.flushArc.bind(this);
+    const detectSlip = this.detectSlip.bind(this);
+    const growState = this.growState.bind(this);
+    const dropState = this.dropState.bind(this);
+    const clockOf = this.clockOf.bind(this);
+    const ei = this.ei;
+    if (ei === 0) this.t0 = epoch.timeMs;
+    const t0 = this.t0;
 
     // ── Time update ──
     // Position: static holds it constant (no process noise). Kinematic treats
@@ -846,17 +888,17 @@ export function solvePpp(
         pos[2] - truth[2]
       );
       if (error3d < 0.1) {
-        convergedStreak++;
-        if (convergedStreak >= 10 && convergenceSec == null) {
-          convergenceSec = (epoch.timeMs - t0) / 1000;
+        this.convergedStreak++;
+        if (this.convergedStreak >= 10 && this.convergenceSec == null) {
+          this.convergenceSec = (epoch.timeMs - t0) / 1000;
         }
       } else {
-        convergedStreak = 0;
-        convergenceSec = null;
+        this.convergedStreak = 0;
+        this.convergenceSec = null;
       }
     }
 
-    series.push({
+    const result: PppEpochResult = {
       timeMs: epoch.timeMs,
       enu,
       error3d,
@@ -865,59 +907,91 @@ export function solvePpp(
       ztdWet: x[IDX_ZWD]!,
       ztdHydrostatic: epochZhd,
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
-    });
+    };
+    series.push(result);
+    this.ei = ei + 1;
+    return result;
   }
 
-  // Capture the final EKF state for ambiguity resolution before flushing the
-  // open arcs (arcSnap still holds each active satellite's f1/f2/MW/elevation).
-  let finalState: PppFixState | undefined;
-  if (opts.exposeState) {
-    const ambs: PppFixState['ambiguities'] = [];
-    for (const [prn, index] of ambIdx) {
-      const s = arcSnap.get(prn);
-      if (!s || s.nEpochs < 10) continue;
-      ambs.push({
-        prn,
-        index,
-        aIF: x[index]!,
-        mwCyc: mwState.get(prn)?.mean ?? s.mwCyc,
-        f1: s.f1,
-        f2: s.f2,
-        elevDeg: s.elevSum / s.nEpochs,
-      });
+  /** Finalise the session: capture the AR state, flush open arcs, assemble. */
+  solution(): PppSolution {
+    const { opts, x, P, ambIdx, arcSnap, mwState, arcs, series, truth } = this;
+    const flushArc = this.flushArc.bind(this);
+
+    // Capture the final EKF state for ambiguity resolution before flushing the
+    // open arcs (arcSnap still holds each active satellite's f1/f2/MW/elevation).
+    let finalState: PppFixState | undefined;
+    if (opts.exposeState) {
+      const ambs: PppFixState['ambiguities'] = [];
+      for (const [prn, index] of ambIdx) {
+        const s = arcSnap.get(prn);
+        if (!s || s.nEpochs < 10) continue;
+        ambs.push({
+          prn,
+          index,
+          aIF: x[index]!,
+          mwCyc: mwState.get(prn)?.mean ?? s.mwCyc,
+          f1: s.f1,
+          f2: s.f2,
+          elevDeg: s.elevSum / s.nEpochs,
+        });
+      }
+      finalState = {
+        position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+        covariance: P.map((row) => row.slice()),
+        ambiguities: ambs,
+      };
     }
-    finalState = {
-      position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
-      covariance: P.map((row) => row.slice()),
-      ambiguities: ambs,
+
+    // Flush the still-open arcs at the end of the run.
+    for (const prn of [...arcSnap.keys()]) flushArc(prn);
+
+    const finalPos: [number, number, number] = [
+      x[IDX_X]!,
+      x[IDX_Y]!,
+      x[IDX_Z]!,
+    ];
+    const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+    const finalError3d = truth
+      ? Math.hypot(
+          finalPos[0] - truth[0],
+          finalPos[1] - truth[1],
+          finalPos[2] - truth[2]
+        )
+      : null;
+
+    return {
+      position: finalPos,
+      llh,
+      series,
+      ztdWet: x[IDX_ZWD]!,
+      ztdHydrostatic: series.length
+        ? series[series.length - 1]!.ztdHydrostatic
+        : 0,
+      epochsUsed: series.length,
+      convergenceSec: this.convergenceSec,
+      finalError3d,
+      arcs,
+      finalState,
     };
   }
+}
 
-  // Flush the still-open arcs at the end of the run.
-  for (const prn of [...arcSnap.keys()]) flushArc(prn);
-
-  const finalPos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
-  const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
-  const finalError3d = truth
-    ? Math.hypot(
-        finalPos[0] - truth[0],
-        finalPos[1] - truth[1],
-        finalPos[2] - truth[2]
-      )
-    : null;
-
-  return {
-    position: finalPos,
-    llh,
-    series,
-    ztdWet: x[IDX_ZWD]!,
-    ztdHydrostatic: series.length
-      ? series[series.length - 1]!.ztdHydrostatic
-      : 0,
-    epochsUsed: epochs.length,
-    convergenceSec,
-    finalError3d,
-    arcs,
-    finalState,
-  };
+/**
+ * Static/kinematic float PPP over a whole session — a thin batch wrapper that
+ * drives {@link PppEngine} epoch by epoch. Accepts an Sp3File (wrapped as the
+ * default source) or any {@link PppEphemerisSource} (e.g. SSR/HAS-fed).
+ */
+export function solvePpp(
+  epochs: PppEpoch[],
+  sp3OrSource: Sp3File | PppEphemerisSource,
+  opts: PppOptions
+): PppSolution {
+  const source: PppEphemerisSource =
+    'satState' in sp3OrSource
+      ? sp3OrSource
+      : new Sp3EphemerisSource(sp3OrSource, opts.clk);
+  const eng = new PppEngine(opts, source);
+  for (const epoch of epochs) eng.process(epoch);
+  return eng.solution();
 }

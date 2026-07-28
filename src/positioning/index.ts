@@ -685,7 +685,7 @@ export type {
 export { applyOrbitClock, hasToOrbitClock } from './ssr-apply';
 export type { OrbitClockCorrection, AppliedOrbitClock } from './ssr-apply';
 
-export { solvePpp, Sp3EphemerisSource } from './ppp';
+export { solvePpp, PppEngine, Sp3EphemerisSource } from './ppp';
 export type {
   PppSatObs,
   PppEpoch,
