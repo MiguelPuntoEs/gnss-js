@@ -32,8 +32,11 @@ const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
 const SEC_PER_WEEK = 604800;
 
-const MAXSBSAGEF = 30.0; // max age of a fast correction (s)
-const MAXSBSAGEL = 1800.0; // max age of a long-term correction (s)
+// Correction time-outs (DO-229D Table A-25, En Route/Terminal/LNAV column —
+// the widest safe validity for a general receiver). Fast corrections time out
+// per Table A-8 by degradation index; 30 s is the conservative floor.
+const MAXSBSAGEF = 30.0; // fast correction (s)
+const MAXSBSAGEL = 360.0; // long-term correction (s) — Table A-25 (was 1800)
 const MAXBAND = 10; // max SBAS ionosphere band index
 const two = (n: number) => String(n).padStart(2, '0');
 
