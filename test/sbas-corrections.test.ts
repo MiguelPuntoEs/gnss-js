@@ -75,6 +75,27 @@ describe.skipIf(!existsSync(UBX))(
       expect(found).toBeGreaterThan(0);
     });
 
+    it('reports a coverage funnel that brackets the correctable count', () => {
+      const sbas = new SbasProcessor();
+      for (const m of msgs) sbas.update(m.msg, m.week, m.tow, prn);
+      const last = msgs[msgs.length - 1]!;
+      const cov = sbas.coverage(last.week, last.tow);
+
+      // The funnel narrows monotonically: every corrected sat is masked, and
+      // `corrected` cannot exceed either input requirement (fast ∧ long).
+      expect(cov.masked).toBeGreaterThan(0);
+      expect(cov.corrected).toBeLessThanOrEqual(cov.masked);
+      expect(cov.corrected).toBeLessThanOrEqual(cov.fast);
+      expect(cov.corrected).toBeLessThanOrEqual(cov.long);
+      expect(cov.ionoGrid).toBe(sbas.ionoGridPoints());
+
+      // `corrected` is exactly the number of masked PRNs satCorrection accepts.
+      const applied = sbas
+        .activeSats()
+        .filter((p) => sbas.satCorrection(p, last.week, last.tow)).length;
+      expect(cov.corrected).toBe(applied);
+    });
+
     it('interpolates an ionospheric delay somewhere in the grid coverage', () => {
       const sbas = new SbasProcessor();
       for (const m of msgs) sbas.update(m.msg, m.week, m.tow, prn);
