@@ -82,8 +82,15 @@ import type { Ephemeris, GlonassEphemeris } from '../rinex/nav';
 import type { SatPosition } from '../orbit';
 import { computeSatPosition, ecefToAzEl, selectEphemeris } from '../orbit';
 import { C_LIGHT, OMEGA_E } from '../constants/gnss';
+import { ecefToGeodetic } from '../coordinates/ecef';
 import { satClockCorrection } from './index';
 import { lambdaSearch } from './lambda';
+import {
+  rcvAntennaRangeM,
+  antexFreqOfGroup,
+  type RtkAntennaConfig,
+  type RtkAntennaOffset,
+} from './rtk-antenna';
 
 /* ================================================================== */
 /*  Measurement interface                                              */
@@ -254,7 +261,15 @@ interface SatGeometry {
   cpB: number | null;
   lockR: number | undefined;
   lockB: number | undefined;
+  /** Rover receiver-antenna offset for this signal's frequency (null when no
+   *  antenna is configured or the type/frequency isn't calibrated). The base
+   *  antenna correction is already folded into {@link rhoB}. */
+  offR: RtkAntennaOffset | null;
+  /** Rover marker→ARP ENU delta (m); [0,0,0] when none. */
+  roverDelta: readonly [number, number, number];
 }
+
+const ZERO_DELTA: readonly [number, number, number] = [0, 0, 0];
 
 /**
  * Build the per-satellite geometry for one epoch: satellites present
@@ -272,9 +287,19 @@ function buildGeometry(
   ephemerides: EphemerisSource,
   timeMs: number,
   maskRad: number,
-  troposphere: boolean
+  troposphere: boolean,
+  antenna: RtkAntennaConfig | null = null
 ): SatGeometry[] {
   const out: SatGeometry[] = [];
+  // Base geodetic latitude/longitude (rad) for the base antenna correction —
+  // the base is fixed, so this is constant across the epoch.
+  let baseLatRad = 0;
+  let baseLonRad = 0;
+  if (antenna?.base) {
+    const [latDeg, lonDeg] = ecefToGeodetic(basePos[0], basePos[1], basePos[2]);
+    baseLatRad = (latDeg * Math.PI) / 180;
+    baseLonRad = (lonDeg * Math.PI) / 180;
+  }
   for (const [prn, mR] of rover) {
     const sys = prn[0]!;
     if (!'GERCJ'.includes(sys)) continue;
@@ -307,9 +332,44 @@ function buildGeometry(
         satB.z - basePos[2]
       ) / C_LIGHT;
     const [bx, by, bz] = sagnac(satB, travelB);
-    const rhoB = Math.hypot(bx - basePos[0], by - basePos[1], bz - basePos[2]);
+    let rhoB = Math.hypot(bx - basePos[0], by - basePos[1], bz - basePos[2]);
     const elB = ecefToAzEl(basePos[0], basePos[1], basePos[2], bx, by, bz).el;
     if (elB < maskRad) continue;
+
+    const group = sys + mR.code;
+
+    // Receiver antenna phase-centre corrections (per frequency; the satellite
+    // antenna cancels in the double difference). The base correction is fixed
+    // per epoch, so fold it into rhoB now; the rover correction depends on the
+    // estimated position and is applied in roverTerms.
+    let offR: RtkAntennaOffset | null = null;
+    let roverDelta: readonly [number, number, number] = ZERO_DELTA;
+    if (antenna) {
+      const antexFreq = antexFreqOfGroup(group);
+      if (antenna.base) {
+        const offB = antenna.model.rcvOffset(antenna.base.type, antexFreq);
+        if (offB) {
+          const inv = 1 / rhoB;
+          const losB: [number, number, number] = [
+            (bx - basePos[0]) * inv,
+            (by - basePos[1]) * inv,
+            (bz - basePos[2]) * inv,
+          ];
+          rhoB += rcvAntennaRangeM(
+            offB,
+            losB,
+            baseLatRad,
+            baseLonRad,
+            elB,
+            antenna.base.deltaEnu
+          );
+        }
+      }
+      if (antenna.rover) {
+        offR = antenna.model.rcvOffset(antenna.rover.type, antexFreq);
+        roverDelta = antenna.rover.deltaEnu ?? ZERO_DELTA;
+      }
+    }
 
     const gloK =
       sys === 'R'
@@ -322,7 +382,7 @@ function buildGeometry(
 
     out.push({
       prn,
-      group: sys + mR.code,
+      group,
       lambda: freq > 0 ? C_LIGHT / freq : 0,
       satR,
       rhoB,
@@ -334,6 +394,8 @@ function buildGeometry(
       cpB: mB.cp ?? null,
       lockR: mR.lockTimeMs,
       lockB: mB.lockTimeMs,
+      offR,
+      roverDelta,
     });
   }
   return out;
@@ -353,16 +415,33 @@ function roverTerms(
 ): { rho: number; u: [number, number, number]; dTropo: number } {
   const travel = Math.hypot(g.satR.x - x, g.satR.y - y, g.satR.z - z) / C_LIGHT;
   const [sx, sy, sz] = sagnac(g.satR, travel);
-  const rho = Math.hypot(sx - x, sy - y, sz - z);
+  let rho = Math.hypot(sx - x, sy - y, sz - z);
   const u: [number, number, number] = [
     (x - sx) / rho,
     (y - sy) / rho,
     (z - sz) / rho,
   ];
+  // Rover elevation is needed for the differential troposphere and for the
+  // rover antenna PCV.
+  const needEl = troposphere || g.offR != null;
+  const elR = needEl ? ecefToAzEl(x, y, z, sx, sy, sz).el : 0;
   let dTropo = 0;
   if (troposphere) {
-    const elR = ecefToAzEl(x, y, z, sx, sy, sz).el;
     dTropo = tropoDelay(Math.max(elR, 0.05)) - g.tropoB;
+  }
+  // Rover receiver-antenna correction (per frequency), added to the modelled
+  // range. u is the satellite→receiver unit vector, so −u is the line of sight
+  // receiver→satellite the correction expects.
+  if (g.offR) {
+    const [latDeg, lonDeg] = ecefToGeodetic(x, y, z);
+    rho += rcvAntennaRangeM(
+      g.offR,
+      [-u[0], -u[1], -u[2]],
+      (latDeg * Math.PI) / 180,
+      (lonDeg * Math.PI) / 180,
+      elR,
+      g.roverDelta
+    );
   }
   return { rho, u, dTropo };
 }
@@ -763,6 +842,14 @@ export interface RtkFloatOptions {
   partialFixing?: boolean;
   /** Minimum DD ambiguities to attempt/accept a fix. Default 4. */
   minFixAmbiguities?: number;
+  /**
+   * Receiver antenna phase-centre corrections (per-frequency PCO + PCV) for
+   * the base and rover. Only worthwhile on mixed-antenna baselines — with the
+   * same antenna type + orientation at both ends the correction cancels in the
+   * double difference. The satellite antenna is never needed (it cancels too).
+   * Build the model with {@link buildRtkAntenna}. Default: none.
+   */
+  antenna?: RtkAntennaConfig | null;
 }
 
 export interface RtkFloatSolution {
@@ -865,6 +952,7 @@ export class RtkFloatEngine {
       glonassAr: opts.glonassAr ?? false,
       partialFixing: opts.partialFixing ?? true,
       minFixAmbiguities: opts.minFixAmbiguities ?? 4,
+      antenna: opts.antenna ?? null,
     };
   }
 
@@ -1008,7 +1096,8 @@ export class RtkFloatEngine {
       this.ephemerides,
       timeMs,
       (o.elevationMaskDeg * Math.PI) / 180,
-      o.troposphere
+      o.troposphere,
+      o.antenna
     );
     const byPrn = new Map(geom.map((g) => [g.prn, g]));
     const dtS = this.lastMs !== null ? (timeMs - this.lastMs) / 1000 : 0;

@@ -26,6 +26,9 @@
 !/test-fixtures/f9p_rawnav_slice.ubx
 !/test-fixtures/oem719_rtk_base.gps
 !/test-fixtures/oem719_rtk_rover.gps
+# Two IGS20 receiver antennas (TRM59800 + LEIAR25, no-azimuth PCV) for the RTK
+# antenna test — extracted from igs20.atx, azimuth grids stripped.
+!/test-fixtures/antex_rtk_pair.atx
 !/test-fixtures/dlf100_rt27_slice.t02
 !/test-fixtures/dlf100_rt27_gpsnav_slice.t02
 # BINEX record test vectors from EarthScope gnsstools (Apache-2.0),

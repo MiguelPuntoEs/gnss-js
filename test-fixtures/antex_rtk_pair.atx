@@ -1,0 +1,795 @@
+     1.4            M                                       ANTEX VERSION / SYST
+A                                                           PCV TYPE / REFANT   
+########################################################### COMMENT             
+General hint for satellite antenna corrections:             COMMENT             
+   All values in this file refer to an IGS-specific axis    COMMENT             
+   convention which differs from manufacturer               COMMENT             
+   specifications for certain satellite types. The IGS      COMMENT             
+   convention allows for a uniform description of the       COMMENT             
+   spacecraft attitude for all satellites applying a yaw-   COMMENT             
+   steering attitude control. Detailed definitions are      COMMENT             
+   provided in Montenbruck et al. (2015).                   COMMENT             
+                                                            COMMENT             
+GPS satellite antenna corrections:                          COMMENT             
+  - z-offsets:                                              COMMENT             
+    + satellite-specific                                    COMMENT             
+    + based on reprocessed (1994-2020) AC SINEX files       COMMENT             
+    + weighted mean of eight ACs (COD, ESA, GFZ, GRG, JPL,  COMMENT             
+      MIT, NGS, ULR)                                        COMMENT             
+    + solutions aligned to ITRF2020                         COMMENT             
+    + trend-corrected to epoch 2015.0                       COMMENT             
+    + analyzed and combined by IGN                          COMMENT             
+    + L1 and L2 set to the results for the ionosphere-free  COMMENT             
+      linear combination                                    COMMENT             
+    + block-specific mean values for historical satellites  COMMENT             
+      (active prior to 1994)                                COMMENT             
+    + BLOCK IIIA satellites: disclosed PCO values           COMMENT             
+      adjusted by one common offset in z direction (+89.35) COMMENT             
+      (GPS, 2021)                                           COMMENT             
+  - phase center variations:                                COMMENT             
+    + block-specific                                        COMMENT             
+    + purely nadir-dependent (no azimuth-dependence)        COMMENT             
+    + maximum nadir angle: 14 degrees (Block I), 17 degrees COMMENT             
+      (Block II/IIA/IIR-A/IIR-B/IIR-M/IIF/IIIA)             COMMENT             
+    + adopted from igs05.atx                                COMMENT             
+    + solutions aligned to IGb00                            COMMENT             
+    + unweighted mean of two ACs (GFZ, TUM)                 COMMENT             
+    + L1 and L2 set to the results for the ionosphere-free  COMMENT             
+      linear combination                                    COMMENT             
+    + Block IIF: adopted from igs08.atx, solutions aligned  COMMENT             
+      to IGS08, unweighted mean of CODE and ESOC            COMMENT             
+    + BLOCK IIIA: based on estimations by ESA and CODE      COMMENT             
+    + GPS BLOCK II extension for nadir angles beyond 14     COMMENT             
+      degrees based on LEO data from 2009 analyzed by CODE  COMMENT             
+    + GPS III extension for nadir angles beyond 14 degrees  COMMENT             
+      based on LEO data as described in Conrad et al. 2023. COMMENT             
+  - x- and y-offsets:                                       COMMENT             
+    + block-specific (except for Block IIR)                 COMMENT             
+    + satellite-specific corrections from pre-flight        COMMENT             
+      calibrations for Block IIR (Dilssner et al., 2016:    COMMENT             
+      Evaluating the pre-flight GPS Block IIR/IIR-M antenna COMMENT             
+      phase pattern measurements, IGS Workshop 2016)        COMMENT             
+                                                            COMMENT             
+GLONASS satellite antenna corrections:                      COMMENT             
+  - z-offsets:                                              COMMENT             
+    + satellite-specific                                    COMMENT             
+    + weighted mean of five ACs (COD, ESA, GFZ, GRG, TUG)   COMMENT             
+    + solutions aligned to ITRF2020                         COMMENT             
+    + trend-corrected to epoch 2015.0                       COMMENT             
+    + L1 and L2 set to the results for the ionosphere-free  COMMENT             
+      linear combination                                    COMMENT             
+    + block-specific mean values for historical satellites  COMMENT             
+      (active between 1998 and 2002)                        COMMENT             
+  - phase center variations:                                COMMENT             
+    + block-specific (common parameters for GLONASS and     COMMENT             
+      GLONASS-M), satellite-specific values for R714        COMMENT             
+    + purely nadir-dependent (no azimuth-dependence)        COMMENT             
+    + maximum nadir angle: 15 degrees                       COMMENT             
+    + adopted from igs08.atx                                COMMENT             
+    + solutions aligned to ITRF2008                         COMMENT             
+    + unweighted mean of two ACs (CODE, ESOC)               COMMENT             
+    + L1 and L2 set to the results for the ionosphere-free  COMMENT             
+      linear combination                                    COMMENT             
+  - x- and y-offsets:                                       COMMENT             
+    + block-specific                                        COMMENT             
+    + based on manufacturer information                     COMMENT             
+    + time-dependent offsets for dY > 10 cm                 COMMENT             
+      (Dach et al. 2019)                                    COMMENT             
+                                                            COMMENT             
+GALILEO-0A/B satellite antenna corrections:                 COMMENT             
+  - x-, y- and z-offsets:                                   COMMENT             
+    + satellite- and frequency-specific values based        COMMENT             
+      on ESA information (Zandbergen and Navarro, 2008)     COMMENT             
+  - phase center variations:                                COMMENT             
+    + wild card values                                      COMMENT             
+                                                            COMMENT             
+GALILEO-1 and GALILEO-2 satellite antenna calibrations      COMMENT             
+  - PCO and PV values generated from ARP-related            COMMENT             
+    information in ANTEX_GAL_FOC_IOV.atx (GSA, 2016a) and   COMMENT             
+    CoM/ARP coordinates (GSA, 2016b) as published by the    COMMENT             
+    GSA                                                     COMMENT             
+  - z-PCO scale correction:                                 COMMENT             
+    + one offset for all Galileo satellites (except E102)   COMMENT             
+    + one offset for E102                                   COMMENT             
+    + weighted mean of four ACs (COD, ESA, GFZ, GRG)        COMMENT             
+    + solutions aligned to ITRF2020                         COMMENT             
+    + trend-corrected to epoch 2015.0                       COMMENT             
+  - Derived from satellite antenna ground measurements      COMMENT             
+    H(f,dir) and ideal Galileo SISICD signal-modulations    COMMENT             
+  - PCOs refer to the center-of-mass in accord with IGS     COMMENT             
+    ANTEX conventions                                       COMMENT             
+  - Carrier-phase patterns refer to the                     COMMENT             
+    carrier-phase-center and IGS axes conventions           COMMENT             
+  - Signals: E5a,E5b,E5(AltBOC),E6,E1                       COMMENT             
+             E5(AltBOC) from E5AQ and E5BQ                  COMMENT             
+                                                            COMMENT             
+BeiDou satellite antenna corrections:                       COMMENT             
+  - BDS-2 C02 and C07 PCOs represent AC- and type means of  COMMENT             
+    PCO estimates by F.Dilssner (IGS WS 2014),              COMMENT             
+    J.Guo (2106, DOI 10.1007/s00190-015-0862-9),            COMMENT             
+    A.Sipthorpe (IGS WS 2016), and                          COMMENT             
+    G.Huang (2018, DOI 10.1007/s10291-018-0716-z)           COMMENT             
+    based on the ionosphere-free combination of B1I/B2I     COMMENT             
+    observations. PCOs for C06 represent synthetic values   COMMENT             
+    computed from AC- and type-mean B1I/B3I PCOs such as    COMMENT             
+    to obtain the correct B1I/B2I PCO when forming the      COMMENT             
+    ionosphere-free combination of the C02/C06 ANTEX PCOs.  COMMENT             
+  - BDS-3S PCOs are based on the rounded average of         COMMENT             
+    "manfacturer"/"control center" values in                COMMENT             
+    Zhao et al. (2018) DOI 10.1007/s10291-017-0673-y and    COMMENT             
+    Xu et al. (2018) DOI 10.3390/s18010135                  COMMENT             
+    for C101 as well as rounded, type- and                  COMMENT             
+    frequency-spcific "control center" values from          COMMENT             
+    Li et al. (2019) DOI 10.1007/s00190-018-1144-0.         COMMENT             
+  - BDS-3 antenna information is based on band-specific     COMMENT             
+    calibrations published by CSNO                          COMMENT             
+    (http://www.csno-tarc.cn/en/system/constellation) and   COMMENT             
+    (http://www.csno-tarc.cn/en/datacenter                  COMMENT             
+        /satelliteparameters (Status 2022/08/09)),          COMMENT             
+    complementary PRN-SVN-IntSatID associations as given    COMMENT             
+    in the IGS satellite metadata SINEX file, and estimated COMMENT             
+    z-PCOs of the IGS BDS-3 satellite antenna calibration   COMMENT             
+    campaign. Missing information for the latest GEO        COMMENT             
+    satellites has been copied from GEO-1 (C217).           COMMENT             
+    + block-specific estimated B1C/B2a phase patterns from  COMMENT             
+      COD, ESA, GFZ, SHA, TUM, WHU with extrapolation to    COMMENT             
+      15 deg for BDS-3 MEO satellites                       COMMENT             
+    + block-specific estimated B1C/B2a phase patterns from  COMMENT             
+      COD, SHA, TUM, WHU with extrapolation to 10 deg for   COMMENT             
+      BDS-3 IGSO satellites                                 COMMENT             
+    + Retained x/y-PCOs and B1 z-PCOs from CSNO/TARC        COMMENT             
+    + Adjusted B2 and B3 z-PCOs of BDS-3 MEO and IGSO       COMMENT             
+      satellites to obtain SVN-specific B1C/B2a and B1I/B3I COMMENT             
+      z-PCOs aligned to IGS20 as estimated by CAS, COD,     COMMENT             
+      GFZ, GRG, JGX, SHA, TUM, WHU (B1C/B2a) as well as     COMMENT             
+      DLR and WHU (B1I/B3I)                                 COMMENT             
+    + Multiple intervals are considered for selected SECM   COMMENT             
+      satellites with time-varying PCOs. In this case, no   COMMENT             
+      PCOs are provided prior to 01-Jan-2021                COMMENT             
+    + Preliminary z-PCOs of C232 and C233 are based on      COMMENT             
+      copied CSNO vales of C228 and IGS estimates           COMMENT             
+    + Preliminary z-PCOs of C234 and C235 are based on      COMMENT             
+      copied CSNO vales of C225 and DLR estimates only      COMMENT             
+                                                            COMMENT             
+QZSS satellite antenna calibrations                         COMMENT             
+  - PCO and PV values generated from S/C-origin related     COMMENT             
+    phase center and center-of-mass information published   COMMENT             
+    by the CAO (CAO, 2017)                                  COMMENT             
+  - Replaced J001/J002/J004 z-PCOs by estimated values      COMMENT             
+    from ionosphere-free L1/L5 linear combination aligned   COMMENT             
+    to IGS20, weighted average of COD, GFZ, JGX, TUM        COMMENT             
+  - PCOs refer to the center-of-mass in accordance with IGS COMMENT             
+    ANTEX conventions                                       COMMENT             
+  - Carrier-phase patterns refer to the                     COMMENT             
+    carrier-phase-center and IGS axes                       COMMENT             
+  - PV information for QZS-1 is presently unavailable       COMMENT             
+  - Signals: J1, J5                                         COMMENT             
+                                                            COMMENT             
+QZSS satellite antenna corrections:                         COMMENT             
+  - x-, y- and z-offsets:                                   COMMENT             
+    + satellite-specific                                    COMMENT             
+    + frequency-specific                                    COMMENT             
+    + based on JAXA information (CAO)                       COMMENT             
+    + values refer to the main L-ANT antenna (consideration COMMENT             
+      of the SAIF antenna requires an extension of the      COMMENT             
+      ANTEX format for signal-specific values)              COMMENT             
+  - phase center variations:                                COMMENT             
+    - Signals: J1, J5                                       COMMENT             
+    + maximum nadir angle: 10 degrees                       COMMENT             
+                                                            COMMENT             
+IRNSS satellite antenna corrections:                        COMMENT             
+  - x-, y- and z-offsets:                                   COMMENT             
+    + block-specific                                        COMMENT             
+    + based on ISRO information (provided by A.S. Ganeshan) COMMENT             
+  - phase center variations:                                COMMENT             
+    + wild card values                                      COMMENT             
+    + maximum nadir angle: 14 degrees (taking into account  COMMENT             
+       the off-nadir pointing navigation antenna)           COMMENT             
+                                                            COMMENT             
+Receiver antenna corrections:                               COMMENT             
+  - absolute elevation- and azimuth-dependent corrections   COMMENT             
+    from robot calibrations in the field performed by       COMMENT             
+    Geo++ GmbH (https://www.geopp.de/antenna-calibration/)  COMMENT             
+  - absolute elevation- and azimuth-dependent corrections   COMMENT             
+    from chamber calibrations as performed by the           COMMENT             
+    University of Bonn, Institute of Geodesy and            COMMENT             
+    Geoinformation                                          COMMENT             
+  - purely elevation-dependent corrections from relative    COMMENT             
+    field calibrations performed by NGS and/or other        COMMENT             
+    institutions; converted to absolute corrections by      COMMENT             
+    adding                                                  COMMENT             
+      d_offset (AOAD/M_T_abs - AOAD/M_T_rel)  and           COMMENT             
+      d_pattern (AOAD/M_T_abs - AOAD/M_T_rel)               COMMENT             
+    (https://geodesy.noaa.gov/ANTCAL/,                      COMMENT             
+     https://files.igs.org/pub/station/general/igs_01.pcv)  COMMENT             
+  - IMPORTANT hints:                                        COMMENT             
+    If no corrections are available for a combination of an COMMENT             
+    antenna with one specific radome, the values for the    COMMENT             
+    corresponding antenna without a radome (radome code:    COMMENT             
+    NONE) are used within the IGS.                          COMMENT             
+    If no corrections for the GLONASS or GALILEO            COMMENT             
+    frequencies are available, do not use those             COMMENT             
+    observations                                            COMMENT             
+                                                            COMMENT             
+References:                                                 COMMENT             
+  CAO (2025) QZS 1-4, 1R, 6 Satellite Information           COMMENT             
+    URL (https://qzss.go.jp/en/technical/qzssinfo/          COMMENT             
+        (accessed 2025/04/01))                              COMMENT             
+  CSNO (2020) BeiDou Satellite information published by     COMMENT             
+    China Satellite Navigation Office:                      COMMENT             
+    URL (http://www.beidou.gov.cn/yw/gfgg/201912            COMMENT             
+          /t20191209_19613.html (accessed 2022/07/29))      COMMENT             
+  GPS(2021) GPS BLOCK IIIA satellite antenna calibrations   COMMENT             
+    URL (https://www.navcen.uscg.gov/sites/default/files    COMMENT             
+      /pdf/gps/GPSIII_APCs_SVNs_74_78_ISC_SVN78_Dec2021.pdf COMMENT             
+      (accessed 28/03/2022),                                COMMENT             
+      https://www.navcen.uscg.gov/sites/default/files       COMMENT             
+      /pdf/gps/SVN79_APC_ISC_data_release.pdf               COMMENT             
+      (accessed 12/02/2025))                                COMMENT             
+  GSA (2016a) Galileo IOV and FOC  Satellite Antenna        COMMENT             
+    Calibrations, SINEX code GSAT_2340                      COMMENT             
+    URL (https://www.gsc-europa.eu/sites/default/files      COMMENT             
+           /sites/all/files/ANTEX_GAL_FOC_IOV.atx           COMMENT             
+           (accessed 25/02/17))                             COMMENT             
+  GSA (2016b) Galileo IOV and FOC satellite metadata        COMMENT             
+    URL (https://www.gsc-europa.eu/support-to-developers    COMMENT             
+         /galileo-satellite-metadata (accessed 22/07/29))   COMMENT             
+  Conrad A., Desai S., Haines B., Axelrad P. (2023)         COMMENT             
+    Extending the GPS IIIA antenna calibration for precise  COMMENT             
+    orbit determination of low Earth orbit satellites.      COMMENT             
+    J Geod 97: 1-15, doi 10.1007/s00190-023-01718-0         COMMENT             
+  Dach R, Susnik A, Grahsl A, Villiger A, Schaer S,         COMMENT             
+    Arnold D, Prange L, Jaggi A (2019) Improving GLONASS    COMMENT             
+    Orbit Quality by Re-estimating Satellite Antenna        COMMENT             
+    Offsets. Advances in Space Research, Vol. 63, Issue 12, COMMENT             
+     pp 3835-3847, 2019. DOI 10.1016/j.asr.2019.02.031;     COMMENT             
+  Montenbruck O, Schmid R, Mercier F, Steigenberger P, Noll COMMENT             
+    C, Fatkulin R, Kogure S, Ganeshan AS (2015) GNSS        COMMENT             
+    satellite geometry and attitude models. Adv Space Res   COMMENT             
+    56(6): 1015-1029, doi: 10.1016/j.asr.2015.06.019        COMMENT             
+  Rothacher M, Schmid R (2010) ANTEX: The Antenna Exchange  COMMENT             
+    Format, Version 1.4 (https://files.igs.org/pub          COMMENT             
+    /station/general/antex14.txt)                           COMMENT             
+  Schmid R, Dach R, Collilieux X, Jaeggi A, Schmitz M,      COMMENT             
+    Dilssner F (2016) Absolute IGS antenna phase center     COMMENT             
+    model igs08.atx: status and potential improvements.     COMMENT             
+    J Geod 90(4): 343-364, doi: 10.1007/s00190-015-0876-3   COMMENT             
+  Steigenberger P. et al. (2026) The IGS BeiDou-3 Satellite COMMENT             
+    Antenna Calibration Campaign, Journal of Geodesy        COMMENT             
+    (manuscript in preparation)                             COMMENT             
+  Zandbergen R, Navarro D (2008) Specification of Galileo   COMMENT             
+    and GIOVE Space Segment properties relevant for         COMMENT             
+    Laser Ranging, ESA-EUING-TN/10206, Issue 3.2,           COMMENT             
+    08/05/2008, Galileo Project Office, ESA, Noordwijk      COMMENT             
+                                                            COMMENT             
+Major changes w.r.t. igs14.atx:                             COMMENT             
+  - Scale adjustments w.r.t. ITRF2020:                      COMMENT             
+    z-offset re-estimated for:                              COMMENT             
+      GPS:      - one common offset for BLOCK IIIA          COMMENT             
+                  satellites (+89.34)                       COMMENT             
+                - re-estimated for other satellites         COMMENT             
+                - BLOCK I satellites SVN 1-8 set to block   COMMENT             
+                  average 1775.00 (not used in Repro3)      COMMENT             
+      GLONASS:  - re-estimated                              COMMENT             
+                - GLONASS satellites 758,760-767,770,       COMMENT             
+                  775-778,780-782,785 set to block          COMMENT             
+                  average 1940.00 (not used in Repro3)      COMMENT             
+      Galileo:  - one common offset for all GALILEO         COMMENT             
+                  FOC/IOV satellites (+155.73)              COMMENT             
+                - one individual offset for E102            COMMENT             
+  - time dependent X- and Y-PCO values for GLONASS          COMMENT             
+    satellites                                              COMMENT             
+    R701, R714, R723, R725, R734, R736, R737                COMMENT             
+  - Calibration values which have changed w.r.t. igs14:     COMMENT             
+       AERAT1675_120   SPKE                                 COMMENT             
+       ASH700936D_M    SCIS                                 COMMENT             
+       ASH701945B_M    NONE                                 COMMENT             
+       ASH701945B_M    SCIS                                 COMMENT             
+       ASH701945C_M    NONE                                 COMMENT             
+       ASH701945E_M    NONE                                 COMMENT             
+       ASH701945E_M    SCIS                                 COMMENT             
+       ASH701945E_M    SCIT                                 COMMENT             
+       CHCC220GR2      CHCD                                 COMMENT             
+       HITAT45101CP    HITZ                                 COMMENT             
+       HXCCGX601A      HXCS                                 COMMENT             
+       JAVRINGANT_DM   NONE                                 COMMENT             
+       JAVRINGANT_DM   SCIS                                 COMMENT             
+       JAVRINGANT_G5T  JAVC                                 COMMENT             
+       JAVRINGANT_G5T  NONE                                 COMMENT             
+       JAVTRIUMPH_3A   NONE                                 COMMENT             
+       JAV_GRANT-G3T   NONE                                 COMMENT             
+       JAV_RINGANT_G3T NONE                                 COMMENT             
+       LEIAR10         NONE                                 COMMENT             
+       LEIAR20         LEIM                                 COMMENT             
+       LEIAR20         NONE                                 COMMENT             
+       LEIAR25.R3      LEIT                                 COMMENT             
+       LEIAR25.R3      NONE                                 COMMENT             
+       LEIAR25.R4      LEIT                                 COMMENT             
+       LEIAR25.R4      NONE                                 COMMENT             
+       LEIAT504        NONE                                 COMMENT             
+       LEIAT504GG      NONE                                 COMMENT             
+       NAX3G+C         NONE                                 COMMENT             
+       NOV703GGG.R2    NONE                                 COMMENT             
+       NOV850          NONE                                 COMMENT             
+       RNG80971.00     NONE                                 COMMENT             
+       SEPCHOKE_B3E6   NONE                                 COMMENT             
+       SEPCHOKE_B3E6   SPKE                                 COMMENT             
+       STHCR3-G3       STHC                                 COMMENT             
+       STXSA1200       STXR                                 COMMENT             
+       TPSCR.G3        NONE                                 COMMENT             
+       TPSCR.G3        SCIS                                 COMMENT             
+       TPSCR.G3        TPSH                                 COMMENT             
+       TPSCR.G5        TPSH                                 COMMENT             
+       TPSCR.G5C       NONE                                 COMMENT             
+       TPSCR3_GGD      CONE                                 COMMENT             
+       TRM115000.00    NONE                                 COMMENT             
+       TRM29659.00     NONE                                 COMMENT             
+       TRM55971.00     NONE                                 COMMENT             
+       TRM55971.00     TZGD                                 COMMENT             
+       TRM57971.00     NONE                                 COMMENT             
+       TRM57971.00     TZGD                                 COMMENT             
+       TRM59800.00     NONE                                 COMMENT             
+       TRM59800.00     SCIS                                 COMMENT             
+       TRM59800.00     SCIT                                 COMMENT             
+       TRM59800.80     NONE                                 COMMENT             
+       TRM59800.80     SCIS                                 COMMENT             
+       TRM59800.80     SCIT                                 COMMENT             
+       TRM59900.00     SCIS                                 COMMENT             
+       TWIVC6150       SCIS                                 COMMENT             
+       TWIVP6050_CONE  NONE                                 COMMENT             
+                                                            COMMENT             
+Changes:                                                    COMMENT             
+  week 2425 Modified BEIDOU-2G-CAST C231 (C59/C62) starting COMMENT             
+            and ending time                                 COMMENT             
+            Added HITVBASE        NONE                      COMMENT             
+  week 2423 Modified BEIDOU-2G-CAST satellites C217 and     COMMENT             
+            C231 assignment involving PRN C01/C04/C59/C62   COMMENT             
+            Extended receiver antenna patterns with         COMMENT             
+            C05 (copy from G05). E01/C01/J01 (G01),         COMMENT             
+            J02 (G02), E5, C05, J05 (G05) for               COMMENT             
+            GPPVC6050 NONE/GPP1 and JAV_RINGANT_G3T NONE    COMMENT             
+            Added EFIF6           NONE                      COMMENT             
+                  EFIF8L          NONE                      COMMENT             
+                  EFIN30          NONE                      COMMENT             
+                  EFIN50          NONE                      COMMENT             
+                  GMTSG20AR       NONE                      COMMENT             
+                  GMTSG6L         NONE                      COMMENT             
+                  PRNI35XR        NONE                      COMMENT             
+                  METX25R         NONE                      COMMENT             
+  week 2417 Decommission date G043 (G13)                    COMMENT             
+            Added G083 (G13)                                COMMENT             
+                  CHCI85          NONE                      COMMENT             
+                  JAVPULSERONE_R  NONE                      COMMENT             
+                  JAVRINGANT_S    JVSR                      COMMENT             
+                  JAVRINGANT_S    NONE                      COMMENT             
+                  TRM259900.00    NONE                      COMMENT             
+  week 2415 Decommission date C005 (C06), C006 (C04),       COMMENT             
+                  C007 (C07), C008 (C08), C009 (C09),       COMMENT             
+                  C010 (C10), C012 (C11), C013 (C12),       COMMENT             
+                  C015 (C14), C016 (C02), C017 (C13),       COMMENT             
+                  C018 (C03), C019 (C16), C020 (C01),       COMMENT             
+                  C101 (C31), C217 (C59), C220 (C38),       COMMENT             
+                  C221 (C39), C222 (C46), C223 (C45),       COMMENT             
+                  C224 (C40), C225 (C44), C226 (C43),       COMMENT             
+                  C229 (C60), C230 (C61), C231 (C62),       COMMENT             
+                  C232 (C50), C233 (C48), C234 (C47),       COMMENT             
+                  C235 (C49)                                COMMENT             
+            Added C017 (C09), C217 (C01), C019 (C10),       COMMENT             
+                  C220 (C06), C221 (C07), C222 (C40),       COMMENT             
+                  C223 (C39), C224 (C08), C225 (C31),       COMMENT             
+                  C226 (C38), C229 (C02), C230 (C03),       COMMENT             
+                  C231 (C04), C232 (C14), C233 (C12),       COMMENT             
+                  C234 (C11), C235 (C13)                    COMMENT             
+            Added HXCCSX600A      NONE                      COMMENT             
+                  HXCGPS1000      NONE                      COMMENT             
+                  SKFSTREAM4D     NONE                      COMMENT             
+  week 2408 Added EML_REACH_RS4   NONE                      COMMENT             
+                  EML_REACH_RS4P  NONE                      COMMENT             
+                  GNNMACH2        NONE                      COMMENT             
+                  GNNMACH3        NONE                      COMMENT             
+                  HEMA65          NONE                      COMMENT             
+                  STHALPS1        NONE                      COMMENT             
+                  STHALPS2        NONE                      COMMENT             
+  week 2405 Adjusted BeiDou-3 and QZSS scale                COMMENT             
+            Modified zPCO for G081                          COMMENT             
+            Modified PV for GPS BLOCK IIIA above 14 degrees COMMENT             
+            Added E233 (E28), E234 (E32)                    COMMENT             
+                  G082 (G20)                                COMMENT             
+            Decommission date G051 (G20)                    COMMENT             
+            Added CNTAT600BDS     CNTS                      COMMENT             
+                  KOLK2           NONE                      COMMENT             
+                  KOLK60          NONE                      COMMENT             
+                  RSIRENO2        NONE                      COMMENT             
+                  RSIROVA3        NONE                      COMMENT             
+                  STHG8           NONE                      COMMENT             
+                  STHINSIGHTV3    NONE                      COMMENT             
+                  TPMTPS76        NONE                      COMMENT             
+                  TPMTPS95        NONE                      COMMENT             
+  week 2401 Added R733 (R27), R804 (R06)                    COMMENT             
+            Decommission date R733 (R06), R804 (R27)        COMMENT             
+            E205 (E24)                                      COMMENT             
+  week 2388 Added R808 (R20), R719 (R28)                    COMMENT             
+            Decommission date R719 (R20)                    COMMENT             
+  week 2385 Added CNTJUPITER      NONE                      COMMENT             
+            Modified calibration provider for QZSS          COMMENT             
+  week 2375 Added AOAD/M_T_RFI_GL NONE                      COMMENT             
+                  GING50          NONE                      COMMENT             
+                  PRNI20AR        NONE                      COMMENT             
+                  PRNI30VR        NONE                      COMMENT             
+                  PRNI90VR        NONE                      COMMENT             
+                  STHINSIGHTV2    NONE                      COMMENT             
+  week 2370 Added G081 (G21), R807(R19), R720 (R25)         COMMENT             
+            Decommission date G045 (G21), R807 (R25),       COMMENT             
+                              R720 (R19)                    COMMENT             
+                  GMXZENITH06PRO  NONE                      COMMENT             
+                  KOLK6           NONE                      COMMENT             
+                  RSIROVA1S       NONE                      COMMENT             
+                  TIAPENG7H+      NONE                      COMMENT             
+                  TIAPENGX2A      NONE                      COMMENT             
+  week 2361 Corrected COSPAR ID for R804 (2025-042A)        COMMENT             
+            Added STCSDI          NONE                      COMMENT             
+                  TNVT10PRO       NONE                      COMMENT             
+                  TNVT5           NONE                      COMMENT             
+  week 2360 Added R804 (R27), J007(J08)                     COMMENT             
+            Decommission date R716 (R27)                    COMMENT             
+            Added CHCI76          NONE                      COMMENT             
+                  CHCI83PRO       NONE                      COMMENT             
+                  EFIF8           NONE                      COMMENT             
+                  JAVGRANT_3LS    NONE                      COMMENT             
+                  JAVGRANT_3LS+GP JVSD                      COMMENT             
+                  JAVGRANT_G3T+GP JVSD                      COMMENT             
+                  JAVGRANT_G3T+   NONE                      COMMENT             
+                  TNVT20PRO       NONE                      COMMENT             
+                  TNVT20          NONE                      COMMENT             
+                  TNVT5LITE       NONE                      COMMENT             
+  week 2356 Added C234 (C47), C235 (C49)                    COMMENT             
+            Added JAVRINGANT_3L   NONE                      COMMENT             
+                  JAVRINGANT_3L   JAVD                      COMMENT             
+                  STXS850         NONE                      COMMENT             
+  week 2354 Updated PCO and PV for E225, E226, E227, E232   COMMENT             
+            Updated PCO for G079                            COMMENT             
+  week 2353 Added R733 (R06), R803 (R26)                    COMMENT             
+            Decommission date R733 (R26), R803 (R06)        COMMENT             
+                  CHCI89          NONE                      COMMENT             
+                  CHCI93          NONE                      COMMENT             
+                  GMTGAT10        GMTD                      COMMENT             
+                  GMXZENITH55     NONE                      COMMENT             
+                  KRL_FTYPE       NONE                      COMMENT             
+                  STXS880         NONE                      COMMENT             
+  week 2350 Added G080 (G01), R733 (R26), R803 (R06)        COMMENT             
+            Decommission date G049 (G01), R733 (R06)        COMMENT             
+                              R803 (R26)                    COMMENT             
+  week 2343 Added CNTMARSPRO      NONE                      COMMENT             
+                  DREPOZP5        NONE                      COMMENT             
+                  LEIGS05         NONE                      COMMENT             
+                  GING40PLUS      NONE                      COMMENT             
+                  STCSELITE       NONE                      COMMENT             
+                  STHG4           NONE                      COMMENT             
+                  STHINNO8        NONE                      COMMENT             
+                  STXS999         NONE                      COMMENT             
+                  Antenna pattern for  SEPVC6150L corrected COMMENT             
+  week 2335 Added E226 (E23) and E232 (E16)                 COMMENT             
+            Added TRMR980         NONE                      COMMENT             
+  week 2317 Added E225 (E29) and E227 (E06)                 COMMENT             
+            Added GPPVC6050       NONE                      COMMENT             
+                  GPPVC6050       GPP1                      COMMENT             
+                  SPPSP100        NONE                      COMMENT             
+                  TRMR780-2       NONE                      COMMENT             
+  week 2315 Added GMXZENITH60PRO  NONE                      COMMENT             
+                  JAVTRIUMPH_3A1  NONE                      COMMENT             
+                  JAVTRIUMPH_LSPA NONE                      COMMENT             
+  week 2309 Added G049 (G01)                                COMMENT             
+            Decommission date G063 (G01)                    COMMENT             
+  week 2303 Added R803(R25,R26), R807 (R26,R25),            COMMENT             
+                  C232(C50), C233(C48)                      COMMENT             
+            Decommission date R803 (R26,R25), R807 (R25,R26)COMMENT             
+                  GING40          NONE                      COMMENT             
+  week 2290 Added JAVRINGANT_DMT  NONE                      COMMENT             
+                  JAVRINGANT_DMT  SCIS                      COMMENT             
+                  TWI3972XF_CONE  NONE                      COMMENT             
+  week 2287 Added R803 (R26)                                COMMENT             
+            Decommission date R801 (R26)                    COMMENT             
+                  LEIICG160       NONE                      COMMENT             
+  week 2283 Added EML_REACH_RS3   NONE                      COMMENT             
+                  JAVTRIUMPH_1MPR NONE                      COMMENT             
+                  TPSHIPER_CR     NONE                      COMMENT             
+  week 2280 Added I009 (I09) and I010 (I10)                 COMMENT             
+            Added JAVGRANT_3L+GP  JVSD                      COMMENT             
+                  JAVGRANT_3L     NONE                      COMMENT             
+                  JAVGRANT_G5TLBI NONE                      COMMENT             
+                  JAVTRIUMPH_3NRA NONE                      COMMENT             
+  week 2274 Added G044 (G22)                                COMMENT             
+            Decommission date G041 (G22)                    COMMENT             
+  week 2272 Added C231 (C62)                                COMMENT             
+            Added TRMR580         NONE                      COMMENT             
+  week 2270 Added STXSA1100       STXM                      COMMENT             
+                  TRM159900.00    SCIT                      COMMENT             
+                  TRMDA2          NONE                      COMMENT             
+  week 2247 Added G079 (G28)                                COMMENT             
+            Decommission date G049 (G28)                    COMMENT             
+  week 2239 Added R861 (R16)                                COMMENT             
+            Decommission date R736 (R16)                    COMMENT             
+            Added EML_REACH_RX    NONE                      COMMENT             
+                  CNTT300PLUS     NONE                      COMMENT             
+                  CNTAT600        CNTS                      COMMENT             
+            Radome changed from CNTS to NONE for            COMMENT             
+              CNTAT340, CNTT30, CNTT300                     COMMENT             
+  week 2233 Added R807 (R25), G049 (G28)                    COMMENT             
+            Decommission date G044 (G28)                    COMMENT             
+            Added ESVUA92         NONE                      COMMENT             
+                  CNTAT340        CNTS                      COMMENT             
+                  CNTAT350        CNTS                      COMMENT             
+                  CNTT30          CNTS                      COMMENT             
+  week 2226 Extended PV (14 to 15 degree) for Galileo IOV   COMMENT             
+            satellites                                      COMMENT             
+            added AERAT1675_542E  NEVE                      COMMENT             
+                  AOAD/M_T_RFI_T  NONE                      COMMENT             
+                  AOAD/M_T_RFI_T  SCIS                      COMMENT             
+                  EML_REACH_RS2   NONE                      COMMENT             
+                  EML_REACH_RS2+  NONE                      COMMENT             
+                  GING20M         NONE                      COMMENT             
+                  GING30          NONE                      COMMENT             
+                  GMXZENITH06     NONE                      COMMENT             
+                  GMXZENITH16     NONE                      COMMENT             
+                  HEMS631         NONE                      COMMENT             
+                  JAVGRANT_G5T+GP JVSD                      COMMENT             
+                  JAV_GRANT-G3T+G JVSD                      COMMENT             
+                  LEIAS11         NONE                      COMMENT             
+                  LEIFLX100       NONE                      COMMENT             
+                  SEPVC6150L      NONE                      COMMENT             
+                  SEPVC6150L      SCIS                      COMMENT             
+                  SLGAT45101CP    SLGZ                      COMMENT             
+                  SOKGRX3         NONE                      COMMENT             
+                  SPP135000.00    NONE                      COMMENT             
+                  STXS700A        NONE                      COMMENT             
+                  STXS900A        NONE                      COMMENT             
+                  STXS990A        NONE                      COMMENT             
+                  TIAPENG6J2      NONE                      COMMENT             
+                  TRM59800.99     SCIS                      COMMENT             
+                  TRMR12          NONE                      COMMENT             
+                  TRMR12I         NONE                      COMMENT             
+                  TRMR780         NONE                      COMMENT             
+                  TWIVC6150       NONE                      COMMENT             
+                  TWIVC6150       SCIS                      COMMENT             
+                  TWIVSP6037L     NONE                      COMMENT             
+  week 2221 Updated PCO/PV for E223 (E34) and               COMMENT             
+                               E224 (E10)                   COMMENT             
+            Corrected x/y PCO for GPS BLOCK IIIA            COMMENT             
+                      G074-078: x/y axis                    COMMENT             
+            BeiDou, QZSS, and IRNSS satellites added        COMMENT             
+  week 2220 IGS20 ANTEX release                             COMMENT             
+                                                            COMMENT             
+Compiled by Arturo Villiger (swisstopo),                    COMMENT             
+  e-mail: arturo.villiger@swisstopo.ch                      COMMENT             
+########################################################### COMMENT             
+                                                            END OF HEADER       
+                                                            START OF ANTENNA    
+LEIAR25.R3      NONE                                        TYPE / SERIAL NO    
+ROBOT               Geo++ GmbH               5    09-JUN-19 METH / BY / # / DATE
+     0.0                                                    DAZI
+     0.0  90.0   5.0                                        ZEN1 / ZEN2 / DZEN  
+    23                                                      # OF FREQUENCIES    
+IGS20_2425                                                  SINEX CODE          
+ PCV  #a 005 #c 011 #s 022       | G01 E01 J01 S01 C01      COMMENT             
+ PCV  #a 005 #c 011 #s 011       | G02 J02                  COMMENT             
+ PCV  #a 005 #c 011 #s 022       | G05 E05 J05 C05 S05 I05  COMMENT             
+ PCV  #a 005 #c 011 #s 011       | R01 R04                  COMMENT             
+ PCV  #a 005 #c 011 #s 010       | R02 R06                  COMMENT             
+ PCV  #a 005 #c 011 #s 011       | E06 J06                  COMMENT             
+ PCV  #a 005 #c 011 #s 021       | E07 C07                  COMMENT             
+ PCV  #a 005 #c 011 #s 010       | C02                      COMMENT             
+ PCV  #a 005 #c 011 #s 010       | C06                      COMMENT             
+ a: #antennas, c: #calibrations, s: #sets for frequency     COMMENT             
+   G01                                                      START OF FREQUENCY  
+      0.80      0.58    160.59                              NORTH / EAST / UP   
+   NOAZI    0.00    0.20    0.77    1.57    2.42    3.09    3.39    3.22    2.58    1.60    0.49   -0.55   -1.37   -1.90   -2.10   -1.86   -0.93    0.99    4.09
+   G01                                                      END OF FREQUENCY    
+   E01                                                      START OF FREQUENCY  
+      0.80      0.58    160.59                              NORTH / EAST / UP   
+   NOAZI    0.00    0.20    0.77    1.57    2.42    3.09    3.39    3.22    2.58    1.60    0.49   -0.55   -1.37   -1.90   -2.10   -1.86   -0.93    0.99    4.09
+   E01                                                      END OF FREQUENCY    
+   J01                                                      START OF FREQUENCY  
+      0.80      0.58    160.59                              NORTH / EAST / UP   
+   NOAZI    0.00    0.20    0.77    1.57    2.42    3.09    3.39    3.22    2.58    1.60    0.49   -0.55   -1.37   -1.90   -2.10   -1.86   -0.93    0.99    4.09
+   J01                                                      END OF FREQUENCY    
+   S01                                                      START OF FREQUENCY  
+      0.80      0.58    160.59                              NORTH / EAST / UP   
+   NOAZI    0.00    0.20    0.77    1.57    2.42    3.09    3.39    3.22    2.58    1.60    0.49   -0.55   -1.37   -1.90   -2.10   -1.86   -0.93    0.99    4.09
+   S01                                                      END OF FREQUENCY    
+   C01                                                      START OF FREQUENCY  
+      0.80      0.58    160.59                              NORTH / EAST / UP   
+   NOAZI    0.00    0.20    0.77    1.57    2.42    3.09    3.39    3.22    2.58    1.60    0.49   -0.55   -1.37   -1.90   -2.10   -1.86   -0.93    0.99    4.09
+   C01                                                      END OF FREQUENCY    
+   G02                                                      START OF FREQUENCY  
+     -0.07      0.12    158.68                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.39   -0.78   -1.21   -1.65   -2.16   -2.76   -3.44   -4.08   -4.48   -4.46   -3.93   -2.94   -1.62   -0.03    1.97    4.78    8.82
+   G02                                                      END OF FREQUENCY    
+   J02                                                      START OF FREQUENCY  
+     -0.07      0.12    158.68                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.39   -0.78   -1.21   -1.65   -2.16   -2.76   -3.44   -4.08   -4.48   -4.46   -3.93   -2.94   -1.62   -0.03    1.97    4.78    8.82
+   J02                                                      END OF FREQUENCY    
+   G05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   G05                                                      END OF FREQUENCY    
+   E05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   E05                                                      END OF FREQUENCY    
+   J05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   J05                                                      END OF FREQUENCY    
+   C05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   C05                                                      END OF FREQUENCY    
+   S05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   S05                                                      END OF FREQUENCY    
+   I05                                                      START OF FREQUENCY  
+     -0.07     -0.03    163.48                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.06   -0.23   -0.49   -0.82   -1.23   -1.71   -2.27   -2.84   -3.33   -3.62   -3.62   -3.27   -2.59   -1.60   -0.24    1.70    4.48    8.29
+   I05                                                      END OF FREQUENCY    
+   R01                                                      START OF FREQUENCY  
+      0.93      0.48    161.10                              NORTH / EAST / UP   
+   NOAZI    0.00    0.15    0.60    1.29    2.10    2.86    3.35    3.41    2.96    2.07    0.94   -0.19   -1.10   -1.70   -1.94   -1.76   -1.01    0.62    3.37
+   R01                                                      END OF FREQUENCY    
+   R04                                                      START OF FREQUENCY  
+      0.93      0.48    161.10                              NORTH / EAST / UP   
+   NOAZI    0.00    0.15    0.60    1.29    2.10    2.86    3.35    3.41    2.96    2.07    0.94   -0.19   -1.10   -1.70   -1.94   -1.76   -1.01    0.62    3.37
+   R04                                                      END OF FREQUENCY    
+   R02                                                      START OF FREQUENCY  
+     -0.01     -0.02    157.61                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.40   -0.80   -1.24   -1.72   -2.25   -2.86   -3.54   -4.18   -4.59   -4.57   -4.04   -3.03   -1.66   -0.03    1.92    4.47    7.95
+   R02                                                      END OF FREQUENCY    
+   R06                                                      START OF FREQUENCY  
+     -0.01     -0.02    157.61                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.40   -0.80   -1.24   -1.72   -2.25   -2.86   -3.54   -4.18   -4.59   -4.57   -4.04   -3.03   -1.66   -0.03    1.92    4.47    7.95
+   R06                                                      END OF FREQUENCY    
+   E06                                                      START OF FREQUENCY  
+     -0.06      0.02    155.19                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.40   -0.82   -1.31   -1.82   -2.38   -2.99   -3.64   -4.24   -4.66   -4.72   -4.29   -3.35   -1.93   -0.11    2.10    4.73    7.85
+   E06                                                      END OF FREQUENCY    
+   J06                                                      START OF FREQUENCY  
+     -0.06      0.02    155.19                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.11   -0.40   -0.82   -1.31   -1.82   -2.38   -2.99   -3.64   -4.24   -4.66   -4.72   -4.29   -3.35   -1.93   -0.11    2.10    4.73    7.85
+   J06                                                      END OF FREQUENCY    
+   E07                                                      START OF FREQUENCY  
+     -0.14      0.04    160.55                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.33   -0.68   -1.11   -1.60   -2.16   -2.79   -3.44   -4.02   -4.37   -4.35   -3.91   -3.05   -1.83   -0.25    1.80    4.55    8.19
+   E07                                                      END OF FREQUENCY    
+   C07                                                      START OF FREQUENCY  
+     -0.14      0.04    160.55                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.33   -0.68   -1.11   -1.60   -2.16   -2.79   -3.44   -4.02   -4.37   -4.35   -3.91   -3.05   -1.83   -0.25    1.80    4.55    8.19
+   C07                                                      END OF FREQUENCY    
+   C02                                                      START OF FREQUENCY  
+      0.57      0.59    159.66                              NORTH / EAST / UP   
+   NOAZI    0.00    0.18    0.65    1.27    1.85    2.22    2.24    1.88    1.21    0.32   -0.65   -1.56   -2.30   -2.71   -2.67   -1.99   -0.54    1.73    4.60
+   C02                                                      END OF FREQUENCY    
+   C06                                                      START OF FREQUENCY  
+     -0.40      0.03    154.08                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.15   -0.60   -1.27   -2.10   -2.99   -3.89   -4.74   -5.46   -5.99   -6.27   -6.21   -5.77   -4.88   -3.50   -1.57    1.00    4.26    8.16
+   C06                                                      END OF FREQUENCY    
+                                                            END OF ANTENNA      
+                                                            START OF ANTENNA    
+TRM59800.00     NONE                                        TYPE / SERIAL NO    
+ROBOT               Geo++ GmbH               5    09-JUN-19 METH / BY / # / DATE
+     0.0                                                    DAZI
+     0.0  90.0   5.0                                        ZEN1 / ZEN2 / DZEN  
+    25                                                      # OF FREQUENCIES    
+IGS20_2425                                                  SINEX CODE          
+ PCV  #a 005 #c 011 #s 024       | G01 E01 J01 S01 C01      COMMENT             
+ PCV  #a 005 #c 011 #s 011       | G02 J02                  COMMENT             
+ PCV  #a 005 #c 011 #s 023       | G05 E05 J05 C05 S05 I05  COMMENT             
+ PCV  #a 005 #c 011 #s 012       | R01 R04                  COMMENT             
+ PCV  #a 005 #c 011 #s 012       | R02 R06                  COMMENT             
+ PCV  #a 005 #c 011 #s 012       | E06 J06                  COMMENT             
+ PCV  #a 005 #c 011 #s 024       | E07 C07                  COMMENT             
+ PCV  #a 005 #c 011 #s 012       | E08 C08                  COMMENT             
+ PCV  #a 005 #c 011 #s 012       | C02                      COMMENT             
+ PCV  #a 005 #c 011 #s 012       | C06                      COMMENT             
+ a: #antennas, c: #calibrations, s: #sets for frequency     COMMENT             
+   G01                                                      START OF FREQUENCY  
+      0.65      1.35     89.35                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.23   -0.90   -1.95   -3.28   -4.73   -6.14   -7.31   -8.10   -8.41   -8.23   -7.57   -6.43   -4.77   -2.48    0.62    4.65    9.53   14.89
+   G01                                                      END OF FREQUENCY    
+   E01                                                      START OF FREQUENCY  
+      0.65      1.35     89.35                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.23   -0.90   -1.95   -3.28   -4.73   -6.14   -7.31   -8.10   -8.41   -8.23   -7.57   -6.43   -4.77   -2.48    0.62    4.65    9.53   14.89
+   E01                                                      END OF FREQUENCY    
+   J01                                                      START OF FREQUENCY  
+      0.65      1.35     89.35                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.23   -0.90   -1.95   -3.28   -4.73   -6.14   -7.31   -8.10   -8.41   -8.23   -7.57   -6.43   -4.77   -2.48    0.62    4.65    9.53   14.89
+   J01                                                      END OF FREQUENCY    
+   S01                                                      START OF FREQUENCY  
+      0.65      1.35     89.35                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.23   -0.90   -1.95   -3.28   -4.73   -6.14   -7.31   -8.10   -8.41   -8.23   -7.57   -6.43   -4.77   -2.48    0.62    4.65    9.53   14.89
+   S01                                                      END OF FREQUENCY    
+   C01                                                      START OF FREQUENCY  
+      0.65      1.35     89.35                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.23   -0.90   -1.95   -3.28   -4.73   -6.14   -7.31   -8.10   -8.41   -8.23   -7.57   -6.43   -4.77   -2.48    0.62    4.65    9.53   14.89
+   C01                                                      END OF FREQUENCY    
+   G02                                                      START OF FREQUENCY  
+     -0.24      0.00    117.76                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.14   -0.54   -1.15   -1.91   -2.76   -3.64   -4.47   -5.14   -5.54   -5.54   -5.10   -4.23   -3.00   -1.48    0.40    2.86    6.24   10.75
+   G02                                                      END OF FREQUENCY    
+   J02                                                      START OF FREQUENCY  
+     -0.24      0.00    117.76                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.14   -0.54   -1.15   -1.91   -2.76   -3.64   -4.47   -5.14   -5.54   -5.54   -5.10   -4.23   -3.00   -1.48    0.40    2.86    6.24   10.75
+   J02                                                      END OF FREQUENCY    
+   G05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   G05                                                      END OF FREQUENCY    
+   E05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   E05                                                      END OF FREQUENCY    
+   J05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   J05                                                      END OF FREQUENCY    
+   C05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   C05                                                      END OF FREQUENCY    
+   S05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   S05                                                      END OF FREQUENCY    
+   I05                                                      START OF FREQUENCY  
+     -0.12     -0.04    127.60                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.09   -0.37   -0.85   -1.54   -2.39   -3.33   -4.22   -4.93   -5.33   -5.36   -5.02   -4.33   -3.32   -1.91    0.05    2.74    6.27   10.52
+   I05                                                      END OF FREQUENCY    
+   R01                                                      START OF FREQUENCY  
+      0.98      1.51     86.86                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.29   -1.12   -2.37   -3.85   -5.37   -6.76   -7.87   -8.60   -8.88   -8.67   -7.96   -6.71   -4.88   -2.39    0.87    5.01   10.00   15.59
+   R01                                                      END OF FREQUENCY    
+   R04                                                      START OF FREQUENCY  
+      0.98      1.51     86.86                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.29   -1.12   -2.37   -3.85   -5.37   -6.76   -7.87   -8.60   -8.88   -8.67   -7.96   -6.71   -4.88   -2.39    0.87    5.01   10.00   15.59
+   R04                                                      END OF FREQUENCY    
+   R02                                                      START OF FREQUENCY  
+     -0.16     -0.20    114.47                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.19   -0.73   -1.52   -2.44   -3.38   -4.27   -5.07   -5.69   -6.03   -5.98   -5.47   -4.48   -3.13   -1.49    0.44    2.87    6.16   10.63
+   R02                                                      END OF FREQUENCY    
+   R06                                                      START OF FREQUENCY  
+     -0.16     -0.20    114.47                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.19   -0.73   -1.52   -2.44   -3.38   -4.27   -5.07   -5.69   -6.03   -5.98   -5.47   -4.48   -3.13   -1.49    0.44    2.87    6.16   10.63
+   R06                                                      END OF FREQUENCY    
+   E06                                                      START OF FREQUENCY  
+      0.11      0.19    112.31                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.17   -0.66   -1.37   -2.21   -3.10   -3.99   -4.84   -5.56   -6.03   -6.09   -5.62   -4.63   -3.19   -1.47    0.47    2.78    5.78    9.82
+   E06                                                      END OF FREQUENCY    
+   J06                                                      START OF FREQUENCY  
+      0.11      0.19    112.31                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.17   -0.66   -1.37   -2.21   -3.10   -3.99   -4.84   -5.56   -6.03   -6.09   -5.62   -4.63   -3.19   -1.47    0.47    2.78    5.78    9.82
+   J06                                                      END OF FREQUENCY    
+   E07                                                      START OF FREQUENCY  
+     -0.23     -0.02    120.30                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.12   -0.46   -1.02   -1.75   -2.62   -3.52   -4.37   -5.03   -5.40   -5.41   -5.03   -4.32   -3.29   -1.96   -0.20    2.21    5.46    9.62
+   E07                                                      END OF FREQUENCY    
+   C07                                                      START OF FREQUENCY  
+     -0.23     -0.02    120.30                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.12   -0.46   -1.02   -1.75   -2.62   -3.52   -4.37   -5.03   -5.40   -5.41   -5.03   -4.32   -3.29   -1.96   -0.20    2.21    5.46    9.62
+   C07                                                      END OF FREQUENCY    
+   E08                                                      START OF FREQUENCY  
+     -0.09      0.15    123.97                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.10   -0.42   -0.95   -1.70   -2.60   -3.56   -4.44   -5.10   -5.44   -5.40   -5.02   -4.33   -3.34   -1.97   -0.06    2.60    6.12   10.34
+   E08                                                      END OF FREQUENCY    
+   C08                                                      START OF FREQUENCY  
+     -0.09      0.15    123.97                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.10   -0.42   -0.95   -1.70   -2.60   -3.56   -4.44   -5.10   -5.44   -5.40   -5.02   -4.33   -3.34   -1.97   -0.06    2.60    6.12   10.34
+   C08                                                      END OF FREQUENCY    
+   C02                                                      START OF FREQUENCY  
+      0.73      0.89     91.71                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.21   -0.83   -1.84   -3.15   -4.65   -6.13   -7.42   -8.33   -8.78   -8.75   -8.25   -7.28   -5.74   -3.46   -0.26    3.89    8.79   13.90
+   C02                                                      END OF FREQUENCY    
+   C06                                                      START OF FREQUENCY  
+     -0.03     -0.22    112.69                              NORTH / EAST / UP   
+   NOAZI    0.00   -0.17   -0.63   -1.32   -2.14   -3.02   -3.91   -4.76   -5.49   -6.00   -6.12   -5.76   -4.89   -3.59   -1.98   -0.10    2.18    5.17    9.17
+   C06                                                      END OF FREQUENCY    
+                                                            END OF ANTENNA      
+                                                            END OF ANTEX

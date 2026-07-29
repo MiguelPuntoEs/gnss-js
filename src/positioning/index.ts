@@ -671,6 +671,18 @@ export type {
   RtkPostProcessResult,
 } from './rtk-postprocess';
 
+export {
+  buildRtkAntenna,
+  rcvAntennaRangeM,
+  antexFreqOfGroup,
+} from './rtk-antenna';
+export type {
+  RtkAntennaModel,
+  RtkAntennaOffset,
+  RtkReceiverAntenna,
+  RtkAntennaConfig,
+} from './rtk-antenna';
+
 export { lambdaSearch, lambdaReduction } from './lambda';
 export type { LambdaResult } from './lambda';
 
