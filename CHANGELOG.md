@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0
+
+### New — RTK receiver antenna corrections (mixed-antenna baselines)
+
+RTK forms double differences per signal, so it needs the **per-frequency** receiver antenna phase-centre offset (PCO) + no-azimuth PCV — not the ionosphere-free combination PPP uses.
+
+- **`buildRtkAntenna(antex)`** (`positioning/rtk-antenna.ts`): a per-frequency receiver model, `rcvOffset(antType, freq)` → `{ pco, pcvZen1Deg, pcvDzenDeg, pcvNoazi }` (metres) for one ANTEX frequency code (e.g. `'G01'`, `'E05'`). A deliberately separate model from the IF-combined `buildPppAntenna`. Plus **`rcvAntennaRangeM(...)`** — the additive range correction (PCO·LOS + elevation PCV + marker→ARP delta), following the PPP receiver-term convention.
+- **`RtkFloatOptions.antenna = { model, base?, rover? }`** — applies each receiver's antenna correction (base folded into the base range, rover into the modelled range) before differencing. The satellite antenna is never needed: it cancels in the base↔rover double difference. Same antenna type + orientation at both ends also cancels, so this only matters on **mixed-antenna** baselines; with different antennas the uncanceled PCO/PCV difference (cm–dm, mostly vertical) is removed.
+
+Validated by controlled recovery on the WHU OEM719 short baseline: injecting a 7 cm-PCO antenna-B signature into the rover biases the uncorrected baseline 3.6 → 9.1 cm and drops the AR fix rate 0.90 → 0.81; the matching `base`/`rover` antenna config recovers the truth baseline exactly and restores the fix rate. Existing RTK behaviour is unchanged when `antenna` is omitted.
+
 ## 2.2.0
 
 ### Changed — `SatCn0.cn0` is now `number | null`
