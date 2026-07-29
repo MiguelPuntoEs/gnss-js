@@ -672,6 +672,12 @@ export type {
 } from './rtk';
 
 export { postProcessRtk } from './rtk-postprocess';
+export { ZeroBaselineEngine } from './zero-baseline';
+export type {
+  ZeroBaselineOptions,
+  ReceiverClockSample,
+  ReceiverBias,
+} from './zero-baseline';
 export type {
   RtkObsEpoch,
   RtkObsInput,
