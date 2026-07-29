@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.0
+
+### New — NavIC / IRNSS ephemeris
+
+NavIC L5/S SPS navigation was counted but never decoded; it's now a first-class Keplerian ephemeris (`system` `'I'`), flowing through the same orbit/SPP/RINEX path as GPS, Galileo and BeiDou.
+
+- **`navbits/navic.ts`** — IRNSS-SIS-ICD-SPS subframe 1 & 2 → `KeplerEphemeris`, with a streaming `NavicAssembler`. NavIC scale factors (Cuc..Cis 2⁻²⁸, Crc/Crs 2⁻⁴, Δn/Ω̇ 2⁻⁴¹), CRC-24Q over the first 262 bits. The assembler pairs only consecutive subframes and honours the alert flag — an unhealthy SV broadcasts a CRC-valid but non-physical orbit, so it's dropped rather than emitted.
+- **SBF `NAVICRaw` (4093)** — `parseSbfNavic`, and wired into the one-pass `decodeSbfNavigation` (`counts.navicRaw`).
+- **RTCM 3 message `1041`** — decoded (was labelled-only): the same NavIC element set as a flat message.
+
+Validated on a 45-minute Septentrio DLF500 capture: healthy SVs decode to a = 42 164 km, i₀ ≈ 28.8°, e ≈ 0.002 (textbook NavIC IGSO); an alert-flagged SV is correctly dropped; RTCM 1041 is cross-checked bit-identical against the SBF decode of the same satellite.
+
 ## 2.4.0
 
 ### New — SBAS MT28 (clock-ephemeris covariance) → geometry-dependent δUDRE
