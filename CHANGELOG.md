@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+### Changed — `SatCn0.cn0` is now `number | null`
+
+`SatCn0.cn0` (the best-signal C/N0 in `StreamStats.satellites`) was typed `number` and set to `0` when a source carried no C/N0. But `0` is a valid-looking dB-Hz value, so consumers couldn't tell "signal strength 0" from "no C/N0 reported" — and the sources that report no C/N0 (legacy RTCM3 obs 1001–1012, RTCM 2.x) still track the satellite. `cn0` is now `number | null`: `null` means the source reports no C/N0 at all, the satellite is tracked with unknown signal strength. `updateStreamStats` sets `cn0: bestCn0 > 0 ? bestCn0 : null`. Consumers rendering C/N0 should null-check rather than treat `0` as "no signal".
+
 ## 2.1.0
 
 ### New — SSR/HAS → PPP: apply corrections + a streaming PPP engine
