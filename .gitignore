@@ -25,6 +25,7 @@
 !/test-fixtures/dlf500_sbf_setup_slice.sbf
 !/test-fixtures/f9p_rawnav_slice.ubx
 !/test-fixtures/oem719_rtk_base.gps
+!/test-fixtures/dlf500_navic_slice.sbf
 !/test-fixtures/oem719_rtk_rover.gps
 # Two IGS20 receiver antennas (TRM59800 + LEIAR25, no-azimuth PCV) for the RTK
 # antenna test — extracted from igs20.atx, azimuth grids stripped.

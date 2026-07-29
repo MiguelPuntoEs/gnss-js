@@ -45,6 +45,12 @@ export { parseSbfPvt, type SbfPvt, type SbfPvtResult } from './pvt';
 export type { ReceiverPvt } from '../receiver-pvt';
 
 export { parseSbfGpsNav, type SbfGpsNavResult } from './rawnav-gps';
+export {
+  parseSbfNavic,
+  feedNavicBlock,
+  extractSbfNavicSubframe,
+  type SbfNavicResult,
+} from './rawnav-navic';
 
 export {
   decodeSbfNavigation,

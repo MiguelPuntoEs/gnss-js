@@ -552,6 +552,80 @@ function decodeQzssEphemeris(payload: Uint8Array): EphemerisInfo | null {
   };
 }
 
+/* ================================================================== */
+/*  NavIC / IRNSS ephemeris (1041)                                     */
+/* ================================================================== */
+
+/**
+ * Decode NavIC/IRNSS ephemeris (message 1041) — the same Keplerian element set
+ * the L5/S SPS subframes carry (IRNSS-SIS-ICD-SPS), as a flat RTCM message.
+ */
+function decodeNavicEphemeris(payload: Uint8Array): EphemerisInfo | null {
+  if (payload.length < 60) return null;
+  const r = new BitReader(payload);
+  r.skip(12); // message type
+  const svId = r.readU(6);
+  const week = r.readU(10);
+  const af0 = r.readS(22) * 2 ** -31;
+  const af1 = r.readS(16) * 2 ** -43;
+  const af2 = r.readS(8) * 2 ** -55;
+  const ura = r.readU(4);
+  const toc = r.readU(16) * 16;
+  const tgd = r.readS(8) * 2 ** -31;
+  const deltaN = r.readS(22) * 2 ** -41 * PI;
+  const iode = r.readU(8); // IODEC
+  r.skip(10); // reserved
+  const l5Health = r.readU(1);
+  const sHealth = r.readU(1);
+  const cuc = r.readS(15) * 2 ** -28;
+  const cus = r.readS(15) * 2 ** -28;
+  const cic = r.readS(15) * 2 ** -28;
+  const cis = r.readS(15) * 2 ** -28;
+  const crc = r.readS(15) * 2 ** -4;
+  const crs = r.readS(15) * 2 ** -4;
+  const idot = r.readS(14) * 2 ** -43 * PI;
+  const m0 = r.readS(32) * 2 ** -31 * PI;
+  const toe = r.readU(16) * 16;
+  const e = r.readU(32) * 2 ** -33;
+  const sqrtA = r.readU(32) * 2 ** -19;
+  const omega0 = r.readS(32) * 2 ** -31 * PI;
+  const argPerigee = r.readS(32) * 2 ** -31 * PI;
+  const omegaDot = r.readS(22) * 2 ** -41 * PI;
+  const i0 = r.readS(32) * 2 ** -31 * PI;
+
+  return {
+    prn: `I${String(svId).padStart(2, '0')}`,
+    constellation: 'NavIC',
+    health: (l5Health << 1) | sHealth,
+    lastReceived: Date.now(),
+    messageType: 1041,
+    week,
+    ura,
+    toc,
+    toe,
+    sqrtA,
+    eccentricity: e,
+    inclination: i0,
+    omega0,
+    omegaDot,
+    argPerigee,
+    meanAnomaly: m0,
+    deltaN,
+    idot,
+    crs,
+    crc,
+    cuc,
+    cus,
+    cic,
+    cis,
+    af0,
+    af1,
+    af2,
+    iode,
+    tgd,
+  };
+}
+
 /** Decode any supported ephemeris message. Returns null for non-ephemeris or decode errors. */
 export function decodeEphemeris(frame: Rtcm3Frame): EphemerisInfo | null {
   try {
@@ -560,6 +634,8 @@ export function decodeEphemeris(frame: Rtcm3Frame): EphemerisInfo | null {
         return decodeGpsEphemeris(frame.payload);
       case 1020:
         return decodeGlonassEphemeris(frame.payload);
+      case 1041:
+        return decodeNavicEphemeris(frame.payload);
       case 1042:
         return decodeBdsEphemeris(frame.payload);
       case 1043:

@@ -36,11 +36,13 @@ import {
 import { feedGalBlock, newGalAssemblers } from './rawnav-gal';
 import { feedBdsBlock, feedGloBlock } from './rawnav-bds';
 import { feedGpsLnavBlock } from './rawnav-gps';
+import { feedNavicBlock } from './rawnav-navic';
 import { feedGeoBlock, feedGeoL5Block } from './rawnav-sbas';
 import type { DfmcCensus, DfmcMessageCb } from './rawnav-sbas';
 import { BdsAssembler } from '../navbits/bds';
 import { GloStringAssembler } from '../navbits/glo';
 import { GpsLnavAssembler } from '../navbits';
+import { NavicAssembler } from '../navbits/navic';
 
 const F4_DNU = -2e10;
 
@@ -62,6 +64,8 @@ export interface SbfNavCounts {
   sbasRaw: number;
   /** Raw SBAS L5 GEO message blocks (GEORawL5) — DO-229-on-L5 + native DFMC. */
   sbasL5Raw: number;
+  /** Raw NavIC L5/S SPS subframe blocks (NAVICRaw). */
+  navicRaw: number;
   /** Frames dropped by a CRC/parity check across all raw decoders. */
   badFrames: number;
 }
@@ -132,6 +136,7 @@ export function decodeSbfNavigation(
     bdsRaw: 0,
     sbasRaw: 0,
     sbasL5Raw: 0,
+    navicRaw: 0,
     badFrames: 0,
   };
   // SBAS L5 (DFMC) native-frame census.
@@ -144,6 +149,7 @@ export function decodeSbfNavigation(
   const gloAsm = new GloStringAssembler();
   const bdsAsm = new BdsAssembler();
   const lnavAsm = new GpsLnavAssembler();
+  const navicAsm = new NavicAssembler();
 
   const addEph = (e: Ephemeris | null) => {
     if (!e) return;
@@ -207,6 +213,15 @@ export function decodeSbfNavigation(
         const r = feedGpsLnavBlock(view, b, lnavAsm);
         if (r.eph) addEph(r.eph);
         else if (r.badParity) counts.badFrames++;
+        return;
+      }
+      case 4093: {
+        // NAVICRaw — NavIC/IRNSS L5/S SPS subframe
+        if (len < 60) return;
+        counts.navicRaw++;
+        const r = feedNavicBlock(view, b, navicAsm);
+        if (r.eph) addEph(r.eph);
+        else if (r.badCrc) counts.badFrames++;
         return;
       }
       case 4018: // GPSRawL2C
