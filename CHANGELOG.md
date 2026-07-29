@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.4.0
+
+### New — SBAS MT28 (clock-ephemeris covariance) → geometry-dependent δUDRE
+
+The SBAS integrity math applied only the MT27 region-based δUDRE; the alternative a system may broadcast — **MT28**, a per-satellite clock-ephemeris covariance giving a satellite- _and_ geometry-specific δUDRE — was ignored (δUDRE = 1 for those sats), so protection levels were optimistic where MT28 is used (e.g. WAAS, and the majority of the integrity messages on some EGNOS-relayed streams).
+
+- **`SbasProcessor` decodes MT28** (ICAO Annex 10 Vol I §3.5.4.7 / Table B-51): two satellites per message, each an upper-triangular Cholesky factor `E` + scale exponent, keyed into the current MT1 mask (IODP-guarded; cleared on a mask change). A degenerate all-zero `E` is treated as "no data" (it would give a dangerously optimistic δUDRE ≈ 0) and falls back to MT27 / δUDRE = 1.
+- **δUDRE = √(Iᵀ·C·I) + ε_c** (§3.5.5.6.2.5) with `C = RᵀR`, `R = E·2^(scaleExp−5)`, `I = [î_user→sat, 1]`, `ε_c = C_covariance·SF`. `Ccovariance` is now decoded from **MT10** (Table B-49). Since `C = RᵀR`, `Iᵀ·C·I = ‖R·I‖²`, evaluated directly.
+- **`satCorrection`** gains an optional `losUnitEcef` (user→satellite unit vector); when MT28 data + the LOS are present it supersedes the MT27 region δUDRE in `σ²_flt`. `solveSpp` passes the LOS on the protection-level pass. No API break — existing callers are unaffected; `Degradation` gains a `ccovariance` field.
+
+Unit-tested against the spec formula (decode round-trip + exact δUDRE + ε_c scaling + IODP/no-data fallbacks).
+
 ## 2.3.0
 
 ### New — RTK receiver antenna corrections (mixed-antenna baselines)

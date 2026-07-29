@@ -46,6 +46,7 @@ describe('SBAS degradation model (DO-229D §A.4.5)', () => {
     cionoRamp: 0.00005,
     rssUdre: false,
     rssIono: true,
+    ccovariance: 0,
   };
 
   it('long-term degradation ε_ltc, velocity code 1 (A-54)', () => {
