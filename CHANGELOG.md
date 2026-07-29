@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.6.0
+
+### New — zero-baseline / single-difference receiver comparison (`ZeroBaselineEngine`)
+
+For receivers sharing one antenna (a zero baseline), between-receiver single differences cancel the geometry, satellite clock/orbit, atmosphere **and multipath**, leaving only the receiver terms — the opposite of what the double-difference RTK engine keeps. `ZeroBaselineEngine` (streaming `process`/`reset`, mirroring `RtkFloatEngine`/`PppEngine`) estimates, per epoch and per non-reference receiver:
+
+- the **code relative clock** `c·Δdt` (robust per-system, datum-referenced), with **inter-system biases (ISB/IFB)** absorbed as offsets from the datum system — the interesting cut being between receiver _types_ on one antenna;
+- a **phase-smoothed relative clock** — the time-differenced phase SD drops the constant ambiguity+bias, leaving `c·Δ(Δdt)`, integrated from the code-clock anchor (no ambiguity resolution needed for the clock trend / its Allan deviation);
+- per-epoch used/rejected counts + code-SD residual RMS.
+
+Consumes the existing `RawObservation` shape; GLONASS FDMA wavelengths handled for the phase clock (the constant FDMA IFB cancels in the time difference). Unit-tested on a synthetic zero baseline: recovers the relative clock to mm, the phase clock tighter, and the injected Galileo ISB to sub-cm. Requested by TU Delft (Hans van der Marel) for the Delft 8×DLF one-antenna rig; see `docs/zero-baseline-clock.md`.
+
 ## 2.5.0
 
 ### New — NavIC / IRNSS ephemeris
