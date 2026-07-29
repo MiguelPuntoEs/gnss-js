@@ -218,6 +218,8 @@ export interface Degradation {
   cionoRamp: number;
   rssUdre: boolean;
   rssIono: boolean;
+  /** Cᶜᵒᵛᵃʳⁱᵃⁿᶜᵉ — the MT28 δUDRE quantization term (m), 0 when no MT28. */
+  ccovariance: number;
 }
 interface SatEntry {
   prn: string | null; // PRN string (e.g. 'G05'), or null for a masked slot we don't map
@@ -352,6 +354,10 @@ export class SbasProcessor {
   private tlat = 0;
   private degr: Degradation | null = null;
   private mt27: Mt27State | null = null;
+  /** MT28 clock-ephemeris covariance per PRN: the upper-triangular Cholesky
+   *  factor E (10 elements [E11,E22,E33,E44,E12,E13,E14,E23,E24,E34]) and its
+   *  scale exponent. Keyed by PRN; cleared on a mask change. */
+  private mt28 = new Map<string, { scaleExp: number; e: number[] }>();
   private ion: IonBand[] = [];
   /** GEO PRN(s) whose messages have been ingested. */
   readonly geoPrns = new Set<string>();
@@ -383,6 +389,8 @@ export class SbasProcessor {
         return this.decodeMt10(msg) ? type : -1;
       case 27:
         return this.decodeMt27(msg) ? type : -1;
+      case 28:
+        return this.decodeMt28(msg) ? type : -1;
       case 18:
         return this.decodeIgpMask(msg) ? type : -1;
       case 24:
@@ -421,6 +429,7 @@ export class SbasProcessor {
       return true;
     this.iodp = iodp;
     this.sats = prns.map((prn) => ({ prn }));
+    this.mt28.clear(); // slot→PRN mapping changed; MT28 covariances are stale
     this.satIdx.clear();
     this.sats.forEach((s, k) => {
       if (s.prn) this.satIdx.set(s.prn, k);
@@ -496,6 +505,7 @@ export class SbasProcessor {
       cionoRamp: u(126, 10) * 0.000005,
       rssUdre: u(136, 1) === 1,
       rssIono: u(137, 1) === 1,
+      ccovariance: u(138, 7) * 0.1, // Table B-49: 0..12.7 m, 0.1 m
     };
     return true;
   }
@@ -549,6 +559,62 @@ export class SbasProcessor {
       }
     }
     return best ?? DELTA_UDRE[s.udreOutside] ?? 1;
+  }
+
+  /** MT28 clock-ephemeris covariance (ICAO Annex 10 Vol I §3.5.4.7 / Table B-51):
+   *  two satellites per message, each an upper-triangular Cholesky factor E and a
+   *  scale exponent that together define the relative clock-ephemeris covariance
+   *  used for a geometry-dependent δUDRE (§3.5.5.6.2.5). Slots are indexed into
+   *  the current MT1 mask, so a mismatched IODP is dropped. */
+  private decodeMt28(msg: Uint8Array): boolean {
+    if (this.iodp !== getBitU(msg, 14, 2)) return false;
+    // Two satellites, 105 bits each, starting at bit 16.
+    for (const base of [16, 121]) {
+      const slot = getBitU(msg, base, 6); // ordinal in the mask (0-based)
+      const prn = this.sats[slot]?.prn;
+      const scaleExp = getBitU(msg, base + 6, 3);
+      // E11,E22,E33,E44 unsigned 9-bit; E12..E34 signed 10-bit.
+      const e = [
+        getBitU(msg, base + 9, 9),
+        getBitU(msg, base + 18, 9),
+        getBitU(msg, base + 27, 9),
+        getBitU(msg, base + 36, 9),
+        getBitS(msg, base + 45, 10),
+        getBitS(msg, base + 55, 10),
+        getBitS(msg, base + 65, 10),
+        getBitS(msg, base + 75, 10),
+        getBitS(msg, base + 85, 10),
+        getBitS(msg, base + 95, 10),
+      ];
+      // Store only a real covariance: an all-zero E gives δUDRE ≈ 0 (a
+      // meaningless, dangerously optimistic bound), so treat it as "no data"
+      // and let satCorrection fall back to MT27 / δUDRE = 1.
+      if (prn && e.some((v) => v !== 0)) this.mt28.set(prn, { scaleExp, e });
+    }
+    return true;
+  }
+
+  /** Geometry-dependent δUDRE multiplier from MT28 (§3.5.5.6.2.5):
+   *  δUDRE = √(Iᵀ·C·I) + ε_c, with C = Rᵀ·R, R = E·2^(scaleExp−5),
+   *  I = [î_user→sat, 1], ε_c = C_covariance·2^(scaleExp−5). Since C = RᵀR,
+   *  Iᵀ·C·I = ‖R·I‖², so we form R·I directly. Null when no MT28 for `prn`. */
+  private mt28DeltaUdre(
+    prn: string,
+    los: readonly [number, number, number]
+  ): number | null {
+    const m = this.mt28.get(prn);
+    if (!m) return null;
+    const sf = 2 ** (m.scaleExp - 5);
+    const [e11, e22, e33, e44, e12, e13, e14, e23, e24, e34] = m.e;
+    const [ix, iy, iz] = los; // unit vector user→sat; I = [ix, iy, iz, 1]
+    // v = R·I, R upper-triangular (rows below scaled by sf via the sum).
+    const v0 = (e11! * ix + e12! * iy + e13! * iz + e14!) * sf;
+    const v1 = (e22! * iy + e23! * iz + e24!) * sf;
+    const v2 = (e33! * iz + e34!) * sf;
+    const v3 = e44! * sf;
+    const iCi = v0 * v0 + v1 * v1 + v2 * v2 + v3 * v3;
+    const ec = (this.degr?.ccovariance ?? 0) * sf;
+    return Math.sqrt(iCi) + ec;
   }
 
   private decodeMixed(msg: Uint8Array, week: number, tow: number): boolean {
@@ -812,7 +878,11 @@ export class SbasProcessor {
     week: number,
     tow: number,
     userLatRad?: number,
-    userLonRad?: number
+    userLonRad?: number,
+    /** Unit line-of-sight vector user→satellite in ECEF, for the MT28
+     *  geometry-dependent δUDRE (final protection-level pass). When given and
+     *  MT28 data exists for the PRN, it supersedes the MT27 region δUDRE. */
+    losUnitEcef?: readonly [number, number, number]
   ): SbasSatCorrection | null {
     const idx = this.satIdx.get(prn);
     if (idx === undefined) return null;
@@ -844,15 +914,20 @@ export class SbasProcessor {
     // broadcast UDRE variance; the degradation terms grow it with correction
     // age. εrrc and εer are 0 here (we apply no range-rate extrapolation, and
     // this is en-route-equivalent SPP, not an LPV/LNAV-VNAV approach).
-    // δUDRE (§A.4.4.13, Table A-21) inflates σ_UDRE by the MT27 service region
-    // the user is in; 1 without MT27 or a user location. (MT28 is separate.)
+    // δUDRE inflates σ_UDRE. A system broadcasts EITHER MT28 (a satellite- and
+    // geometry-specific covariance, §3.5.5.6.2.5) OR MT27 (a service-region
+    // factor, §A.4.4.13 / Table A-21). Prefer MT28 when its data + the LOS are
+    // available, else the MT27 region value, else 1 (no data / no user location).
+    const mt28 = losUnitEcef ? this.mt28DeltaUdre(prn, losUnitEcef) : null;
     const dudre =
-      userLatRad != null && userLonRad != null
-        ? this.deltaUdre(
-            (userLatRad * 180) / Math.PI,
-            (userLonRad * 180) / Math.PI
-          )
-        : 1;
+      mt28 != null
+        ? mt28
+        : userLatRad != null && userLonRad != null
+          ? this.deltaUdre(
+              (userLatRad * 180) / Math.PI,
+              (userLonRad * 180) / Math.PI
+            )
+          : 1;
     const sigUdre = Math.sqrt(varfcorr(s.fcorr.udre)) * dudre;
     const efc = (degfcorr(s.fcorr.ai) * tf * tf) / 2; // §A.4.5.1.1 (A-51)
     const eltc =

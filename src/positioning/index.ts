@@ -86,7 +86,10 @@ export interface SbasCorrectionSource {
     /** User geodetic lat/lon (rad) for the MT27 service-region δUDRE, when
      *  known (the final protection-level pass). Omitted during iteration. */
     userLatRad?: number,
-    userLonRad?: number
+    userLonRad?: number,
+    /** Unit LOS user→satellite (ECEF) for the MT28 geometry-dependent δUDRE
+     *  (final protection-level pass). */
+    losUnitEcef?: readonly [number, number, number]
   ): {
     dPos: [number, number, number];
     dClkS: number;
@@ -610,7 +613,13 @@ export function solveSpp(
       used.push(prn);
       azels.push(azel);
       if (sbas) {
-        const sc = sbas.satCorrection(prn, gpsWeek, gpsTow, rxLat, rxLon);
+        // Unit LOS user→satellite (ECEF) for the MT28 geometry-dependent δUDRE.
+        const dx = sat.x - x,
+          dy = sat.y - y,
+          dz = sat.z - z;
+        const dr = Math.hypot(dx, dy, dz) || 1;
+        const los: [number, number, number] = [dx / dr, dy / dr, dz / dr];
+        const sc = sbas.satCorrection(prn, gpsWeek, gpsTow, rxLat, rxLon, los);
         const si = sbas.ionoDelay(
           gpsWeek,
           gpsTow,
