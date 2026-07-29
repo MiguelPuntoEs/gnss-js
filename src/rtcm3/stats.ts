@@ -26,7 +26,10 @@ export interface SignalCn0 {
 export interface SatCn0 {
   prn: string;
   system: string; // single letter: G, R, E, C, J, I, S
-  cn0: number; // dB-Hz (best signal across all codes)
+  /** Best C/N0 across all codes (dB-Hz), or null when the source reports no
+   *  C/N0 at all (legacy RTCM3 obs 1001-1012, RTCM 2.x) — the satellite is
+   *  still tracked, its signal strength is simply unknown. */
+  cn0: number | null;
   lastSeen: number;
   /** Per-signal C/N0 values */
   signals: SignalCn0[];
@@ -253,7 +256,7 @@ export function updateStreamStats(
           stats.satellites.set(obs.prn, {
             prn: obs.prn,
             system: obs.system,
-            cn0: bestCn0,
+            cn0: bestCn0 > 0 ? bestCn0 : null, // null = no C/N0 reported
             lastSeen: now,
             signals,
           });
