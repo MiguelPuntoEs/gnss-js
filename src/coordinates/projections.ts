@@ -8,30 +8,65 @@ const e2 = WGS84_ECCENTRICITY_SQUARED;
 // UTM scale factor
 const k0 = 0.9996;
 
+const UTM_BANDS = 'CDEFGHJKLMNPQRSTUVWX';
+
+/** UTM zone number, including the Norway (32V) and Svalbard (31X–37X) exceptions. */
+function utmZone(latDeg: number, lonDeg: number): number {
+  let zone = Math.floor((lonDeg + 180) / 6) + 1;
+  if (zone > 60) zone = 1; // lon = +180° is the same meridian as −180°
+  if (latDeg >= 56 && latDeg < 64 && lonDeg >= 3 && lonDeg < 12) return 32;
+  if (latDeg >= 72 && latDeg <= 84) {
+    if (lonDeg >= 0 && lonDeg < 9) return 31;
+    if (lonDeg >= 9 && lonDeg < 21) return 33;
+    if (lonDeg >= 21 && lonDeg < 33) return 35;
+    if (lonDeg >= 33 && lonDeg < 42) return 37;
+  }
+  return zone;
+}
+
 /**
  * Convert geodetic coordinates to UTM.
  * @param lat Latitude in radians
  * @param lon Longitude in radians
+ * @returns easting/northing (m), zone (1–60, with the Norway/Svalbard
+ *   exceptions), hemisphere, MGRS latitude `band` letter (C–X), and
+ *   `inRange` — false outside UTM's 80°S–84°N, where the values are
+ *   computed at the clamped latitude and are not a valid UTM position.
  */
 export function geodeticToUtm(
   lat: number,
   lon: number
-): { easting: number; northing: number; zone: number; hemisphere: 'N' | 'S' } {
+): {
+  easting: number;
+  northing: number;
+  zone: number;
+  hemisphere: 'N' | 'S';
+  band: string;
+  inRange: boolean;
+} {
+  const rawLatDeg = (lat * 180) / Math.PI;
+  const inRange = rawLatDeg >= -80 && rawLatDeg <= 84;
+
   // UTM is undefined beyond ±84°/80°; clamp to avoid tan(±π/2) = ∞
   const MAX_UTM_LAT = 84 * (Math.PI / 180);
   lat = Math.max(-MAX_UTM_LAT, Math.min(MAX_UTM_LAT, lat));
 
   const latDeg = (lat * 180) / Math.PI;
+  lon = Math.atan2(Math.sin(lon), Math.cos(lon)); // wrap to (−π, π]
   const lonDeg = (lon * 180) / Math.PI;
 
-  const zone = Math.floor((lonDeg + 180) / 6) + 1;
+  const zone = utmZone(latDeg, lonDeg);
+  const band =
+    UTM_BANDS[Math.max(0, Math.min(19, Math.floor((latDeg + 80) / 8)))]!;
   const lon0 = ((zone - 1) * 6 - 180 + 3) * (Math.PI / 180); // central meridian in rad
 
   const ep2 = e2 / (1 - e2); // e'^2
   const N = WGS84_SEMI_MAJOR_AXIS / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
   const T = Math.tan(lat) ** 2;
   const C = ep2 * Math.cos(lat) ** 2;
-  const A = Math.cos(lat) * (lon - lon0);
+  // Wrapped so lon = +180° measures from zone 1's meridian the short way
+  const dLon0 = Math.atan2(Math.sin(lon - lon0), Math.cos(lon - lon0));
+  const A = Math.cos(lat) * dLon0;
 
   // Meridional arc
   const M =
@@ -64,7 +99,7 @@ export function geodeticToUtm(
     northing += 10000000;
   }
 
-  return { easting, northing, zone, hemisphere };
+  return { easting, northing, zone, hemisphere, band, inRange };
 }
 
 /**

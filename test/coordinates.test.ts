@@ -111,6 +111,62 @@ describe('geodeticToUtm', () => {
   });
 });
 
+describe('geodeticToUtm — zones, bands, range', () => {
+  /** Krüger series (Karney 2011, order n⁶) — independent exact reference. */
+  function tmRef(lat: number, lon: number, lon0: number): [number, number] {
+    const a = 6378137,
+      f = 1 / 298.257223563,
+      n = f / (2 - f),
+      e = Math.sqrt(f * (2 - f));
+    const A = (a / (1 + n)) * (1 + n ** 2 / 4 + n ** 4 / 64 + n ** 6 / 256);
+    const al = [
+      0,
+      n / 2 - (2 * n ** 2) / 3 + (5 * n ** 3) / 16 + (41 * n ** 4) / 180,
+      (13 * n ** 2) / 48 - (3 * n ** 3) / 5 + (557 * n ** 4) / 1440,
+      (61 * n ** 3) / 240 - (103 * n ** 4) / 140,
+      (49561 * n ** 4) / 161280,
+    ];
+    const t = Math.sinh(
+      Math.atanh(Math.sin(lat)) - e * Math.atanh(e * Math.sin(lat))
+    );
+    const dl = lon - lon0;
+    const xi = Math.atan2(t, Math.cos(dl));
+    const eta = Math.atanh(Math.sin(dl) / Math.sqrt(1 + t * t));
+    let x = xi,
+      y = eta;
+    for (let j = 1; j <= 4; j++) {
+      x += al[j]! * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+      y += al[j]! * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+    }
+    return [500000 + 0.9996 * A * y, 0.9996 * A * x];
+  }
+
+  it.each([
+    ['Eiffel Tower', 48.85826, 2.2945, 31, 'U'],
+    ['Bergen (Norway exception)', 60.39, 5.32, 32, 'V'],
+    ['Svalbard (exception)', 78.2, 15.6, 33, 'X'],
+    ['Svalbard 31X', 79, 8, 31, 'X'],
+    ['Cape Town', -33.9, 18.4, 34, 'H'],
+    ['lon = +180° wraps to zone 1', 10, 180, 1, 'P'],
+  ])('%s → %d%s, within 1 mm of exact', (_n, la, lo, zone, band) => {
+    const u = geodeticToUtm(deg2rad(la), deg2rad(lo));
+    expect(u.zone).toBe(zone);
+    expect(u.band).toBe(band);
+    expect(u.inRange).toBe(true);
+    const lon0 = deg2rad((zone - 1) * 6 - 180 + 3);
+    const [E, N] = tmRef(deg2rad(la), deg2rad(lo), lon0);
+    expect(Math.abs(u.easting - E)).toBeLessThan(1e-3);
+    expect(Math.abs(u.northing - (la < 0 ? N + 1e7 : N))).toBeLessThan(1e-3);
+  });
+
+  it('flags latitudes outside 80°S–84°N', () => {
+    expect(geodeticToUtm(deg2rad(84), 0).inRange).toBe(true);
+    expect(geodeticToUtm(deg2rad(84.1), 0).inRange).toBe(false);
+    expect(geodeticToUtm(deg2rad(-80), 0).inRange).toBe(true);
+    expect(geodeticToUtm(deg2rad(-80.1), 0).inRange).toBe(false);
+  });
+});
+
 describe('geodeticToMaidenhead', () => {
   it('converts Washington DC correctly', () => {
     const lat = deg2rad(38.9072),

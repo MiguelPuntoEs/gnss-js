@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.7.0
+
+### Fixed — geodesy accuracy (`coordinates`)
+
+Audited against independent exact references (numerical meridian-arc integration, Krüger/Karney transverse Mercator); every case below is now within 1 mm.
+
+- **`rhumbLine` distance was off by up to ~0.5 %** (+559 m for 1° N–S at the equator, −2.6 km for 10° E–W at 45°N, +19 km across the antimeridian): it used one averaged meridional radius. Now exact on the ellipsoid via the meridian arc and isometric latitude, with a stable limit for near E–W lines. Bearing unchanged (it was already correct).
+- **`greatCircleMidpoint` wasn't halfway**: a spherical formula on geodetic latitudes landed up to tens of km from the true halfway point on long lines. Now the geodesic midpoint (half the Vincenty distance along the initial bearing). Name kept for compatibility.
+- **`geodeticToUtm` zones**: the Norway (32V) and Svalbard (31X/33X/35X/37X) exceptions are applied, and lon = +180° maps to zone 1 (was a non-existent zone 61).
+
+### New
+
+- `geodeticToUtm` also returns `band` (MGRS latitude band letter C–X) and `inRange` (false outside 80°S–84°N, where the returned values are computed at the clamped latitude and aren't a valid UTM position).
+- `vincenty` returns `converged` — false for near-antipodal pairs, where the spherical fallback's bearings are unreliable.
+- `vincentyDirect(lat, lon, bearing, distance)` — Vincenty's direct problem.
+- `meridianArc(lat)` — meridian arc length from the equator (sub-mm series).
+
 ## 2.6.0
 
 ### New — zero-baseline / single-difference receiver comparison (`ZeroBaselineEngine`)
