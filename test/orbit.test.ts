@@ -374,6 +374,14 @@ describe('computeDop', () => {
       );
     });
 
+    it('QZSS and SBAS ride on the GPS clock', () => {
+      const gps = computeDop(geom.map((s, i) => ({ ...s, prn: `G${i + 1}` })))!;
+      const withJS = computeDop(
+        geom.map((s, i) => ({ ...s, prn: `${'GJS'[i % 3]}${i + 1}` }))
+      )!;
+      expect(withJS.gdop).toBeCloseTo(gps.gdop, 12);
+    });
+
     it('needs 3 + one satellite per clock', () => {
       // 4 satellites over two systems: 5 unknowns
       const four = geom
