@@ -14,6 +14,7 @@ import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
 import { OMEGA_E, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 import { invertMatrix } from './matrix';
+import { nearestValidEphemeris } from './validity';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
 /* ================================================================== */
@@ -506,11 +507,12 @@ export function computeDop(
 /* ================================================================== */
 
 /**
- * Find the best ephemeris for a given PRN at a given time.
- * Selects the one with the closest epoch (toe/toc) to the target time.
+ * Find the best ephemeris for a given PRN at a given time: the one with the
+ * closest epoch (toe/toc) among those within their broadcast validity at
+ * that time ({@link isEphemerisValid}); null when none is valid.
  * @param ephemerides Array of candidate ephemerides
  * @param prn Satellite PRN identifier (e.g. "G01")
- * @param timeMs Target time in Unix milliseconds
+ * @param timeMs Target time, GPS-scale epoch milliseconds
  */
 export function selectEphemeris(
   ephemerides: Ephemeris[],
@@ -682,22 +684,10 @@ export function computeAllPositions(
   return { prns, times, positions };
 }
 
-/** Fast ephemeris selection from a pre-filtered array for one PRN. */
+/** Fast ephemeris selection from a pre-filtered array for one PRN: the
+ *  nearest toc within broadcast validity (see ./validity). */
 function selectBest(ephs: Ephemeris[], timeMs: number): Ephemeris | null {
-  let best: Ephemeris | null = null;
-  let bestDt = Infinity;
-  for (const eph of ephs) {
-    const dt = Math.abs(timeMs - eph.tocDate.getTime());
-    // GLONASS ephemerides are valid for ~30 min; Keplerian for ~2–4 hours
-    const maxAge =
-      eph.system === 'R' || eph.system === 'S' ? 1800_000 : 4 * 3600_000;
-    if (dt > maxAge) continue;
-    if (dt < bestDt) {
-      bestDt = dt;
-      best = eph;
-    }
-  }
-  return best;
+  return nearestValidEphemeris(ephs, timeMs);
 }
 
 /* ================================================================== */
@@ -1111,3 +1101,8 @@ export {
   type AlmanacPosition,
 } from './almanac';
 export { glonassAlmanacPosition, glonassAlmanacEpochMs } from './almanac-glo';
+export {
+  EPHEMERIS_VALIDITY_MS,
+  isEphemerisValid,
+  nearestValidEphemeris,
+} from './validity';
