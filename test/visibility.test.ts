@@ -30,6 +30,10 @@ describe.skipIf(!HAS_DATA)('computeVisibility (ABMF, 6 h)', () => {
     // GDOP ≥ PDOP ≥ HDOP by construction; VDOP present too
     expect(vis.gdop[mid]!).toBeGreaterThanOrEqual(vis.pdop[mid]!);
     expect(vis.pdop[mid]!).toBeGreaterThanOrEqual(vis.hdop[mid]!);
+    expect(vis.gdop[mid]! ** 2).toBeCloseTo(
+      vis.pdop[mid]! ** 2 + vis.tdop[mid]! ** 2,
+      8
+    );
     expect(vis.vdop[mid]).toBeGreaterThan(0);
   });
 

@@ -13,6 +13,7 @@ import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
 import { OMEGA_E, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
+import { invertMatrix } from './matrix';
 export { geodeticToEcef, ecefToGeodetic } from '../coordinates/ecef';
 
 /* ================================================================== */
@@ -68,6 +69,11 @@ export interface DopValues {
   pdop: number;
   hdop: number;
   vdop: number;
+  /**
+   * Time DOP: root of the summed receiver-clock variances (one clock per
+   * constellation in view), so GDOP² = PDOP² + TDOP².
+   */
+  tdop: number;
 }
 
 /* ================================================================== */
@@ -419,27 +425,40 @@ export function ecefToAzEl(
 
 /**
  * Compute DOP values from a set of satellite az/el.
- * @param satAzEls Array of satellite azimuth/elevation pairs (radians)
- * @returns DOP values (GDOP, PDOP, HDOP, VDOP), or null if fewer than 4 satellites
+ *
+ * Satellites tagged with a `prn` get one receiver-clock unknown per
+ * constellation (the PRN's system letter), matching how a multi-GNSS
+ * receiver solves and how `solveSpp` does: each system runs on its own
+ * time scale, so every extra constellation costs one observation. Untagged
+ * satellites share a single clock (the classic single-system model).
+ *
+ * @param satAzEls Satellite azimuth/elevation pairs (radians), optionally
+ *   tagged with their PRN.
+ * @returns DOP values, or null when there are fewer satellites than
+ *   unknowns (3 + one clock per constellation) or the geometry is singular.
  */
 export function computeDop(
-  satAzEls: { az: number; el: number }[]
+  satAzEls: { az: number; el: number; prn?: string }[]
 ): DopValues | null {
   const n = satAzEls.length;
-  if (n < 4) return null;
+  const clocks = [...new Set(satAzEls.map((s) => s.prn?.[0] ?? ''))];
+  const m = 3 + clocks.length;
+  if (n < Math.max(4, m)) return null;
 
-  // Build geometry matrix H (n×4)
-  // H[i] = [cos(el)*sin(az), cos(el)*cos(az), sin(el), 1]
+  // Geometry matrix H (n×m): [cos(el)sin(az), cos(el)cos(az), sin(el), clocks…]
   const H: number[][] = [];
-  for (const { az, el } of satAzEls) {
+  for (const { az, el, prn } of satAzEls) {
     const cosEl = Math.cos(el);
-    H.push([cosEl * Math.sin(az), cosEl * Math.cos(az), Math.sin(el), 1]);
+    const row = [cosEl * Math.sin(az), cosEl * Math.cos(az), Math.sin(el)];
+    const sys = prn?.[0] ?? '';
+    for (const c of clocks) row.push(c === sys ? 1 : 0);
+    H.push(row);
   }
 
-  // Q = (H^T H)^-1 — compute 4x4 matrix
-  const HtH: number[][] = Array.from({ length: 4 }, () => new Array(4).fill(0));
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) {
+  // Q = (HᵀH)⁻¹
+  const HtH: number[][] = Array.from({ length: m }, () => new Array(m).fill(0));
+  for (let i = 0; i < m; i++) {
+    for (let j = 0; j < m; j++) {
       let sum = 0;
       for (let k = 0; k < n; k++) {
         sum += H[k]![i]! * H[k]![j]!;
@@ -447,150 +466,20 @@ export function computeDop(
       HtH[i]![j] = sum;
     }
   }
-
-  // Invert 4x4 using cofactor expansion
-  const Q = invert4x4(HtH);
+  const Q = invertMatrix(HtH);
   if (!Q) return null;
 
-  const gdop = Math.sqrt(Q[0]![0]! + Q[1]![1]! + Q[2]![2]! + Q[3]![3]!);
-  const pdop = Math.sqrt(Q[0]![0]! + Q[1]![1]! + Q[2]![2]!);
-  const hdop = Math.sqrt(Q[0]![0]! + Q[1]![1]!);
-  const vdop = Math.sqrt(Q[2]![2]!);
+  let clockVar = 0;
+  for (let i = 3; i < m; i++) clockVar += Q[i]![i]!;
+  const posVar = Q[0]![0]! + Q[1]![1]! + Q[2]![2]!;
 
-  return { gdop, pdop, hdop, vdop };
-}
-
-function invert4x4(m: number[][]): number[][] | null {
-  // Flatten
-  const a = m.flat();
-  const inv = new Array(16).fill(0);
-
-  inv[0] =
-    a[5]! * a[10]! * a[15]! -
-    a[5]! * a[11]! * a[14]! -
-    a[9]! * a[6]! * a[15]! +
-    a[9]! * a[7]! * a[14]! +
-    a[13]! * a[6]! * a[11]! -
-    a[13]! * a[7]! * a[10]!;
-  inv[4] =
-    -a[4]! * a[10]! * a[15]! +
-    a[4]! * a[11]! * a[14]! +
-    a[8]! * a[6]! * a[15]! -
-    a[8]! * a[7]! * a[14]! -
-    a[12]! * a[6]! * a[11]! +
-    a[12]! * a[7]! * a[10]!;
-  inv[8] =
-    a[4]! * a[9]! * a[15]! -
-    a[4]! * a[11]! * a[13]! -
-    a[8]! * a[5]! * a[15]! +
-    a[8]! * a[7]! * a[13]! +
-    a[12]! * a[5]! * a[11]! -
-    a[12]! * a[7]! * a[9]!;
-  inv[12] =
-    -a[4]! * a[9]! * a[14]! +
-    a[4]! * a[10]! * a[13]! +
-    a[8]! * a[5]! * a[14]! -
-    a[8]! * a[6]! * a[13]! -
-    a[12]! * a[5]! * a[10]! +
-    a[12]! * a[6]! * a[9]!;
-  inv[1] =
-    -a[1]! * a[10]! * a[15]! +
-    a[1]! * a[11]! * a[14]! +
-    a[9]! * a[2]! * a[15]! -
-    a[9]! * a[3]! * a[14]! -
-    a[13]! * a[2]! * a[11]! +
-    a[13]! * a[3]! * a[10]!;
-  inv[5] =
-    a[0]! * a[10]! * a[15]! -
-    a[0]! * a[11]! * a[14]! -
-    a[8]! * a[2]! * a[15]! +
-    a[8]! * a[3]! * a[14]! +
-    a[12]! * a[2]! * a[11]! -
-    a[12]! * a[3]! * a[10]!;
-  inv[9] =
-    -a[0]! * a[9]! * a[15]! +
-    a[0]! * a[11]! * a[13]! +
-    a[8]! * a[1]! * a[15]! -
-    a[8]! * a[3]! * a[13]! -
-    a[12]! * a[1]! * a[11]! +
-    a[12]! * a[3]! * a[9]!;
-  inv[13] =
-    a[0]! * a[9]! * a[14]! -
-    a[0]! * a[10]! * a[13]! -
-    a[8]! * a[1]! * a[14]! +
-    a[8]! * a[2]! * a[13]! +
-    a[12]! * a[1]! * a[10]! -
-    a[12]! * a[2]! * a[9]!;
-  inv[2] =
-    a[1]! * a[6]! * a[15]! -
-    a[1]! * a[7]! * a[14]! -
-    a[5]! * a[2]! * a[15]! +
-    a[5]! * a[3]! * a[14]! +
-    a[13]! * a[2]! * a[7]! -
-    a[13]! * a[3]! * a[6]!;
-  inv[6] =
-    -a[0]! * a[6]! * a[15]! +
-    a[0]! * a[7]! * a[14]! +
-    a[4]! * a[2]! * a[15]! -
-    a[4]! * a[3]! * a[14]! -
-    a[12]! * a[2]! * a[7]! +
-    a[12]! * a[3]! * a[6]!;
-  inv[10] =
-    a[0]! * a[5]! * a[15]! -
-    a[0]! * a[7]! * a[13]! -
-    a[4]! * a[1]! * a[15]! +
-    a[4]! * a[3]! * a[13]! +
-    a[12]! * a[1]! * a[7]! -
-    a[12]! * a[3]! * a[5]!;
-  inv[14] =
-    -a[0]! * a[5]! * a[14]! +
-    a[0]! * a[6]! * a[13]! +
-    a[4]! * a[1]! * a[14]! -
-    a[4]! * a[2]! * a[13]! -
-    a[12]! * a[1]! * a[6]! +
-    a[12]! * a[2]! * a[5]!;
-  inv[3] =
-    -a[1]! * a[6]! * a[11]! +
-    a[1]! * a[7]! * a[10]! +
-    a[5]! * a[2]! * a[11]! -
-    a[5]! * a[3]! * a[10]! -
-    a[9]! * a[2]! * a[7]! +
-    a[9]! * a[3]! * a[6]!;
-  inv[7] =
-    a[0]! * a[6]! * a[11]! -
-    a[0]! * a[7]! * a[10]! -
-    a[4]! * a[2]! * a[11]! +
-    a[4]! * a[3]! * a[10]! +
-    a[8]! * a[2]! * a[7]! -
-    a[8]! * a[3]! * a[6]!;
-  inv[11] =
-    -a[0]! * a[5]! * a[11]! +
-    a[0]! * a[7]! * a[9]! +
-    a[4]! * a[1]! * a[11]! -
-    a[4]! * a[3]! * a[9]! -
-    a[8]! * a[1]! * a[7]! +
-    a[8]! * a[3]! * a[5]!;
-  inv[15] =
-    a[0]! * a[5]! * a[10]! -
-    a[0]! * a[6]! * a[9]! -
-    a[4]! * a[1]! * a[10]! +
-    a[4]! * a[2]! * a[9]! +
-    a[8]! * a[1]! * a[6]! -
-    a[8]! * a[2]! * a[5]!;
-
-  let det = a[0]! * inv[0] + a[1]! * inv[4] + a[2]! * inv[8] + a[3]! * inv[12];
-  if (Math.abs(det) < 1e-20) return null;
-
-  det = 1.0 / det;
-  const result: number[][] = Array.from({ length: 4 }, () =>
-    new Array(4).fill(0)
-  );
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) {
-      result[i]![j] = inv[i * 4 + j]! * det;
-    }
-  }
-  return result;
+  return {
+    gdop: Math.sqrt(posVar + clockVar),
+    pdop: Math.sqrt(posVar),
+    hdop: Math.sqrt(Q[0]![0]! + Q[1]![1]!),
+    vdop: Math.sqrt(Q[2]![2]!),
+    tdop: Math.sqrt(clockVar),
+  };
 }
 
 /* ================================================================== */
@@ -1018,14 +907,16 @@ export interface VisibilityResult {
   visibleCount: number[];
   /** Per-system visible counts per epoch (system letter → counts). */
   visibleBySystem: Record<string, number[]>;
-  /** PDOP per epoch (null when < 4 satellites above the mask). */
+  /** PDOP per epoch (null when fewer satellites than unknowns). */
   pdop: (number | null)[];
-  /** GDOP per epoch (null when < 4 satellites above the mask). */
+  /** GDOP per epoch (null when fewer satellites than unknowns). */
   gdop: (number | null)[];
-  /** HDOP per epoch (null when < 4 satellites above the mask). */
+  /** HDOP per epoch (null when fewer satellites than unknowns). */
   hdop: (number | null)[];
-  /** VDOP per epoch (null when < 4 satellites above the mask). */
+  /** VDOP per epoch (null when fewer satellites than unknowns). */
   vdop: (number | null)[];
+  /** TDOP per epoch (all constellation clocks; null like the others). */
+  tdop: (number | null)[];
   /** Discrete above-mask passes, sorted by rise time. */
   passes: VisibilityPass[];
 }
@@ -1109,9 +1000,11 @@ export function computeVisibilityFromPositions(
   const gdop = new Array<number | null>(times.length).fill(null);
   const hdop = new Array<number | null>(times.length).fill(null);
   const vdop = new Array<number | null>(times.length).fill(null);
+  const tdop = new Array<number | null>(times.length).fill(null);
 
-  // Per-epoch visible az/el for DOP
-  const visiblePerEpoch: { az: number; el: number }[][] = times.map(() => []);
+  // Per-epoch visible az/el for DOP (PRN-tagged: one clock per system)
+  const visiblePerEpoch: { az: number; el: number; prn: string }[][] =
+    times.map(() => []);
 
   for (const prn of all.prns) {
     const series = all.positions[prn]!;
@@ -1127,7 +1020,7 @@ export function computeVisibilityFromPositions(
         (visibleBySystem[sys] ??= new Array<number>(times.length).fill(0))[
           i
         ]!++;
-        visiblePerEpoch[i]!.push({ az: p.az, el: p.el });
+        visiblePerEpoch[i]!.push({ az: p.az, el: p.el, prn });
       }
     }
   }
@@ -1138,6 +1031,7 @@ export function computeVisibilityFromPositions(
     gdop[i] = dop ? dop.gdop : null;
     hdop[i] = dop ? dop.hdop : null;
     vdop[i] = dop ? dop.vdop : null;
+    tdop[i] = dop ? dop.tdop : null;
   }
 
   // Extract passes: contiguous runs at or above the mask per PRN
@@ -1187,6 +1081,7 @@ export function computeVisibilityFromPositions(
     gdop,
     hdop,
     vdop,
+    tdop,
     passes,
   };
 }
