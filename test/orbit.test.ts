@@ -340,6 +340,49 @@ describe('computeDop', () => {
     const dop = computeDop(sats)!;
     expect(dop.vdop).toBeGreaterThan(dop.hdop); // VDOP should be worse
   });
+
+  describe('one receiver clock per constellation', () => {
+    const geom = [
+      { az: 0, el: Math.PI / 6 },
+      { az: Math.PI / 2, el: Math.PI / 4 },
+      { az: Math.PI, el: Math.PI / 3 },
+      { az: (3 * Math.PI) / 2, el: Math.PI / 5 },
+      { az: Math.PI / 4, el: Math.PI / 3 },
+      { az: (3 * Math.PI) / 4, el: Math.PI / 6 },
+      { az: (5 * Math.PI) / 4, el: Math.PI / 4 },
+      { az: (7 * Math.PI) / 4, el: Math.PI / 5 },
+    ];
+
+    it('single-system tags match the untagged model', () => {
+      const plain = computeDop(geom)!;
+      const gps = computeDop(geom.map((s, i) => ({ ...s, prn: `G${i + 1}` })))!;
+      for (const k of ['gdop', 'pdop', 'hdop', 'vdop', 'tdop'] as const)
+        expect(gps[k]).toBeCloseTo(plain[k], 12);
+    });
+
+    it('extra constellations cost geometry (GDOP, TDOP up; PDOP not down)', () => {
+      const plain = computeDop(geom)!;
+      const mixed = computeDop(
+        geom.map((s, i) => ({ ...s, prn: `${'GREC'[i % 4]}${i + 1}` }))
+      )!;
+      expect(mixed.tdop).toBeGreaterThan(plain.tdop);
+      expect(mixed.gdop).toBeGreaterThan(plain.gdop);
+      expect(mixed.pdop).toBeGreaterThanOrEqual(plain.pdop - 1e-12);
+      expect(mixed.gdop ** 2).toBeCloseTo(
+        mixed.pdop ** 2 + mixed.tdop ** 2,
+        10
+      );
+    });
+
+    it('needs 3 + one satellite per clock', () => {
+      // 4 satellites over two systems: 5 unknowns
+      const four = geom
+        .slice(0, 4)
+        .map((s, i) => ({ ...s, prn: i < 2 ? `G${i + 1}` : `E${i + 1}` }));
+      expect(computeDop(four)).toBeNull();
+      expect(computeDop(geom.slice(0, 4))).not.toBeNull();
+    });
+  });
 });
 
 /* ── selectEphemeris ─────────────────────────────────────────── */
