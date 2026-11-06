@@ -436,8 +436,11 @@ function dopClock(prn: string | undefined): string {
  * constellation time scale, as a multi-GNSS receiver solves: every extra
  * time scale costs one observation. QZSS and SBAS share the GPS clock —
  * QZSST and SBAS network time are steered to GPST (RTKLIB pntpos does the
- * same) — so a lone SBAS GEO doesn't inflate TDOP/GDOP. Untagged
- * satellites share a single clock (the classic single-system model).
+ * same) — so a lone SBAS GEO doesn't inflate TDOP/GDOP. A time scale
+ * with a single satellite in view is left out: that satellite only fixes
+ * its own clock, adding nothing to PDOP/HDOP/VDOP and an unrecoverable ~1
+ * to TDOP². Untagged satellites share a single clock (the classic
+ * single-system model).
  *
  * @param satAzEls Satellite azimuth/elevation pairs (radians), optionally
  *   tagged with their PRN.
@@ -447,14 +450,23 @@ function dopClock(prn: string | undefined): string {
 export function computeDop(
   satAzEls: { az: number; el: number; prn?: string }[]
 ): DopValues | null {
-  const n = satAzEls.length;
-  const clocks = [...new Set(satAzEls.map((s) => dopClock(s.prn)))];
+  const perClock = new Map<string, number>();
+  for (const s of satAzEls) {
+    const c = dopClock(s.prn);
+    perClock.set(c, (perClock.get(c) ?? 0) + 1);
+  }
+  const sats =
+    perClock.size > 1
+      ? satAzEls.filter((s) => perClock.get(dopClock(s.prn))! > 1)
+      : satAzEls;
+  const n = sats.length;
+  const clocks = [...new Set(sats.map((s) => dopClock(s.prn)))];
   const m = 3 + clocks.length;
   if (n < Math.max(4, m)) return null;
 
   // Geometry matrix H (n×m): [cos(el)sin(az), cos(el)cos(az), sin(el), clocks…]
   const H: number[][] = [];
-  for (const { az, el, prn } of satAzEls) {
+  for (const { az, el, prn } of sats) {
     const cosEl = Math.cos(el);
     const row = [cosEl * Math.sin(az), cosEl * Math.cos(az), Math.sin(el)];
     const clock = dopClock(prn);

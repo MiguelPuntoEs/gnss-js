@@ -382,6 +382,16 @@ describe('computeDop', () => {
       expect(withJS.gdop).toBeCloseTo(gps.gdop, 12);
     });
 
+    it('a lone satellite of a time scale leaves the DOP unchanged', () => {
+      const gps = computeDop(geom.map((s, i) => ({ ...s, prn: `G${i + 1}` })))!;
+      const withNavic = computeDop([
+        ...geom.map((s, i) => ({ ...s, prn: `G${i + 1}` })),
+        { az: 2, el: 0.4, prn: 'I02' },
+      ])!;
+      for (const k of ['gdop', 'pdop', 'hdop', 'vdop', 'tdop'] as const)
+        expect(withNavic[k]).toBeCloseTo(gps[k], 12);
+    });
+
     it('needs 3 + one satellite per clock', () => {
       // 4 satellites over two systems: 5 unknowns
       const four = geom
