@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.9.0
+
+### Fixed — ephemerides are only used inside their broadcast validity (`orbit`)
+
+`selectEphemeris` and the batch position/visibility functions (`computeAllPositions`, `computeVisibility`) picked the nearest ephemeris within a flat 4 h (Keplerian) or 30 min (GLONASS/SBAS) of its toc. That let a GPS/QZSS ephemeris be used up to 2 h outside its 4-h curve fit, BeiDou up to 2.5 h past its hourly refresh, GLONASS up to 15 min outside its 30-min interval, and an SBAS GEO state vector ~24 min after it expires — and it measured GLONASS/SBAS distance on the GPS axis although their tocs are UTC (18 s off).
+
+Selection now uses one per-system rule — GPS/QZSS ±2 h, Galileo 2.5 h, BeiDou 90 min, GLONASS ±15 min, NavIC 2 h, SBAS 6 min — with GLONASS/SBAS compared on the UTC axis. A satellite with no valid ephemeris at an epoch gets no position (`null`) there rather than an extrapolated one.
+
+### New
+
+- `isEphemerisValid(eph, tGpsMs)`, `nearestValidEphemeris(ephs, tGpsMs)` and the `EPHEMERIS_VALIDITY_MS` table, for consumers that select ephemerides themselves.
+
 ## 2.7.0
 
 ### Fixed — geodesy accuracy (`coordinates`)

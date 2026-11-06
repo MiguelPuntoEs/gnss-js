@@ -431,21 +431,21 @@ describe('selectEphemeris', () => {
     expect(result).toBeNull();
   });
 
-  it('rejects ephemerides older than 4 hours', () => {
+  it('rejects a GPS ephemeris outside its ±2 h fit (4-h curve fit on toe)', () => {
     const t = new Date('2024-01-01T00:00:00Z');
     const ephs: Ephemeris[] = [makeGpsEph({ prn: 'G01', tocDate: t })];
 
-    // Target 5 hours later
-    const target = t.getTime() + 5 * 3600 * 1000;
+    // 3 h later: outside the fit interval (was accepted under the old 4-h cap).
+    const target = t.getTime() + 3 * 3600 * 1000;
     const result = selectEphemeris(ephs, 'G01', target);
     expect(result).toBeNull();
   });
 
-  it('accepts ephemeris within 4 hours', () => {
+  it('accepts a GPS ephemeris within ±2 h', () => {
     const t = new Date('2024-01-01T00:00:00Z');
     const ephs: Ephemeris[] = [makeGpsEph({ prn: 'G01', tocDate: t })];
 
-    const target = t.getTime() + 3 * 3600 * 1000; // 3 hours
+    const target = t.getTime() + 2 * 3600 * 1000; // 2 hours
     const result = selectEphemeris(ephs, 'G01', target);
     expect(result).toBe(ephs[0]);
   });
