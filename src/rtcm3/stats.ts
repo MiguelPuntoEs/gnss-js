@@ -237,9 +237,11 @@ export function updateStreamStats(
     entry.lastSeen = now;
     entry.totalBytes += frame.length + 6;
 
-    // Decode observations — MSM4–7 or the legacy fixed-layout obs (1001–1004
+    // Decode observations — MSM1–7 or the legacy fixed-layout obs (1001–1004
     // GPS, 1009–1012 GLONASS), so legacy CORS satellites show in the census.
-    const obsEpoch = decodeObs(frame);
+    // Compact MSM1–3 are safe here unresolved: only which satellites and
+    // signals are present is used, never a range.
+    const obsEpoch = decodeObs(frame, { compactMsm: true });
     if (obsEpoch) {
       for (const obs of obsEpoch.observations) {
         const signals: SignalCn0[] = [];
