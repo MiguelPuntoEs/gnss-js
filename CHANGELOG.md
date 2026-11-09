@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 2.10.0
 
 ### New — compact MSM (MSM1–3) observations (`rtcm3`, `positioning`)
 
 `decodeMsmFull` / `decodeObs` now decode MSM1 (code), MSM2 (phase) and MSM3 (code + phase) when asked to (`{ compactMsm: true }` — opt-in, so existing consumers keep getting `null` rather than incomplete ranges). These carry each satellite's rough range only modulo 1 ms (no DF397). Their epochs come back with `rangeModulo1ms: true`; `resolveMsmRanges(epoch, { timeMs, rxEcef, ephFor })` restores the whole light-milliseconds from an approximate position (tens of km is fine) and the broadcast orbit + clock, choosing them against the epoch's common receiver-clock offset so the epoch stays self-consistent. Validated on real MSM3 streams (GPS/GLONASS/Galileo/BeiDou, three stations): every satellite resolved, single-point solutions 3–5 m (median) from the stations' 1006 coordinates.
+
+### Fixed — RINEX observation INTERVAL (`rinex`)
+
+The observation writers declared `INTERVAL` as the gap between the first two epochs, so a file opening with an irregular gap (a late second epoch) stated the wrong interval. It is now the most common spacing between consecutive epochs (`modalIntervalS`).
 
 ## 2.9.0
 
