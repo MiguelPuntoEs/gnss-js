@@ -58,13 +58,14 @@ export function cnavCrcOk(msg: Uint8Array): boolean {
   return crc24q(msg, 276) === getBitU(msg, 276, 24);
 }
 
-/* ── 33-bit field helpers (getBitU/getBitS are specified ≤ 32) ──── */
+/* ── 33-bit field helpers (getBitU/getBitS are specified ≤ 32; shared
+   with the BeiDou-3 B-CNAV decoder in ./bds-cnav) ──── */
 
-function getBitU33(b: Uint8Array, pos: number): number {
+export function getBitU33(b: Uint8Array, pos: number): number {
   return getBitU(b, pos, 1) * 2 ** 32 + getBitU(b, pos + 1, 32);
 }
 
-function getBitS33(b: Uint8Array, pos: number): number {
+export function getBitS33(b: Uint8Array, pos: number): number {
   const u = getBitU33(b, pos);
   return u < 2 ** 32 ? u : u - 2 ** 33;
 }

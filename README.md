@@ -16,7 +16,7 @@ Everything is exposed through subpath exports (`gnss-js/rinex`, `gnss-js/positio
 
 - **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX.
 - **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression.
-- **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2, GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
+- **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2 and B-CNAV1/2/3 (B1C/B2a/B2b), GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
 - **Orbits** — satellite position/velocity, Doppler, DOP, azimuth/elevation, pass prediction and almanac propagation.
 - **Positioning** — SPP, static and kinematic float PPP, PPP-AR (LAMBDA + wide-/narrow-lane FCB estimation), post-processed RTK, DGNSS, and SBAS/DFMC augmentation.
 - **Quality** — multipath, cycle slips, completeness and slant-TEC ionosphere analysis, with SINEX-DCB calibration.

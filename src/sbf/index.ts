@@ -59,6 +59,12 @@ export {
 } from './navigation';
 
 export {
+  parseSbfBdsCnav,
+  type SbfBdsCnavResult,
+  type BdsCnavEphemeris,
+} from './rawnav-bds-cnav';
+
+export {
   parseSbfCnav,
   type SbfCnavResult,
   type SbfCnavEphemeris,
