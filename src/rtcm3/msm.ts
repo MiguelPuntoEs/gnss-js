@@ -1,11 +1,15 @@
 /**
- * Full RTCM3 MSM4-7 decoder — extracts pseudorange, carrier phase,
+ * Full RTCM3 MSM decoder — extracts pseudorange, carrier phase,
  * Doppler, and C/N0 for every satellite × signal cell.
  *
- * Reference: BNC 2.13.4 RTCM3Decoder.cpp (BKG) and RTCM 10403.3 §3.5.
+ * Reference: BNC 2.13.4 RTCM3Decoder.cpp (BKG), RTKLIB rtcm3.c and
+ * RTCM 10403.3 §3.5.
  *
- * Only MSM types 4-7 are decoded (full data). Types 1-3 carry partial
- * data and are skipped.
+ * MSM4–7 carry full observations. MSM1–3 (compact: MSM1 code, MSM2 phase,
+ * MSM3 both; no C/N0, no Doppler) carry each satellite's rough range only
+ * modulo 1 ms (DF398, no DF397 integer milliseconds): their epochs come back
+ * with `rangeModulo1ms` set, ranges complete except for a whole number of
+ * light-milliseconds per satellite — see `resolveMsmRanges` (positioning).
  */
 
 import { BitReader, reportDecodeError } from './decoder';
@@ -329,6 +333,12 @@ export interface ObsEpoch {
   system: string;
   /** Observations per satellite */
   observations: ObsSatObs[];
+  /**
+   * Set for MSM1–3: every pseudorange and phase is short by an unknown whole
+   * number of light-milliseconds (~299.79 km) per satellite. Resolve with
+   * `resolveMsmRanges` before using the ranges.
+   */
+  rangeModulo1ms?: true;
 }
 
 /* ================================================================== */
@@ -397,17 +407,33 @@ function satPrn(sys: string, satIdx1: number): string {
   return `${prefix}${String(num).padStart(2, '0')}`;
 }
 
+/** Options for the RTCM3 observation decoders. */
+export interface ObsDecodeOptions {
+  /**
+   * Also decode compact MSM1–3. Their epochs carry `rangeModulo1ms`: every
+   * range is short by whole light-milliseconds until `resolveMsmRanges`
+   * completes it, so a consumer must opt in (default false → null, as
+   * before).
+   */
+  compactMsm?: boolean;
+}
+
 /**
- * Decode a single RTCM3 MSM4-7 frame into full observations.
- * Returns null for non-MSM or MSM1-3 frames.
+ * Decode a single RTCM3 MSM frame into observations: MSM4–7, and MSM1–3
+ * with `opts.compactMsm` (flagged `rangeModulo1ms`). Null otherwise.
  */
-export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
+export function decodeMsmFull(
+  frame: Rtcm3Frame,
+  opts: ObsDecodeOptions = {}
+): ObsEpoch | null {
   const type = frame.messageType;
   const sys = msmSystem(type);
   if (!sys) return null;
 
   const variant = type % 10;
-  if (variant < 4 || variant > 7) return null;
+  if (variant < 1 || variant > 7) return null;
+  const compact = variant <= 3;
+  if (compact && !opts.compactMsm) return null;
 
   const payload = frame.payload;
   if (!payload || payload.length < 10) return null;
@@ -475,7 +501,10 @@ export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
     // Extended satellite info (DF419, GLO freq number) exists ONLY in
     // MSM5/7. MSM4/6 satellite data is DF397 + DF398 alone — reading a
     // phantom 4-bit field here shifted every subsequent field.
-    if (variant === 4 || variant === 6) {
+    if (compact) {
+      // MSM1–3: DF398 only — the rough range modulo 1 ms.
+      for (let j = 0; j < numSat; j++) rrmod[j] = bits.readU(10) / 1024;
+    } else if (variant === 4 || variant === 6) {
       for (let j = 0; j < numSat; j++) rrint[j] = bits.readU(8);
       for (let j = 0; j < numSat; j++) rrmod[j] = bits.readU(10) / 1024;
     } else {
@@ -513,7 +542,18 @@ export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
     // Scale factors as 2 ** n, never (1 << n): `1 << 31` is negative in
     // JS, which flipped the sign of MSM6/7 fine phase and let the
     // invalid-value sentinel pass the validity checks below.
-    if (variant === 4) {
+    if (variant === 1) {
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(15) / 2 ** 24;
+    } else if (variant === 2) {
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(22) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(4);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+    } else if (variant === 3) {
+      for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(15) / 2 ** 24;
+      for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(22) / 2 ** 29;
+      for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(4);
+      for (let i = 0; i < activeCells; i++) hc[i] = bits.readU(1);
+    } else if (variant === 4) {
       for (let i = 0; i < activeCells; i++) psr[i] = bits.readS(15) / 2 ** 24;
       for (let i = 0; i < activeCells; i++) cp[i] = bits.readS(22) / 2 ** 29;
       for (let i = 0; i < activeCells; i++) ll[i] = bits.readU(4);
@@ -609,9 +649,11 @@ export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
           signal.cn0 = cnrVal;
         }
 
-        // Lock time
-        signal.lockTime = lockTimeSec(type, ll[cellIdx]!);
-        signal.halfCycle = hc[cellIdx]! === 1;
+        // Lock time (MSM1 carries none)
+        if (variant !== 1) {
+          signal.lockTime = lockTimeSec(type, ll[cellIdx]!);
+          signal.halfCycle = hc[cellIdx]! === 1;
+        }
 
         signals.push(signal);
         cellIdx++;
@@ -627,6 +669,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
       epochMs,
       system: sys,
       observations,
+      ...(compact ? { rangeModulo1ms: true as const } : {}),
     };
   } catch (err) {
     reportDecodeError('msm', err);

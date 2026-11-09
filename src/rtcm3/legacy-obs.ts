@@ -31,7 +31,7 @@ import {
   GLO_F2_BASE,
   GLO_F2_STEP,
 } from '../constants/gnss';
-import type { ObsEpoch, ObsSatObs, ObsSignal } from './msm';
+import type { ObsDecodeOptions, ObsEpoch, ObsSatObs, ObsSignal } from './msm';
 
 const PRUNIT_GPS = 299792.458;
 const PRUNIT_GLO = 599584.916;
@@ -176,12 +176,16 @@ export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
 
 /**
  * Decode any RTCM3 observation frame into an {@link ObsEpoch}: MSM4–7 first
- * ({@link decodeMsmFull}), then the legacy fixed-layout obs (1001–1004 GPS,
+ * ({@link decodeMsmFull}; MSM1–3 too with `opts.compactMsm` — resolve those
+ * with `resolveMsmRanges` before use), then the legacy fixed-layout obs (1001–1004 GPS,
  * 1009–1012 GLONASS) via {@link decodeLegacyObs}. Returns null for any
  * non-observation message. This is the single obs entry point every consumer
  * (stream stats, live SPP/QC/RTK, station monitor) should call, so a new obs
  * source is added here once rather than at every call site.
  */
-export function decodeObs(frame: Rtcm3Frame): ObsEpoch | null {
-  return decodeMsmFull(frame) ?? decodeLegacyObs(frame);
+export function decodeObs(
+  frame: Rtcm3Frame,
+  opts: ObsDecodeOptions = {}
+): ObsEpoch | null {
+  return decodeMsmFull(frame, opts) ?? decodeLegacyObs(frame);
 }
