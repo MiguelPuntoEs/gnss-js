@@ -90,3 +90,14 @@ describe('obs writers (characterization)', () => {
     expect(blob.size).toBe(0);
   });
 });
+
+describe('obs writer INTERVAL', () => {
+  it('states the most common spacing, not the first gap', async () => {
+    const t0 = Date.UTC(2024, 0, 1, 10, 0, 0);
+    // A late second epoch (7 s), then a regular 30 s cadence.
+    const eps = [0, 7, 37, 67, 97, 127].map((s, i) => epoch(t0 + s * 1000, i));
+    const text = await decode(await writeRinexObsBlob(header, eps, obsTypes));
+    const line = text.split('\n').find((l) => l.includes('INTERVAL'))!;
+    expect(line.slice(0, 10).trim()).toBe('30.000');
+  });
+});

@@ -49,6 +49,30 @@ export function writeRinexObsBlob(
   });
 }
 
+/**
+ * The nominal observation interval (s): the most common spacing between
+ * consecutive epochs. The first difference alone mis-states it whenever the
+ * file opens with an irregular gap (a late second epoch, a burst). Null with
+ * fewer than two epochs.
+ */
+export function modalIntervalS(
+  epochs: readonly { time: number }[]
+): number | null {
+  const counts = new Map<number, number>();
+  for (let i = 1; i < epochs.length; i++) {
+    const d = Math.round(epochs[i]!.time - epochs[i - 1]!.time);
+    if (d > 0) counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  let best: number | null = null;
+  let bestN = 0;
+  for (const [d, n] of counts)
+    if (n > bestN || (n === bestN && best !== null && d < best)) {
+      best = d;
+      bestN = n;
+    }
+  return best === null ? null : best / 1000;
+}
+
 /** Shared RINEX 3/4 implementation (also used by obs-writer-v4.ts). */
 export async function writeModernObsBlob(
   header: RinexHeader,
@@ -113,11 +137,9 @@ export async function writeModernObsBlob(
     )
   );
 
-  if (epochs.length >= 2) {
-    const interval = (epochs[1]!.time - epochs[0]!.time) / 1000;
-    if (interval > 0 && interval < 3600) {
-      sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
-    }
+  const interval = modalIntervalS(epochs);
+  if (interval !== null && interval < 3600) {
+    sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
   }
 
   if (header.glonassSlots && Object.keys(header.glonassSlots).length > 0) {
