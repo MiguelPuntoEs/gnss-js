@@ -650,6 +650,7 @@ export type {
 
 export { postProcessRtk } from './rtk-postprocess';
 export { ZeroBaselineEngine } from './zero-baseline';
+export { resolveMsmRanges, type MsmResolveOptions } from './msm-resolve';
 export type {
   ZeroBaselineOptions,
   ReceiverClockSample,
