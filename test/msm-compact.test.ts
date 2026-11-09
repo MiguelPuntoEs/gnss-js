@@ -73,7 +73,7 @@ describe('compact MSM (1–3) decode', () => {
   const ms = (v: number) => (v * C_LIGHT) / 1000;
 
   it('MSM3: code + phase, modulo 1 ms, flagged', () => {
-    const ep = decodeMsmFull(compactFrame(3))!;
+    const ep = decodeMsmFull(compactFrame(3), { compactMsm: true })!;
     expect(ep.rangeModulo1ms).toBe(true);
     expect(ep.observations.map((o) => o.prn)).toEqual(['G05', 'G12']);
     const [c1, c2] = ep.observations[0]!.signals;
@@ -94,12 +94,20 @@ describe('compact MSM (1–3) decode', () => {
     expect(g12.phase).toBeDefined();
   });
 
+  it('is opt-in: without compactMsm, MSM1–3 decode to null as before', () => {
+    expect(decodeMsmFull(compactFrame(3))).toBeNull();
+    expect(decodeObs(compactFrame(3))).toBeNull();
+    expect(decodeObs(compactFrame(3), { compactMsm: true })).not.toBeNull();
+  });
+
   it('MSM1 is code only, MSM2 phase only', () => {
-    const m1 = decodeMsmFull(compactFrame(1))!.observations[0]!.signals[0]!;
+    const m1 = decodeMsmFull(compactFrame(1), { compactMsm: true })!
+      .observations[0]!.signals[0]!;
     expect(m1.pseudorange).toBeDefined();
     expect(m1.phase).toBeUndefined();
     expect(m1.lockTime).toBeUndefined();
-    const m2 = decodeMsmFull(compactFrame(2))!.observations[0]!.signals[0]!;
+    const m2 = decodeMsmFull(compactFrame(2), { compactMsm: true })!
+      .observations[0]!.signals[0]!;
     expect(m2.pseudorange).toBeUndefined();
     expect(m2.phase).toBeDefined();
   });

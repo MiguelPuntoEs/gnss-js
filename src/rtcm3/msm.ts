@@ -407,11 +407,25 @@ function satPrn(sys: string, satIdx1: number): string {
   return `${prefix}${String(num).padStart(2, '0')}`;
 }
 
+/** Options for the RTCM3 observation decoders. */
+export interface ObsDecodeOptions {
+  /**
+   * Also decode compact MSM1–3. Their epochs carry `rangeModulo1ms`: every
+   * range is short by whole light-milliseconds until `resolveMsmRanges`
+   * completes it, so a consumer must opt in (default false → null, as
+   * before).
+   */
+  compactMsm?: boolean;
+}
+
 /**
- * Decode a single RTCM3 MSM frame (types 1–7) into observations.
- * Returns null for non-MSM frames. MSM1–3 epochs carry `rangeModulo1ms`.
+ * Decode a single RTCM3 MSM frame into observations: MSM4–7, and MSM1–3
+ * with `opts.compactMsm` (flagged `rangeModulo1ms`). Null otherwise.
  */
-export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
+export function decodeMsmFull(
+  frame: Rtcm3Frame,
+  opts: ObsDecodeOptions = {}
+): ObsEpoch | null {
   const type = frame.messageType;
   const sys = msmSystem(type);
   if (!sys) return null;
@@ -419,6 +433,7 @@ export function decodeMsmFull(frame: Rtcm3Frame): ObsEpoch | null {
   const variant = type % 10;
   if (variant < 1 || variant > 7) return null;
   const compact = variant <= 3;
+  if (compact && !opts.compactMsm) return null;
 
   const payload = frame.payload;
   if (!payload || payload.length < 10) return null;
