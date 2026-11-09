@@ -124,13 +124,12 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       let rangeM = 0;
       let phaseWindupM = 0;
       const e = geom.los; // rcv → sat
-      const [latDeg, lonDeg] = ecefToGeodetic(
+      // ecefToGeodetic returns radians.
+      const [latRad, lonRad] = ecefToGeodetic(
         geom.rcvEcef[0],
         geom.rcvEcef[1],
         geom.rcvEcef[2]
       );
-      const latRad = (latDeg * Math.PI) / 180;
-      const lonRad = (lonDeg * Math.PI) / 180;
 
       // Satellite body frame (needed for PCO + wind-up).
       const frame = ctx ? satBodyFrame(geom.satEcef, ctx.sun) : null;
