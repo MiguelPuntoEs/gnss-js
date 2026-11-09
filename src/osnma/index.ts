@@ -24,5 +24,5 @@ export {
   type OsnmaPublicKeyRecord,
 } from './merkle';
 export { verifySbfOsnma, feedSbfOsnmaBlock } from './sbf';
-export { sha256, hmacSha256 } from './sha256';
-export { p256Verify } from './p256';
+export { sha256, sha512, hmacSha256 } from './sha256';
+export { p256Verify, p521Verify } from './ecdsa';

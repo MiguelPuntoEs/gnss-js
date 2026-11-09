@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.12.0
+
+### New — Galileo OSNMA navigation message authentication (`osnma`)
+
+A new `gnss-js/osnma` entry verifies Galileo's Open Service Navigation Message Authentication end to end, after the OSNMA SIS ICD v1.1. `OsnmaReceiver` takes E1-B I/NAV nominal pages (`pushPage`, live or batch; `verifySbfOsnma` runs it over a Septentrio SBF capture) and checks the whole chain of trust: the public key against the Merkle root (the GSC tree in force since 2025-12-10 and its PKID 2 key are built in; a key broadcast in DSM-PKR is accepted once its Merkle path verifies), the DSM-KROOT's ECDSA P-256 or P-521 signature, each TESLA chain key back to the root key, the MACSEQ and MAC look-up table, and the HMAC tags over every satellite's ephemeris, clock and status (ADKD 0 and slow-MAC 12) and GST timing parameters (ADKD 4), with tag accumulation to the Receiver Guidelines' 80/40-bit thresholds. Cross-authentication covers satellites that broadcast no OSNMA themselves. Chain renewal and revocation, public-key renewal and revocation, Merkle tree renewal and the Alert Message are followed. `status()` reports the NMA header, verified keys and chains, per-satellite authenticated IODnav and timing, and the events that matter — a tag that does not verify means the navigation data differ from what Galileo signed.
+
+The cryptography is synchronous and dependency-free (SHA-256, SHA-512, HMAC-SHA-256, ECDSA P-256/P-521 in BigInt), checked against NIST examples and `node:crypto`.
+
+Validated on the 19 official ICD test-vector scenarios: zero false failures; 14 match the authenticated-tag counts of the reference implementation OSNMAlib exactly, one is off by a single tag, and four differ only in how tags around "don't use" periods are counted. On live TU Delft receivers the PKID 2 key, a broadcast DSM-PKR, the KROOT and every tag verify; altering one satellite's ephemeris word, or one TESLA key, is caught.
+
 ## 2.11.0
 
 ### New — BeiDou-3 B-CNAV ephemerides (`sbf`, `rinex`)

@@ -23,7 +23,7 @@
  */
 
 import { hmacSha256, sha256 } from './sha256';
-import { p256Verify } from './p256';
+import { p256Verify, p521Verify } from './ecdsa';
 import {
   OSNMA_KNOWN_PUBLIC_KEYS,
   OSNMA_MERKLE_ROOT,
@@ -265,11 +265,18 @@ export interface OsnmaStatus {
   events: OsnmaEvent[];
   /** OSNMA pages fed (E1-B pages with a non-zero OSNMA field). */
   osnmaPages: number;
+  /** MACK messages left unused because the NMA status was "don't use". */
+  dontUseMacks: number;
+  /** An authenticated OSNMA Alert Message was received: OSNMA stopped. */
+  alert: boolean;
 }
 
 export interface OsnmaReceiverOptions {
-  /** Merkle tree root (32 bytes); default {@link OSNMA_MERKLE_ROOT}. */
-  merkleRoot?: Uint8Array;
+  /**
+   * Merkle tree root(s) (32 bytes each); default {@link OSNMA_MERKLE_ROOT}.
+   * During a Merkle tree renewal pass both the old and the new root.
+   */
+  merkleRoot?: Uint8Array | readonly Uint8Array[];
   /**
    * Public keys known in advance (each checked against the root);
    * default {@link OSNMA_KNOWN_PUBLIC_KEYS}. Pass [] to rely only on
@@ -345,6 +352,9 @@ function gst32(abs: number): Uint8Array {
   ]);
 }
 
+const hexOf = (b: Uint8Array) =>
+  Array.from(b, (v) => v.toString(16).padStart(2, '0')).join('');
+
 const prnName = (svid: number) => `E${String(svid).padStart(2, '0')}`;
 
 /* ------------------------------------------------------------------ */
@@ -352,7 +362,11 @@ const prnName = (svid: number) => `E${String(svid).padStart(2, '0')}`;
 /* ------------------------------------------------------------------ */
 
 export class OsnmaReceiver {
-  private readonly root: Uint8Array;
+  private readonly roots: Uint8Array[];
+  /** An authenticated OSNMA Alert Message stopped all processing. */
+  private alerted = false;
+  /** Revoked public keys and chains (hex), never to be used again. */
+  private readonly revoked = new Set<string>();
   private readonly pubKeys = new Map<
     number,
     { key: Uint8Array; npkt: number; source: 'known' | 'broadcast' }
@@ -370,14 +384,17 @@ export class OsnmaReceiver {
   private lastKey: number | null = null;
   private tags = { ok: 0, failed: 0, unverifiable: 0, dummy: 0 };
   private osnmaPages = 0;
+  private dontUseMacks = 0;
   private latestSf = 0;
-  private readonly rejectedKeySf = new Set<number>();
+  /** Keys already rejected, as `sf:hex` (one event each). */
+  private readonly rejectedKeys = new Set<string>();
 
   constructor(opts: OsnmaReceiverOptions = {}) {
-    this.root = opts.merkleRoot ?? OSNMA_MERKLE_ROOT;
+    const r = opts.merkleRoot ?? OSNMA_MERKLE_ROOT;
+    this.roots = r instanceof Uint8Array ? [r] : [...r];
     for (const r of opts.publicKeys ?? OSNMA_KNOWN_PUBLIC_KEYS) {
       const leaf = publicKeyLeaf(r.npkt, r.pkid, r.key);
-      if (merkleLeafOk(leaf, r.mid, r.path, this.root))
+      if (this.leafOk(leaf, r.mid, r.path))
         this.pubKeys.set(r.pkid, { key: r.key, npkt: r.npkt, source: 'known' });
     }
   }
@@ -475,6 +492,8 @@ export class OsnmaReceiver {
         })),
       events: this.events.slice(),
       osnmaPages: this.osnmaPages,
+      dontUseMacks: this.dontUseMacks,
+      alert: this.alerted,
     };
   }
 
@@ -538,7 +557,8 @@ export class OsnmaReceiver {
     for (let i = 0; i < 15; i++) mack.set(c.mack[i]!, 4 * i);
     const nma = hk[0]!;
     this.nmaHeader = nma;
-    if (nma >> 6 === 0) return; // reserved: nothing to authenticate
+    if (this.alerted || nma >> 6 === 0) return; // nothing to authenticate
+    this.applyRevocations(nma);
     this.onDsmBlock(c.sf, nma, hk[1]! >> 4, hk[1]! & 0xf, hk.subarray(2));
     this.macks.push({
       sf: c.sf,
@@ -550,6 +570,34 @@ export class OsnmaReceiver {
     });
     this.onKeyFrom(this.macks[this.macks.length - 1]!);
     this.processMacks();
+  }
+
+  private leafOk(leaf: Uint8Array, mid: number, path: readonly Uint8Array[]) {
+    return this.roots.some((root) => merkleLeafOk(leaf, mid, path, root));
+  }
+
+  /**
+   * "Don't use" headers announcing a revocation (ICD §5.4.1, §5.5.3):
+   * drop the revoked chain or public key and never accept it again.
+   */
+  private applyRevocations(nma: number): void {
+    if (nma >> 6 !== 3) return;
+    const cpks = (nma >> 1) & 7;
+    const chain = this.chains.get((nma >> 4) & 3);
+    if (cpks === 3 && chain) {
+      this.revoked.add(hexOf(chain.kroot));
+      this.chains.delete(chain.cid);
+    }
+    if (cpks === 5 && chain) {
+      const pk = this.pubKeys.get(chain.pkid);
+      if (pk) this.revoked.add(hexOf(pk.key));
+      this.pubKeys.delete(chain.pkid);
+      for (const [cid, c] of this.chains)
+        if (c.pkid === chain.pkid) {
+          this.revoked.add(hexOf(c.kroot));
+          this.chains.delete(cid);
+        }
+    }
   }
 
   /* ----------------------------- DSM ------------------------------- */
@@ -591,12 +639,13 @@ export class OsnmaReceiver {
     if (npkt === 4) {
       // Alert message: verified like a key, payload = rest of the DSM.
       const leaf = msg.slice(129);
-      if (merkleLeafOk(leaf, mid, path, this.root)) {
+      if (this.leafOk(leaf, mid, path)) {
         this.event({
           gst,
           kind: 'alert-message',
           message: 'OSNMA Alert Message received: stop using OSNMA.',
         });
+        this.alerted = true;
         this.pubKeys.clear();
         this.chains.clear();
       }
@@ -606,7 +655,8 @@ export class OsnmaReceiver {
     if (!keyLen) return;
     const key = msg.slice(130, 130 + keyLen);
     const leaf = msg.slice(129, 130 + keyLen);
-    if (!merkleLeafOk(leaf, mid, path, this.root)) {
+    if (this.revoked.has(hexOf(key))) return;
+    if (!this.leafOk(leaf, mid, path)) {
       this.event({
         gst,
         kind: 'public-key-rejected',
@@ -644,19 +694,14 @@ export class OsnmaReceiver {
     const klen = keyBits / 8;
     const pk = this.pubKeys.get(pkid);
     if (!pk) return; // retried when the DSM comes round again
-    if (pk.npkt !== 1) {
-      this.event({
-        gst,
-        kind: 'unsupported',
-        message: `DSM-KROOT signed with an unsupported key type (NPKT ${pk.npkt}).`,
-      });
-      return;
-    }
     const m = new Uint8Array(13 + klen);
     m[0] = nma;
     m.set(msg.subarray(1, 13 + klen), 1);
-    const sig = msg.subarray(13 + klen, 13 + klen + 64);
-    if (!p256Verify(pk.key, m, sig)) {
+    // DS: 512 bits for P-256, 1056 for P-521 (Table 15).
+    const sigLen = pk.npkt === 1 ? 64 : 132;
+    const sig = msg.subarray(13 + klen, 13 + klen + sigLen);
+    const verify = pk.npkt === 1 ? p256Verify : p521Verify;
+    if (sig.length !== sigLen || !verify(pk.key, m, sig)) {
       this.event({
         gst,
         kind: 'kroot-rejected',
@@ -665,7 +710,14 @@ export class OsnmaReceiver {
       return;
     }
     const kroot = msg.slice(13, 13 + klen);
+    if (this.revoked.has(hexOf(kroot))) return;
     const gst0 = wnk * WEEK + towhk * 3600;
+    // A key enters into force with its first KROOT: every key with a
+    // lower PKID is out of use (renewal step 2), except across a Merkle
+    // tree renewal, which restarts the PKID count.
+    if (((nma >> 1) & 7) !== 6)
+      for (const id of [...this.pubKeys.keys()])
+        if (id < pkid) this.pubKeys.delete(id);
     const existing = this.chains.get(cid);
     if (existing && eqBytes(existing.alpha, msg.subarray(7, 13))) {
       // Same chain, another (floating) KROOT: record it as a known key.
@@ -717,10 +769,17 @@ export class OsnmaReceiver {
   /** Verify the TESLA key carried in a MACK against the chain. */
   private onKeyFrom(r: MackRecord): void {
     const c = this.chainFor(r.nmaHeader);
-    if (!c || !c.supported || c.keys.has(r.sf)) return;
-    if (this.rejectedKeySf.has(r.sf)) return;
+    if (!c || !c.supported) return;
     const nt = Math.floor((480 - c.keyBits) / (c.tagBits + 16));
     const key = sliceBits(r.mack, nt * (c.tagBits + 16), c.keyBits);
+    const known = c.keys.get(r.sf);
+    if (known) {
+      // All satellites broadcast the same key in a subframe.
+      if (!eqBytes(known, key)) this.rejectKey(r);
+      return;
+    }
+    const tag = `${r.sf}:${hexOf(key)}`;
+    if (this.rejectedKeys.has(tag)) return;
     // Nearest verified key before this subframe.
     let anchor = -Infinity;
     for (const sf of c.keys.keys()) if (sf < r.sf && sf > anchor) anchor = sf;
@@ -734,15 +793,19 @@ export class OsnmaReceiver {
       this.keysVerified++;
       if (this.lastKey === null || r.sf > this.lastKey) this.lastKey = r.sf;
     } else {
-      this.keysRejected++;
-      this.rejectedKeySf.add(r.sf);
-      this.event({
-        gst: gstOf(r.sf),
-        kind: 'key-rejected',
-        prn: prnName(r.prna),
-        message: `TESLA key from ${prnName(r.prna)} does not hash back to the verified chain.`,
-      });
+      this.rejectedKeys.add(tag);
+      this.rejectKey(r);
     }
+  }
+
+  private rejectKey(r: MackRecord): void {
+    this.keysRejected++;
+    this.event({
+      gst: gstOf(r.sf),
+      kind: 'key-rejected',
+      prn: prnName(r.prna),
+      message: `TESLA key from ${prnName(r.prna)} does not hash back to the verified chain.`,
+    });
   }
 
   /* ----------------------------- tags ------------------------------ */
@@ -750,6 +813,12 @@ export class OsnmaReceiver {
   private processMacks(): void {
     for (const r of this.macks) {
       if (r.fastDone && r.slowDone) continue;
+      if (r.nmaHeader >> 6 === 3) {
+        // "Don't use": data must not be authenticated with this MACK.
+        r.fastDone = r.slowDone = true;
+        this.dontUseMacks++;
+        continue;
+      }
       const c = this.chainFor(r.nmaHeader);
       if (!c || !c.supported) continue;
       const fastKey = c.keys.get(r.sf + 30);

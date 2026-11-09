@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHash, createHmac, generateKeyPairSync, sign } from 'crypto';
-import { sha256, hmacSha256 } from '../src/osnma/sha256';
-import { p256PublicKey, p256Verify } from '../src/osnma/p256';
+import { sha256, sha512, hmacSha256 } from '../src/osnma/sha256';
+import { p256PublicKey, p256Verify, p521Verify } from '../src/osnma/ecdsa';
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -29,6 +29,10 @@ describe('sha256 / hmacSha256', () => {
       expect(hex(sha256(m.subarray(0, n >> 1), m.subarray(n >> 1)))).toBe(
         hex(sha256(m))
       );
+      if (n % 7 === 0)
+        expect(hex(sha512(m))).toBe(
+          createHash('sha512').update(m).digest('hex')
+        );
       const key = m.subarray(0, (n * 7) % 90);
       expect(hex(hmacSha256(key, m))).toBe(
         createHmac('sha256', key).update(m).digest('hex')
@@ -66,6 +70,32 @@ describe('p256Verify', () => {
       expect(p256Verify(compressed, enc(`OSNMA DSM-KROOT ${i + 1}`), sig)).toBe(
         false
       );
+    }
+  });
+});
+
+describe('p521Verify', () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ec', {
+    namedCurve: 'P-521',
+  });
+  const spki = publicKey.export({ format: 'der', type: 'spki' });
+  const raw = new Uint8Array(spki.subarray(spki.length - 133)); // 04 ‖ X ‖ Y
+  const compressed = new Uint8Array(67);
+  compressed[0] = 2 + (raw[132]! & 1);
+  compressed.set(raw.subarray(1, 67), 1);
+
+  it('accepts node-made signatures and rejects tampered ones', () => {
+    for (let i = 0; i < 3; i++) {
+      const msg = enc(`OSNMA P-521 ${i}`);
+      const sig = new Uint8Array(
+        sign('sha512', msg, { key: privateKey, dsaEncoding: 'ieee-p1363' })
+      );
+      expect(p521Verify(compressed, msg, sig)).toBe(true);
+      expect(p521Verify(raw, msg, sig)).toBe(true);
+      const bad = sig.slice();
+      bad[70]! ^= 1;
+      expect(p521Verify(compressed, msg, bad)).toBe(false);
+      expect(p256Verify(compressed, msg, sig)).toBe(false);
     }
   });
 });
