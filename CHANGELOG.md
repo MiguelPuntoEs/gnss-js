@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.1
+
+### Fixed — compact-MSM stations in the stream census (`rtcm3`)
+
+`updateStreamStats` now lists the satellites and signals of MSM1–3 streams (it only records presence, so their modulo-1-ms ranges need no resolving), instead of showing them as tracking nothing.
+
 ## 2.10.0
 
 ### New — compact MSM (MSM1–3) observations (`rtcm3`, `positioning`)

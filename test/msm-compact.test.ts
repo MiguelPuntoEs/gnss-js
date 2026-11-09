@@ -100,6 +100,13 @@ describe('compact MSM (1–3) decode', () => {
     expect(decodeObs(compactFrame(3), { compactMsm: true })).not.toBeNull();
   });
 
+  it('the stream census lists compact-MSM satellites and signals', () => {
+    const stats = createStreamStats();
+    updateStreamStats(stats, [compactFrame(3)], 40);
+    expect([...stats.satellites.keys()].sort()).toEqual(['G05', 'G12']);
+    expect([...stats.obsTypes.G!].sort()).toEqual(['C1C', 'C2W', 'L1C', 'L2W']);
+  });
+
   it('MSM1 is code only, MSM2 phase only', () => {
     const m1 = decodeMsmFull(compactFrame(1), { compactMsm: true })!
       .observations[0]!.signals[0]!;
