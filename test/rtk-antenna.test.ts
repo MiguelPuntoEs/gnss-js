@@ -135,9 +135,7 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ANTEX_FIX))(
       // correction removes the resulting baseline bias.
       const ephByPrn = new Map<string, (typeof ephs)[number]>();
       for (const e of ephs) ephByPrn.set(e.prn, e);
-      const [latDeg, lonDeg] = ecefToGeodetic(...WHU_ROVER_TRUTH);
-      const latR = (latDeg * Math.PI) / 180;
-      const lonR = (lonDeg * Math.PI) / 180;
+      const [latR, lonR] = ecefToGeodetic(...WHU_ROVER_TRUTH); // radians
       const roverInj = {
         epochs: roverF.epochs.map((ep) => ({
           ...ep,

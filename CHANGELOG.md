@@ -10,6 +10,23 @@ The cryptography is synchronous and dependency-free (SHA-256, SHA-512, HMAC-SHA-
 
 Validated on the 19 official ICD test-vector scenarios: zero false failures; 14 match the authenticated-tag counts of the reference implementation OSNMAlib exactly, one is off by a single tag, and four differ only in how tags around "don't use" periods are counted. On live TU Delft receivers the PKID 2 key, a broadcast DSM-PKR, the KROOT and every tag verify; altering one satellite's ephemeris word, or one TESLA key, is caught.
 
+### Fixed — centimetre static PPP (`positioning`)
+
+Static float PPP now lands within **0.6–0.8 cm 3D of the true ITRF2020 coordinate** after 24 h on all seven IGS stations tested (ANMG, ALIC, WTZR, KOUR, HOB2, DRAO, MATE, 2024-001, ESA MGEX 5-min products, truth from ESA's daily SINEX), ≤ 3 cm after 6 h and ~5 cm after 2 h. Before, the same runs were 9–42 cm off. Four model errors were behind it:
+
+- `ecefToGeodetic` returns radians, but the PPP corrections, the PPP troposphere latitude and the RTK receiver-antenna correction converted its output from degrees, so receiver antenna offsets, antenna heights and wind-up were applied in a wrong local frame (and Niell mapping used latitude ≈ 0).
+- Phase wind-up used the receiver dipole's East axis where the model (Wu et al., RTKLIB `windupcorr`) uses West: a sign error that biased the horizontal by up to 15 cm.
+- The ANTEX validity dates written by `parseAntex` were not understood by the PPP antenna model, so every GPS satellite got the phase-centre offset of the _first_ spacecraft that ever used its PRN (e.g. a 1978 Block I for G04), a GPS-only vertical bias of several centimetres.
+- Ambiguities were re-initialised whenever a phase innovation exceeded 15 cm, which also fired while the epoch's receiver clock was still settling, chopping arcs and keeping the solution code-dominated. Static mode now detects cycle slips with a clock-free time-differenced carrier-phase test (plus Melbourne–Wübbena), re-initialises only after three consecutive gated-out phases, and screens gross code outliers against each constellation's median first.
+
+Side effect for PPP-AR: arcs long enough for narrow-lane FCB estimation rose ~9× (GPS 32 → ~300 on the six-station test network; BeiDou now contributes ~200). `PppSolution.llh` is now in degrees as documented (it was radians).
+
+Kinematic PPP is unchanged and remains metre-level per epoch.
+
+### Fixed — Hatanaka (CRINEX) decoding (`rinex`)
+
+Compact RINEX files whose epochs change satellite count could decode with satellites shifted or invented: the epoch-line text repair dropped characters when a difference ran past the previous line, the satellite list was read beyond the epoch's satellite count, and the repaired line was not trimmed as `crx2rnx` trims it. Eleven IGS daily files (26 million observations) now decode identically to `crx2rnx` 4.2.0. Satellite ids written with a space (`G 2`) are normalised to `G02` in CRINEX, RINEX 3 and RINEX 2 observation files, so those satellites match precise orbits and broadcast ephemerides.
+
 ## 2.11.0
 
 ### New — BeiDou-3 B-CNAV ephemerides (`sbf`, `rinex`)

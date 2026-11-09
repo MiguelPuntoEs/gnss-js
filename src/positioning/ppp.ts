@@ -201,6 +201,11 @@ function matVec(P: number[][], h: number[]): number[] {
   return out;
 }
 
+/** Time-differenced iono-free phase jump (m) that flags a cycle slip. */
+const TD_SLIP_M = 0.08;
+/** Code residual spread (m, beyond 3σ of position) that screens a satellite. */
+const CODE_GATE_M = 15;
+
 /**
  * Sequential (scalar) EKF measurement update — process one measurement at
  * a time; avoids inverting the innovation matrix and stays numerically
@@ -432,6 +437,14 @@ export class PppEngine {
     }
   >;
   private mwState!: Map<string, { mean: number; n: number; lastEi: number }>;
+  /** Previous epoch's phase terms per satellite, for the time-differenced
+   *  (clock-free) cycle-slip test. */
+  private tdPrev!: Map<
+    string,
+    { ei: number; lIf: number; sat: [number, number, number]; model: number }
+  >;
+  /** Consecutive gated-out phase updates per satellite. */
+  private phaseRejects!: Map<string, number>;
   private series!: PppEpochResult[];
   private ei = 0;
   private t0 = 0;
@@ -470,6 +483,8 @@ export class PppEngine {
     this.arcs = [];
     this.arcSnap = new Map();
     this.mwState = new Map();
+    this.tdPrev = new Map();
+    this.phaseRejects = new Map();
     this.series = [];
     this.ei = 0;
     this.t0 = 0;
@@ -571,6 +586,8 @@ export class PppEngine {
       arcSnap,
       mwState,
       series,
+      tdPrev,
+      phaseRejects,
     } = this;
     const flushArc = this.flushArc.bind(this);
     const detectSlip = this.detectSlip.bind(this);
@@ -603,8 +620,8 @@ export class PppEngine {
     P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
 
     const rcv: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
-    const [latDeg, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
-    const latRad = (latDeg * Math.PI) / 180;
+    // ecefToGeodetic returns radians.
+    const [latRad, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
 
     // Sun/Moon-dependent corrections computed once per epoch.
     const epochCtx = corrections?.epochContext?.(epoch.timeMs, rcv) ?? null;
@@ -624,6 +641,7 @@ export class PppEngine {
       slip: boolean;
       f1: number;
       f2: number;
+      sat: [number, number, number];
     }
     const vis: Vis[] = [];
     // Zenith hydrostatic delay is station-level (same for every satellite this
@@ -700,7 +718,44 @@ export class PppEngine {
         slip,
         f1: o.f1,
         f2: o.f2,
+        sat: [sat.state.x, sat.state.y, sat.state.z],
       });
+    }
+
+    // ── Time-differenced carrier-phase slip test (static) ──
+    // Between consecutive epochs the iono-free phase changes by the
+    // geometric range change (both epochs evaluated at the current receiver
+    // position), the satellite clock change, the modelled delay change and
+    // the receiver clock change — the last common to every satellite (one
+    // oscillator), so it is removed with the median. What is left is phase
+    // noise + clock-interpolation error (cm) unless a cycle slip occurred
+    // (≥ ~0.1 m even for an equal (1,1) slip that the Melbourne–Wübbena test
+    // cannot see). Unlike an innovation test it does not depend on how well
+    // the filter's clock is settled within the epoch.
+    if (!kinematic) {
+      const dq: { v: Vis; d: number }[] = [];
+      for (const v of vis) {
+        const prev = tdPrev.get(v.prn);
+        const model = -v.satClkM + v.tropoFixed + v.windupM;
+        if (prev && prev.ei === ei - 1 && !v.slip) {
+          const r0 = Math.hypot(
+            prev.sat[0] - rcv[0],
+            prev.sat[1] - rcv[1],
+            prev.sat[2] - rcv[2]
+          );
+          dq.push({
+            v,
+            d: v.lIf - prev.lIf - (v.range - r0) - (model - prev.model),
+          });
+        }
+        tdPrev.set(v.prn, { ei, lIf: v.lIf, sat: v.sat, model });
+      }
+      if (dq.length >= 4) {
+        const sorted = dq.map((q) => q.d).sort((a, b) => a - b);
+        const med = sorted[Math.floor(sorted.length / 2)]!;
+        for (const q of dq)
+          if (Math.abs(q.d - med) > TD_SLIP_M) q.v.slip = true;
+      }
     }
 
     // ── Receiver clock: a white-noise state, jointly estimated with
@@ -725,6 +780,25 @@ export class PppEngine {
       if (arr) arr.push(r);
       else bySys.set(sys, [r]);
     }
+    // Gross code outliers: the clock is re-estimated every epoch, so the
+    // filter's own gate is loose for the first satellites processed; screen
+    // each satellite's code residual against its constellation's median
+    // first (the receiver clock cancels), allowing for the current position
+    // uncertainty. A screened satellite sits this epoch out.
+    const posSigma = Math.sqrt(
+      P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
+    );
+    const codeGate = CODE_GATE_M + 3 * posSigma;
+    const screened = new Set<string>();
+    for (const [sys, res] of bySys) {
+      if (res.length < 4) continue;
+      const med = [...res].sort((a, b) => a - b)[Math.floor(res.length / 2)]!;
+      for (const v of vis) {
+        if (v.prn[0] !== sys) continue;
+        const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw);
+        if (Math.abs(r - med) > codeGate) screened.add(v.prn);
+      }
+    }
     for (const [sys, res] of bySys) {
       const ci = clockOf(sys);
       if (!clockSeeded.has(sys)) {
@@ -738,6 +812,7 @@ export class PppEngine {
     // ── Pass 2: EKF measurement updates ──
     let nSats = 0;
     for (const v of vis) {
+      if (screened.has(v.prn)) continue;
       const ci = clockOf(v.prn[0]!);
       const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
 
@@ -789,15 +864,14 @@ export class PppEngine {
         // A large phase innovation on a converged filter is an undetected
         // cycle slip → re-initialise this ambiguity rather than corrupt the
         // state; small innovations get a normal (gated) update.
-        if (Math.abs(innov) > 0.15) {
-          flushArc(v.prn); // undetected slip → close the arc, re-initialise
-          x[ai] = v.lIf - (commonPh + v.windupM);
-          for (let j = 0; j < P.length; j++) {
-            P[ai]![j] = 0;
-            P[j]![ai] = 0;
-          }
-          P[ai]![ai] = 100 * 100;
-        } else {
+        // Static: slips are caught above (MW + time-differenced phase), so
+        // a gated-out phase is an outlier, and only a run of them means the
+        // ambiguity itself is wrong. Kinematic keeps the innovation test.
+        const reinit = kinematic
+          ? Math.abs(innov) > 0.15
+          : (phaseRejects.get(v.prn) ?? 0) >= 3;
+        let used = false;
+        if (!reinit) {
           const h = new Array<number>(n).fill(0);
           h[IDX_X] = -v.e[0];
           h[IDX_Y] = -v.e[1];
@@ -805,8 +879,19 @@ export class PppEngine {
           h[ci] = 1;
           h[IDX_ZWD] = v.mw;
           h[ai] = 1;
-          ekfUpdateScalar(x, P, h, innov, rPhase, 4);
+          used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
         }
+        if (reinit) {
+          flushArc(v.prn); // undetected slip → close the arc, re-initialise
+          x[ai] = v.lIf - (commonPh + v.windupM);
+          for (let j = 0; j < P.length; j++) {
+            P[ai]![j] = 0;
+            P[j]![ai] = 0;
+          }
+          P[ai]![ai] = 100 * 100;
+          phaseRejects.delete(v.prn);
+        } else if (used) phaseRejects.delete(v.prn);
+        else phaseRejects.set(v.prn, (phaseRejects.get(v.prn) ?? 0) + 1);
       }
 
       // Snapshot the (converged) arc state for PPP-AR.
@@ -964,7 +1049,12 @@ export class PppEngine {
       x[IDX_Y]!,
       x[IDX_Z]!,
     ];
-    const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+    const geo = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+    const llh: [number, number, number] = [
+      (geo[0] * 180) / Math.PI,
+      (geo[1] * 180) / Math.PI,
+      geo[2],
+    ];
     const finalError3d = truth
       ? Math.hypot(
           finalPos[0] - truth[0],

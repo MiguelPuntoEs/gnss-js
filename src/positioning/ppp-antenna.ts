@@ -36,7 +36,12 @@ export interface PppAntennaModel {
 
 /** Parse an ANTEX validity timestamp ("YYYY MM DD HH MM SS.sss") to ms. */
 function parseAntexTime(s: string): number | null {
-  const p = s.trim().split(/\s+/).map(Number);
+  // parseAntex normalises VALID FROM/UNTIL to "YYYY-MM-DD HH:MM"; raw
+  // ANTEX fields read "YYYY MM DD HH MM SS.S". Accept both.
+  const p = s
+    .trim()
+    .split(/[\s:-]+/)
+    .map(Number);
   if (p.length < 3 || p.some((v) => Number.isNaN(v))) return null;
   return Date.UTC(
     p[0]!,
@@ -247,15 +252,16 @@ export function phaseWindup(
     kx[1] - k[1] * kdotx - kcrossY[1],
     kx[2] - k[2] * kdotx - kcrossY[2],
   ];
-  // Receiver dipole from local North (x) and East (y).
+  // Receiver dipole: x = North, y = West (RTKLIB windupcorr):
+  // dR = x − k(k·x) + k × y.
   const north = enuToEcef([0, 1, 0], latRad, lonRad);
-  const east = enuToEcef([1, 0, 0], latRad, lonRad);
+  const west = enuToEcef([-1, 0, 0], latRad, lonRad);
   const kdotn = dot(k, north);
-  const kcrossE = cross(k, east);
+  const kcrossW = cross(k, west);
   const dR: [number, number, number] = [
-    north[0] - k[0] * kdotn + kcrossE[0],
-    north[1] - k[1] * kdotn + kcrossE[1],
-    north[2] - k[2] * kdotn + kcrossE[2],
+    north[0] - k[0] * kdotn + kcrossW[0],
+    north[1] - k[1] * kdotn + kcrossW[1],
+    north[2] - k[2] * kdotn + kcrossW[2],
   ];
   const nS = Math.hypot(dS[0], dS[1], dS[2]) || 1;
   const nR = Math.hypot(dR[0], dR[1], dR[2]) || 1;
