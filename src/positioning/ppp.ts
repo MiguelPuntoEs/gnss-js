@@ -201,6 +201,46 @@ function matVec(P: number[][], h: number[]): number[] {
   return out;
 }
 
+/** Least-squares [Δx, Δy, Δz, Δclock] from time-differenced phase. */
+function tdLsq(
+  qs: readonly { v: { e: [number, number, number] }; d: number }[]
+): [number, number, number, number] | null {
+  const M = [0, 1, 2, 3].map(() => [0, 0, 0, 0, 0]);
+  for (const q of qs) {
+    const a = [-q.v.e[0], -q.v.e[1], -q.v.e[2], 1];
+    for (let i = 0; i < 4; i++) {
+      M[i]![4]! += a[i]! * q.d;
+      for (let j = 0; j < 4; j++) M[i]![j]! += a[i]! * a[j]!;
+    }
+  }
+  // Gauss–Jordan with partial pivoting on the 4×4 normal equations.
+  for (let c = 0; c < 4; c++) {
+    let p = c;
+    for (let r = c + 1; r < 4; r++)
+      if (Math.abs(M[r]![c]!) > Math.abs(M[p]![c]!)) p = r;
+    if (Math.abs(M[p]![c]!) < 1e-9) return null;
+    [M[c], M[p]] = [M[p]!, M[c]!];
+    for (let r = 0; r < 4; r++) {
+      if (r === c) continue;
+      const f = M[r]![c]! / M[c]![c]!;
+      for (let k = c; k < 5; k++) M[r]![k]! -= f * M[c]![k]!;
+    }
+  }
+  return [0, 1, 2, 3].map((i) => M[i]![4]! / M[i]![i]!) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+}
+
+function tdResidual(
+  q: { v: { e: [number, number, number] }; d: number },
+  s: [number, number, number, number]
+): number {
+  return q.d - (-q.v.e[0] * s[0] - q.v.e[1] * s[1] - q.v.e[2] * s[2] + s[3]);
+}
+
 /** Time-differenced iono-free phase jump (m) that flags a cycle slip. */
 const TD_SLIP_M = 0.08;
 /** Code residual spread (m, beyond 3σ of position) that screens a satellite. */
@@ -732,7 +772,7 @@ export class PppEngine {
     // (≥ ~0.1 m even for an equal (1,1) slip that the Melbourne–Wübbena test
     // cannot see). Unlike an innovation test it does not depend on how well
     // the filter's clock is settled within the epoch.
-    if (!kinematic) {
+    {
       const dq: { v: Vis; d: number }[] = [];
       for (const v of vis) {
         const prev = tdPrev.get(v.prn);
@@ -750,11 +790,42 @@ export class PppEngine {
         }
         tdPrev.set(v.prn, { ei, lIf: v.lIf, sat: v.sat, model });
       }
-      if (dq.length >= 4) {
-        const sorted = dq.map((q) => q.d).sort((a, b) => a - b);
-        const med = sorted[Math.floor(sorted.length / 2)]!;
-        for (const q of dq)
-          if (Math.abs(q.d - med) > TD_SLIP_M) q.v.slip = true;
+      if (!kinematic) {
+        if (dq.length >= 4) {
+          const sorted = dq.map((q) => q.d).sort((a, b) => a - b);
+          const med = sorted[Math.floor(sorted.length / 2)]!;
+          for (const q of dq)
+            if (Math.abs(q.d - med) > TD_SLIP_M) q.v.slip = true;
+        }
+      } else if (dq.length >= 6) {
+        // A moving receiver adds −e·Δr to every satellite's difference: fit
+        // [Δr, Δclock] by least squares (carrier-phase velocity), drop the
+        // worst satellite while one stands out, then flag the outliers.
+        let use = dq;
+        for (let iter = 0; iter < 6; iter++) {
+          const sol = use.length >= 6 ? tdLsq(use) : null;
+          if (!sol) {
+            for (const q of dq) q.v.slip = true; // can't tell: reset all
+            break;
+          }
+          let worst = -1;
+          let worstR = 0;
+          use.forEach((q, k) => {
+            const r = Math.abs(tdResidual(q, sol));
+            if (r > worstR) {
+              worstR = r;
+              worst = k;
+            }
+          });
+          if (worstR <= TD_SLIP_M || iter === 5) {
+            for (const q of dq)
+              if (Math.abs(tdResidual(q, sol)) > TD_SLIP_M) q.v.slip = true;
+            break;
+          }
+          use = use.filter((_, k) => k !== worst);
+        }
+      } else {
+        for (const q of dq) q.v.slip = true;
       }
     }
 
@@ -811,15 +882,24 @@ export class PppEngine {
 
     // ── Pass 2: EKF measurement updates ──
     let nSats = 0;
-    for (const v of vis) {
-      if (screened.has(v.prn)) continue;
-      const ci = clockOf(v.prn[0]!);
-      const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+    const live = vis.filter((v) => !screened.has(v.prn));
+    /** Geometric range at the CURRENT position estimate: pass 1 evaluated it
+     *  at the predicted position, and each sequential update moves the
+     *  state — by metres within a kinematic epoch — so linearise about it
+     *  (moving the receiver by d changes the range by −e·d). */
+    const rangeNow = (v: Vis): number =>
+      v.range -
+      (v.e[0] * (x[IDX_X]! - rcv[0]) +
+        v.e[1] * (x[IDX_Y]! - rcv[1]) +
+        v.e[2] * (x[IDX_Z]! - rcv[2]));
 
+    /** Create the ambiguity on first sight, reset it on a slip. */
+    const prepAmbiguity = (v: Vis): number => {
+      const ci = clockOf(v.prn[0]!);
+      const common =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
       // A flagged/detected slip ends the current arc before re-init.
       if (v.slip) flushArc(v.prn);
-
-      // Ambiguity state — create/reset on first sight or cycle slip.
       let ai = ambIdx.get(v.prn);
       if (ai === undefined || v.slip) {
         const bInit = v.lIf - (common + v.windupM);
@@ -835,92 +915,106 @@ export class PppEngine {
         }
         ambIdx.set(v.prn, ai);
       }
+      return ai;
+    };
 
-      const n = x.length;
+    const codeUpdate = (v: Vis): void => {
+      const ci = clockOf(v.prn[0]!);
+      const common =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
       const sinEl = Math.max(Math.sin(v.elRad), 0.1);
-      const rCode = (codeSigma / sinEl) ** 2;
-      const rPhase = (phaseSigma / sinEl) ** 2;
+      const h = new Array<number>(x.length).fill(0);
+      h[IDX_X] = -v.e[0];
+      h[IDX_Y] = -v.e[1];
+      h[IDX_Z] = -v.e[2];
+      h[ci] = 1;
+      h[IDX_ZWD] = v.mw;
+      const innov = v.pIf - common;
+      // Loose absolute bound (clock jumps up to ~ms); the S-based reject
+      // gate (rejectK) does the real outlier screening once the clock is
+      // pinned.
+      if (Math.abs(innov) < 1e6)
+        ekfUpdateScalar(x, P, h, innov, (codeSigma / sinEl) ** 2, 4);
+    };
 
-      // Code update (with gross-outlier gate).
-      {
-        const h = new Array<number>(n).fill(0);
+    const phaseUpdate = (v: Vis, ai: number): void => {
+      const ci = clockOf(v.prn[0]!);
+      const sinEl = Math.max(Math.sin(v.elRad), 0.1);
+      const rPhase = (phaseSigma / sinEl) ** 2;
+      const commonPh =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+      const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
+      // Slips are caught before the updates (MW + time-differenced
+      // phase), so a gated-out phase is an outlier, and only a run of them
+      // means the ambiguity itself is wrong.
+      const reinit = (phaseRejects.get(v.prn) ?? 0) >= 3;
+      let used = false;
+      if (!reinit) {
+        const h = new Array<number>(x.length).fill(0);
         h[IDX_X] = -v.e[0];
         h[IDX_Y] = -v.e[1];
         h[IDX_Z] = -v.e[2];
         h[ci] = 1;
         h[IDX_ZWD] = v.mw;
-        const innov = v.pIf - common;
-        // Loose absolute bound (clock jumps up to ~ms); the S-based reject
-        // gate (rejectK) does the real outlier screening once the clock is
-        // pinned.
-        if (Math.abs(innov) < 1e6) ekfUpdateScalar(x, P, h, innov, rCode, 4);
+        h[ai] = 1;
+        used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
       }
-      // Phase update (recompute the common term after the code update moved
-      // the state), including the ambiguity partial.
-      {
-        const commonPh =
-          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
-        const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
-        // A large phase innovation on a converged filter is an undetected
-        // cycle slip → re-initialise this ambiguity rather than corrupt the
-        // state; small innovations get a normal (gated) update.
-        // Static: slips are caught above (MW + time-differenced phase), so
-        // a gated-out phase is an outlier, and only a run of them means the
-        // ambiguity itself is wrong. Kinematic keeps the innovation test.
-        const reinit = kinematic
-          ? Math.abs(innov) > 0.15
-          : (phaseRejects.get(v.prn) ?? 0) >= 3;
-        let used = false;
-        if (!reinit) {
-          const h = new Array<number>(n).fill(0);
-          h[IDX_X] = -v.e[0];
-          h[IDX_Y] = -v.e[1];
-          h[IDX_Z] = -v.e[2];
-          h[ci] = 1;
-          h[IDX_ZWD] = v.mw;
-          h[ai] = 1;
-          used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
+      if (reinit) {
+        flushArc(v.prn); // undetected slip → close the arc, re-initialise
+        x[ai] = v.lIf - (commonPh + v.windupM);
+        for (let j = 0; j < P.length; j++) {
+          P[ai]![j] = 0;
+          P[j]![ai] = 0;
         }
-        if (reinit) {
-          flushArc(v.prn); // undetected slip → close the arc, re-initialise
-          x[ai] = v.lIf - (commonPh + v.windupM);
-          for (let j = 0; j < P.length; j++) {
-            P[ai]![j] = 0;
-            P[j]![ai] = 0;
-          }
-          P[ai]![ai] = 100 * 100;
-          phaseRejects.delete(v.prn);
-        } else if (used) phaseRejects.delete(v.prn);
-        else phaseRejects.set(v.prn, (phaseRejects.get(v.prn) ?? 0) + 1);
-      }
+        P[ai]![ai] = 100 * 100;
+        phaseRejects.delete(v.prn);
+      } else if (used) phaseRejects.delete(v.prn);
+      else phaseRejects.set(v.prn, (phaseRejects.get(v.prn) ?? 0) + 1);
+    };
 
+    const snapshot = (v: Vis, ai: number): void => {
       // Snapshot the (converged) arc state for PPP-AR.
-      {
-        const elevDeg = (v.elRad * 180) / Math.PI;
-        const mwMean = mwState.get(v.prn)?.mean ?? 0;
-        const s = arcSnap.get(v.prn);
-        if (s) {
-          s.aIF = x[ai]!;
-          s.mwCyc = mwMean;
-          s.elevSum += elevDeg;
-          s.nEpochs++;
-          s.endMs = epoch.timeMs;
-        } else {
-          arcSnap.set(v.prn, {
-            aIF: x[ai]!,
-            mwCyc: mwMean,
-            f1: v.f1,
-            f2: v.f2,
-            elevSum: elevDeg,
-            nEpochs: 1,
-            startMs: epoch.timeMs,
-            endMs: epoch.timeMs,
-          });
-        }
+      const elevDeg = (v.elRad * 180) / Math.PI;
+      const mwMean = mwState.get(v.prn)?.mean ?? 0;
+      const s = arcSnap.get(v.prn);
+      if (s) {
+        s.aIF = x[ai]!;
+        s.mwCyc = mwMean;
+        s.elevSum += elevDeg;
+        s.nEpochs++;
+        s.endMs = epoch.timeMs;
+      } else {
+        arcSnap.set(v.prn, {
+          aIF: x[ai]!,
+          mwCyc: mwMean,
+          f1: v.f1,
+          f2: v.f2,
+          elevSum: elevDeg,
+          nEpochs: 1,
+          startMs: epoch.timeMs,
+          endMs: epoch.timeMs,
+        });
       }
-
       lastSeen.set(v.prn, ei);
       nSats++;
+    };
+
+    if (kinematic) {
+      // A fresh position each epoch: let every code observation place it
+      // before any phase is tested against it.
+      for (const v of live) codeUpdate(v);
+      for (const v of live) {
+        const ai = prepAmbiguity(v);
+        phaseUpdate(v, ai);
+        snapshot(v, ai);
+      }
+    } else {
+      for (const v of live) {
+        const ai = prepAmbiguity(v);
+        codeUpdate(v);
+        phaseUpdate(v, ai);
+        snapshot(v, ai);
+      }
     }
 
     // Post-fit phase residuals: re-evaluate every satellite against the
@@ -941,7 +1035,7 @@ export class PppEngine {
         const sys = v.prn[0]!;
         const ci = clockOf(sys);
         const commonPh =
-          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
         const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
         if (Math.abs(innov) >= 0.15) continue; // undetected slip / gross outlier
         const arr = bySysRes.get(sys);
