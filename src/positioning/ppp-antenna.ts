@@ -117,10 +117,20 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
       return withZen(entry, combineIf(a, b, f1, f2));
     },
     rcvOffset(antType, band1, band2, f1, f2) {
-      const entry = rcvs.get(antType);
+      // Exact type + radome, else the same antenna without a radome (IGS
+      // practice when a radome combination is uncalibrated).
+      const entry =
+        rcvs.get(antType) ??
+        rcvs.get(antType.substring(0, 16).padEnd(16, ' ') + 'NONE');
       if (!entry) return null;
-      const a = freqOf(entry, band1);
-      const b = freqOf(entry, band2);
+      let a = freqOf(entry, band1);
+      let b = freqOf(entry, band2);
+      // Calibrations for Galileo/BeiDou bands are missing for many antennas:
+      // fall back to GPS L1/L2, as RTKLIB does.
+      if (!a || !b) {
+        a = freqOf(entry, 'G01');
+        b = freqOf(entry, 'G02');
+      }
       if (!a || !b) return null;
       return withZen(entry, combineIf(a, b, f1, f2));
     },

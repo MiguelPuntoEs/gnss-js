@@ -234,3 +234,26 @@ describe('phaseWindup', () => {
     }
   });
 });
+
+describe('receiver antenna fallbacks', () => {
+  const atx = parseAntex(
+    readFileSync(join(FIX, 'antex_ppp_slice.atx'), 'utf8')
+  );
+  const model = buildPppAntenna(atx);
+  const g = [FREQ.G!['1']!, FREQ.G!['2']!] as const;
+  const e8 = [FREQ.E!['1']!, FREQ.E!['8']!] as const;
+
+  it('uses the NONE-radome calibration for an uncalibrated radome', () => {
+    const exact = model.rcvOffset('LEIAR25.R3      NONE', 'G01', 'G02', ...g)!;
+    const radome = model.rcvOffset('LEIAR25.R3      XXXX', 'G01', 'G02', ...g)!;
+    expect(radome.pco).toEqual(exact.pco);
+  });
+
+  it('falls back to GPS L1/L2 for bands the antenna lacks', () => {
+    const entry = atx.antennas.find((a) => a.type === 'LEIAR25.R3      NONE')!;
+    expect(entry.frequencies.some((f) => f.frequency === 'E08')).toBe(false);
+    const off = model.rcvOffset('LEIAR25.R3      NONE', 'E01', 'E08', ...e8);
+    expect(off).not.toBeNull();
+    expect(Math.abs(off!.pco[2])).toBeLessThan(0.3);
+  });
+});
