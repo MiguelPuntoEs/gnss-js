@@ -10,7 +10,11 @@ import {
   satBodyFrame,
   enuToEcef,
 } from '../src/positioning/ppp-antenna';
-import { createPppCorrections } from '../src/positioning';
+import {
+  createPppCorrections,
+  solvePpp,
+  type PppEpoch,
+} from '../src/positioning';
 import { FREQ } from '../src/constants/gnss';
 import { geodeticToEcef } from '../src/coordinates';
 
@@ -255,5 +259,123 @@ describe('receiver antenna fallbacks', () => {
     const off = model.rcvOffset('LEIAR25.R3      NONE', 'E01', 'E08', ...e8);
     expect(off).not.toBeNull();
     expect(Math.abs(off!.pco[2])).toBeLessThan(0.3);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Kinematic PPP on noise-free synthetic data                           */
+/* ------------------------------------------------------------------ */
+
+describe('kinematic PPP (synthetic, noise-free)', () => {
+  const OMEGA = 7.2921151467e-5;
+  const C = 299792458;
+  // 24 satellites on circular 26 560 km orbits in six planes.
+  const sats = Array.from({ length: 24 }, (_, k) => ({
+    prn: `G${String(k + 1).padStart(2, '0')}`,
+    raan: ((k % 6) * 2 * Math.PI) / 6,
+    u0: (Math.floor(k / 6) * 2 * Math.PI) / 4 + (k % 6) * 0.5,
+  }));
+  const R = 26_560_000;
+  const inc = (55 * Math.PI) / 180;
+  const n = Math.sqrt(3.986004418e14 / R ** 3);
+  const inertial = (s: (typeof sats)[number], tS: number): V3 => {
+    const u = s.u0 + n * tS;
+    const xo = R * Math.cos(u);
+    const yo = R * Math.sin(u);
+    return [
+      xo * Math.cos(s.raan) - yo * Math.cos(inc) * Math.sin(s.raan),
+      xo * Math.sin(s.raan) + yo * Math.cos(inc) * Math.cos(s.raan),
+      yo * Math.sin(inc),
+    ];
+  };
+  // Earth-fixed: rotate by Earth's spin since t = 0.
+  const ecef = (s: (typeof sats)[number], tS: number): V3 => {
+    const p = inertial(s, tS);
+    const a = OMEGA * tS;
+    return [
+      p[0] * Math.cos(a) + p[1] * Math.sin(a),
+      -p[0] * Math.sin(a) + p[1] * Math.cos(a),
+      p[2],
+    ];
+  };
+  const t0 = Date.UTC(2024, 0, 1);
+  const source = {
+    satState(prn: string, tMs: number) {
+      const s = sats.find((q) => q.prn === prn)!;
+      const tS = (tMs - t0) / 1000;
+      const p = ecef(s, tS);
+      const q = ecef(s, tS + 0.001);
+      return {
+        x: p[0],
+        y: p[1],
+        z: p[2],
+        vx: (q[0] - p[0]) * 1000,
+        vy: (q[1] - p[1]) * 1000,
+        vz: (q[2] - p[2]) * 1000,
+        clkS: 0,
+      };
+    },
+  };
+  const truth: V3 = geodeticToEcef(
+    (48 * Math.PI) / 180,
+    (11 * Math.PI) / 180,
+    600
+  );
+  const f1 = FREQ.G!['1']!;
+  const f2 = FREQ.G!['2']!;
+
+  it('holds a static receiver to the millimetre, epoch by epoch', () => {
+    const epochs: PppEpoch[] = [];
+    for (let i = 0; i < 120; i++) {
+      const tMs = t0 + i * 30_000;
+      const obs: PppEpoch['obs'] = [];
+      for (const s of sats) {
+        // Light time with the Earth's rotation during flight (Sagnac), as
+        // the solver models it.
+        let tau = 0.075;
+        let rho = 0;
+        for (let k = 0; k < 4; k++) {
+          const p = ecef(s, (tMs - t0) / 1000 - tau);
+          const a = OMEGA * tau;
+          const r: V3 = [
+            p[0] * Math.cos(a) + p[1] * Math.sin(a),
+            -p[0] * Math.sin(a) + p[1] * Math.cos(a),
+            p[2],
+          ];
+          rho = Math.hypot(r[0] - truth[0], r[1] - truth[1], r[2] - truth[2]);
+          tau = rho / C;
+        }
+        const up = enuToEcef(
+          [0, 0, 1],
+          (48 * Math.PI) / 180,
+          (11 * Math.PI) / 180
+        );
+        const p = ecef(s, (tMs - t0) / 1000);
+        const los: V3 = [p[0] - truth[0], p[1] - truth[1], p[2] - truth[2]];
+        if (dot(los, up) / nrm(los) < 0.2) continue; // below ~12°
+        const clk = 1234.5; // receiver clock (m)
+        obs.push({
+          prn: s.prn,
+          f1,
+          f2,
+          c1: rho + clk,
+          c2: rho + clk,
+          l1: (rho + clk) / (C / f1) + 1e5,
+          l2: (rho + clk) / (C / f2) + 7e4,
+          slip: false,
+        });
+      }
+      epochs.push({ timeMs: tMs, obs });
+    }
+    const sol = solvePpp(epochs, source, {
+      aprioriPos: [truth[0] + 30, truth[1] - 20, truth[2] + 25],
+      groundTruth: truth,
+      mode: 'kinematic',
+      troposphere: false,
+      elevationMaskDeg: 5,
+    });
+    const tail = sol.series.slice(-60).filter((r) => r.error3d != null);
+    expect(tail.length).toBeGreaterThan(50);
+    for (const r of tail) expect(r.error3d!).toBeLessThan(0.005);
   });
 });

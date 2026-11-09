@@ -260,14 +260,12 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     const med = (xs: number[]) =>
       [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     const c = vsRef([0, 1, 2].map((i) => med(tail.map((s) => s.enu![i]!))));
-    // Kinematic float PPP with 5-min clocks is far noisier than static — the
-    // per-epoch clock/tropo errors that average out in static map into each
-    // epoch's height. So the bar is decimetre horizontal, sub-2 m vertical
-    // (median over the tail, on a station that is actually static).
-    // (Known weak spot: individual kinematic epochs scatter by metres to
-    // tens of metres; only the median is this close.)
-    expect(Math.hypot(c[0]!, c[1]!)).toBeLessThan(1.0);
-    expect(Math.abs(c[2]!)).toBeLessThan(2);
+    // Per-epoch kinematic float PPP is centimetre-level horizontally once
+    // converged (no antenna/tide corrections here, so the vertical keeps
+    // their ~1–2 dm). Before the sequential-update linearisation fix it was
+    // metres to tens of metres per epoch.
+    expect(Math.hypot(c[0]!, c[1]!)).toBeLessThan(0.1);
+    expect(Math.abs(c[2]!)).toBeLessThan(0.3);
     // Kinematic is genuinely re-estimating each epoch, not converging to a
     // single point: the up-component scatter is well above static's mm–cm.
     const up = tail.map((s) => s.enu![2]!);

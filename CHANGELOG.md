@@ -12,16 +12,15 @@ Validated on the 19 official ICD test-vector scenarios: zero false failures; 14 
 
 ### Fixed — centimetre static PPP (`positioning`)
 
-Static float PPP now lands within **0.6–0.8 cm 3D of the true ITRF2020 coordinate** after 24 h on all seven IGS stations tested (ANMG, ALIC, WTZR, KOUR, HOB2, DRAO, MATE, 2024-001, ESA MGEX 5-min products, truth from ESA's daily SINEX), ≤ 3 cm after 6 h and ~5 cm after 2 h. Before, the same runs were 9–42 cm off. Four model errors were behind it:
+Static float PPP now lands within **0.5–0.8 cm 3D of the true ITRF2020 coordinate** after 24 h on all seven IGS stations tested (ANMG, ALIC, WTZR, KOUR, HOB2, DRAO, MATE, 2024-001, ESA MGEX 5-min products, truth from ESA's daily SINEX); a median of 1.3 cm after 6 h, 3.4 cm after 2 h and 3.7 cm after 1 h. Before, 24 h runs were 9–42 cm off. Kinematic PPP, which was metres to tens of metres off per epoch, now tracks a static station at 1.5–2 cm horizontal (median per epoch, 95% within 4–5.5 cm) once converged. Five model errors were behind it:
 
 - `ecefToGeodetic` returns radians, but the PPP corrections, the PPP troposphere latitude and the RTK receiver-antenna correction converted its output from degrees, so receiver antenna offsets, antenna heights and wind-up were applied in a wrong local frame (and Niell mapping used latitude ≈ 0).
 - Phase wind-up used the receiver dipole's East axis where the model (Wu et al., RTKLIB `windupcorr`) uses West: a sign error that biased the horizontal by up to 15 cm.
 - The ANTEX validity dates written by `parseAntex` were not understood by the PPP antenna model, so every GPS satellite got the phase-centre offset of the _first_ spacecraft that ever used its PRN (e.g. a 1978 Block I for G04), a GPS-only vertical bias of several centimetres.
-- Ambiguities were re-initialised whenever a phase innovation exceeded 15 cm, which also fired while the epoch's receiver clock was still settling, chopping arcs and keeping the solution code-dominated. Static mode now detects cycle slips with a clock-free time-differenced carrier-phase test (plus Melbourne–Wübbena), re-initialises only after three consecutive gated-out phases, and screens gross code outliers against each constellation's median first.
+- Within an epoch, each satellite's innovation reused the range computed at the predicted position, ignoring how far the preceding sequential updates had already moved the estimate. Harmless once a static solution has converged, it made every kinematic epoch (and every static start-up) re-apply corrections already made, so the estimate drifted and oscillated. Ranges are now linearised about the current state.
+- Ambiguities were re-initialised whenever a phase innovation exceeded 15 cm, which also fired while the epoch's receiver clock was still settling, chopping arcs and keeping the solution code-dominated. Static mode now detects cycle slips with a clock-free time-differenced carrier-phase test (plus Melbourne–Wübbena), re-initialises only after three consecutive gated-out phases, and screens gross code outliers against each constellation's median first. Kinematic mode applies all code updates before any phase, and its time-differenced test fits the receiver's own displacement (a carrier-phase velocity) first.
 
 Side effect for PPP-AR: arcs long enough for narrow-lane FCB estimation rose ~9× (GPS 32 → ~300 on the six-station test network; BeiDou now contributes ~200). `PppSolution.llh` is now in degrees as documented (it was radians).
-
-Kinematic PPP is unchanged and remains metre-level per epoch.
 
 ### Fixed — Hatanaka (CRINEX) decoding (`rinex`)
 
