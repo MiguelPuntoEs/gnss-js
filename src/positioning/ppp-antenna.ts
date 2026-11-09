@@ -103,13 +103,24 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
     satOffset(prn, dateMs, band1, band2, f1, f2) {
       const list = sats.get(prn);
       if (!list) return null;
-      const entry = list.find((e) => {
-        const from = parseAntexTime(e.validFrom);
-        const until = parseAntexTime(e.validUntil);
-        return (
-          (from == null || dateMs >= from) && (until == null || dateMs <= until)
-        );
-      });
+      // The entry whose validity window contains the date; outside every
+      // window (ANTEX not yet updated for a PRN's new spacecraft, or a
+      // retired PRN) the nearest window's.
+      let entry: AntennaEntry | undefined;
+      let bestDist = Infinity;
+      for (const e of list) {
+        const from = parseAntexTime(e.validFrom) ?? -Infinity;
+        const until = parseAntexTime(e.validUntil) ?? Infinity;
+        if (dateMs >= from && dateMs <= until) {
+          entry = e;
+          break;
+        }
+        const dist = dateMs < from ? from - dateMs : dateMs - until;
+        if (dist < bestDist) {
+          bestDist = dist;
+          entry = e;
+        }
+      }
       if (!entry) return null;
       const a = freqOf(entry, band1);
       const b = freqOf(entry, band2);
