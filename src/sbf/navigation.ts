@@ -4,7 +4,7 @@
  * A Septentrio broadcasts navigation data as a mix of *decoded* blocks
  * (GPSNav/GALNav/GLONav/BDSNav/QZSNav — already-parsed ephemeris) and
  * *raw* navigation-frame blocks (GPSRawCA, GALRawINAV/FNAV, GLORawCA,
- * BDSRaw, GPSRawL2C/L5, GEORawL1) whose bits must be assembled — and which class a
+ * BDSRaw, BDSRawB1C/B2a/B2b, GPSRawL2C/L5, GEORawL1) whose bits must be assembled — and which class a
  * given receiver emits depends on its configuration. The granular
  * `parseSbf*` functions each re-scan the whole stream for one class;
  * this decoder walks the byte stream **once**, routing every navigation
@@ -35,6 +35,11 @@ import {
 } from './rawnav';
 import { feedGalBlock, newGalAssemblers } from './rawnav-gal';
 import { feedBdsBlock, feedGloBlock } from './rawnav-bds';
+import {
+  feedBdsCnavBlock,
+  newBdsCnavAssemblers,
+  type BdsCnavEphemeris,
+} from './rawnav-bds-cnav';
 import { feedGpsLnavBlock } from './rawnav-gps';
 import { feedNavicBlock } from './rawnav-navic';
 import { feedGeoBlock, feedGeoL5Block } from './rawnav-sbas';
@@ -60,6 +65,8 @@ export interface SbfNavCounts {
   gloRaw: number;
   /** Raw BeiDou D1/D2 subframe blocks (BDSRaw). */
   bdsRaw: number;
+  /** Raw BeiDou-3 B-CNAV blocks (BDSRawB1C/B2a/B2b). */
+  bdsCnavRaw: number;
   /** Raw SBAS L1 GEO message blocks (GEORawL1). */
   sbasRaw: number;
   /** Raw SBAS L5 GEO message blocks (GEORawL5) — DO-229-on-L5 + native DFMC. */
@@ -79,6 +86,8 @@ export interface SbfNavigation {
   ephemerides: Ephemeris[];
   /** GPS L2C/L5 CNAV ephemerides (RINEX-4 nav records). */
   cnav: SbfCnavEphemeris[];
+  /** BeiDou-3 B-CNAV1/2/3 ephemerides (RINEX-4 CNV1/CNV2/CNV3 records). */
+  bdsCnav: BdsCnavEphemeris[];
   /**
    * Iono coefficient sets keyed like `NavHeader.ionoCorrections`
    * (GPSA/GPSB, GAL, BDSA/BDSB); the last valid block of each type wins.
@@ -100,7 +109,7 @@ function ephKey(e: Ephemeris): string {
 
 /**
  * Decode every navigation block in an SBF byte stream in a single pass:
- * decoded ephemeris blocks, raw GPS/QZSS LNAV, GPS CNAV, Galileo I/NAV +
+ * decoded ephemeris blocks, raw GPS/QZSS LNAV, GPS CNAV, BeiDou-3 B-CNAV, Galileo I/NAV +
  * F/NAV, GLONASS strings, BeiDou D1/D2, and the Klobuchar/NeQuick iono +
  * GPS-UTC leap-second blocks. See the module header for merge semantics.
  */
@@ -125,6 +134,7 @@ export function decodeSbfNavigation(
   const ephemerides: Ephemeris[] = [];
   const seen = new Set<string>();
   const cnav: SbfCnavEphemeris[] = [];
+  const bdsCnav: BdsCnavEphemeris[] = [];
   const ionoCorrections: Record<string, number[]> = {};
   let leapSeconds: number | null = null;
   const counts: SbfNavCounts = {
@@ -134,6 +144,7 @@ export function decodeSbfNavigation(
     galRaw: 0,
     gloRaw: 0,
     bdsRaw: 0,
+    bdsCnavRaw: 0,
     sbasRaw: 0,
     sbasL5Raw: 0,
     navicRaw: 0,
@@ -148,6 +159,7 @@ export function decodeSbfNavigation(
   const galAsm = newGalAssemblers();
   const gloAsm = new GloStringAssembler();
   const bdsAsm = new BdsAssembler();
+  const bdsCnavAsm = newBdsCnavAssemblers();
   const lnavAsm = new GpsLnavAssembler();
   const navicAsm = new NavicAssembler();
 
@@ -262,6 +274,16 @@ export function decodeSbfNavigation(
         else if (r.badCrc) counts.badFrames++;
         return;
       }
+      case 4218: // BDSRawB1C
+      case 4219: // BDSRawB2a
+      case 4242: {
+        // BDSRawB2b
+        counts.bdsCnavRaw++;
+        const r = feedBdsCnavBlock(view, b, id, len, bdsCnavAsm);
+        if (r.eph) bdsCnav.push(r.eph);
+        else if (r.badCrc) counts.badFrames++;
+        return;
+      }
       case 4020: {
         // GEORawL1 (SBAS L1 C/A GEO message)
         if (len < 52) return;
@@ -324,5 +346,13 @@ export function decodeSbfNavigation(
     prns: [...dfmcPrns].sort(),
     messages: Object.values(dfmcByType).reduce((a, v) => a + v, 0),
   };
-  return { ephemerides, cnav, ionoCorrections, leapSeconds, dfmc, counts };
+  return {
+    ephemerides,
+    cnav,
+    bdsCnav,
+    ionoCorrections,
+    leapSeconds,
+    dfmc,
+    counts,
+  };
 }

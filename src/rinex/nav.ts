@@ -1,7 +1,8 @@
 /**
  * RINEX 3.x/4.x navigation file parser.
  * Parses GPS, Galileo, BeiDou (Keplerian), and GLONASS (state vector)
- * ephemerides, plus GPS/QZSS CNAV records from RINEX 4 files.
+ * ephemerides, plus GPS/QZSS CNAV and BeiDou-3 CNV1/2/3 records from
+ * RINEX 4 files.
  */
 
 import {
@@ -10,6 +11,13 @@ import {
   type CnavEphemeris,
 } from '../navbits/cnav';
 import { GPS_PI } from '../navbits/index';
+import {
+  bdsCnavAref,
+  type BdsCnavEphemeris,
+  type BdsCnavMessage,
+} from '../navbits/bds-cnav';
+
+export type { BdsCnavEphemeris, BdsCnavMessage } from '../navbits/bds-cnav';
 
 /* ================================================================== */
 /*  Public types                                                       */
@@ -138,6 +146,8 @@ export interface NavResult {
   ephemerides: Ephemeris[];
   /** GPS/QZSS CNAV ephemerides (RINEX 4 only), present when any were read. */
   cnav?: RinexCnavEphemeris[];
+  /** BeiDou-3 CNV1/CNV2/CNV3 ephemerides (RINEX 4 only), when any were read. */
+  bdsCnav?: BdsCnavEphemeris[];
 }
 
 /* ================================================================== */
@@ -172,10 +182,12 @@ const R4_MSG_LINES: Record<string, number> = {
   // EPH type parsed into RinexCnavEphemeris for G/J (skipped otherwise)
   CNAV: 9,
 
-  // EPH types we skip (different field layout)
+  // BeiDou-3 B-CNAV, parsed into BdsCnavEphemeris
   CNV1: 10,
   CNV2: 10,
   CNV3: 9,
+
+  // EPH types we skip (different field layout)
   L1NV: 8,
   L1OC: 9,
   L3OC: 9,
@@ -467,6 +479,101 @@ function buildCnavEphemeris(
   };
 }
 
+const BDT_EPOCH_MS = Date.UTC(2006, 0, 1);
+
+/**
+ * Build a `BdsCnavEphemeris` from a RINEX 4 BeiDou CNV1/CNV2/CNV3 record
+ * (RINEX 4.02 Tables A24-A26; epochs naive BDT):
+ *
+ *   orbit-1: ADOT, Crs, Δn0, M0
+ *   orbit-2: Cuc, e, Cus, √A
+ *   orbit-3: toe, Cic, Ω0, Cis
+ *   orbit-4: i0, Crc, ω, Ω̇
+ *   orbit-5: IDOT, Δn0Dot, SatType, t_op
+ *   orbit-6: SISAI_oe, SISAI_ocb, SISAI_oc1, SISAI_oc2
+ *   CNV1/2 orbit-7: ISC_B1Cd, ISC_B2ad, TGD_B1Cp, TGD_B2ap
+ *          orbit-8: SISMAI, health, integrity flags, IODC
+ *          orbit-9: t_tm, spare, spare, IODE
+ *   CNV3   orbit-7: SISMAI, health, integrity flags, TGD_B2bI
+ *          orbit-8: t_tm
+ *
+ * ΔA is recovered from √A with the SatType reference radius.
+ */
+function buildBdsCnavEphemeris(
+  message: BdsCnavMessage,
+  prn: string,
+  date: Date,
+  epochVals: number[],
+  d: (number | null)[][]
+): BdsCnavEphemeris {
+  const num = (r: number, c: number): number => d[r]?.[c] ?? 0;
+  const opt = (r: number, c: number): number | null => d[r]?.[c] ?? null;
+  const cnv3 = message === 'CNV3';
+
+  const t = (date.getTime() - BDT_EPOCH_MS) / 1000;
+  const weekToc = Math.floor(t / SEC_PER_WEEK);
+  const toc = t - weekToc * SEC_PER_WEEK;
+  const toe = num(2, 0);
+  const week =
+    toe - toc > SEC_PER_WEEK / 2
+      ? weekToc - 1
+      : toc - toe > SEC_PER_WEEK / 2
+        ? weekToc + 1
+        : weekToc;
+  const sqrtA = num(1, 3);
+  const a = sqrtA * sqrtA;
+  const satType = num(4, 2);
+
+  return {
+    system: 'C',
+    prn,
+    message,
+    week,
+    toe,
+    toeDate: new Date(BDT_EPOCH_MS + (week * SEC_PER_WEEK + toe) * 1000),
+    toc,
+    tocDate: date,
+    satType,
+    a,
+    deltaA: a - bdsCnavAref(satType),
+    aDot: num(0, 0),
+    deltaN0: num(0, 2),
+    deltaN0Dot: num(4, 1),
+    m0: num(0, 3),
+    e: num(1, 1),
+    omega: num(3, 2),
+    omega0: num(2, 2),
+    i0: num(3, 0),
+    omegaDot: num(3, 3),
+    i0Dot: num(4, 0),
+    cis: num(2, 3),
+    cic: num(2, 1),
+    crs: num(0, 1),
+    crc: num(3, 1),
+    cus: num(1, 2),
+    cuc: num(1, 0),
+    af0: epochVals[0] ?? 0,
+    af1: epochVals[1] ?? 0,
+    af2: epochVals[2] ?? 0,
+    iode: cnv3 ? null : opt(8, 3),
+    iodc: cnv3 ? null : opt(7, 3),
+    tgdB1Cp: cnv3 ? null : opt(6, 2),
+    tgdB2ap: cnv3 ? null : opt(6, 3),
+    iscB1Cd: cnv3 ? null : opt(6, 0),
+    iscB2ad: cnv3 ? null : opt(6, 1),
+    tgdB2bI: cnv3 ? opt(6, 3) : null,
+    top: opt(4, 3),
+    sisaiOe: opt(5, 0),
+    sisaiOcb: opt(5, 1),
+    sisaiOc1: opt(5, 2),
+    sisaiOc2: opt(5, 3),
+    sismai: cnv3 ? opt(6, 0) : opt(7, 0),
+    health: cnv3 ? opt(6, 1) : opt(7, 1),
+    integrityFlags: cnv3 ? opt(6, 2) : opt(7, 2),
+    tow: cnv3 ? num(7, 0) : num(8, 0),
+  };
+}
+
 export function parseNavFile(text: string): NavResult {
   const lines = text.split('\n');
   const header: NavHeader = {
@@ -477,6 +584,7 @@ export function parseNavFile(text: string): NavResult {
   };
   const ephemerides: Ephemeris[] = [];
   const cnav: RinexCnavEphemeris[] = [];
+  const bdsCnav: BdsCnavEphemeris[] = [];
 
   let inHeader = true;
   let i = 0;
@@ -578,7 +686,10 @@ export function parseNavFile(text: string): NavResult {
       }
 
       const isCnav = msgType === 'CNAV' && (svSys === 'G' || svSys === 'J');
-      if (!SUPPORTED_EPH_MSGS.has(msgType) && !isCnav) {
+      const isBdsCnav =
+        svSys === 'C' &&
+        (msgType === 'CNV1' || msgType === 'CNV2' || msgType === 'CNV3');
+      if (!SUPPORTED_EPH_MSGS.has(msgType) && !isCnav && !isBdsCnav) {
         // Skip unsupported EPH record: advance past all its lines
         const totalLines = R4_MSG_LINES[msgType] ?? 2;
         i += totalLines + 1; // +1 for the `>` line itself
@@ -596,18 +707,35 @@ export function parseNavFile(text: string): NavResult {
       const parsed = parseNavEpochV3(epochLine);
       const prn = `${sys}${parsed.prn.substring(1)}`;
 
-      if (isCnav) {
-        // GPS/QZSS CNAV: position-aware fields (blanks = unavailable)
+      if (isCnav || isBdsCnav) {
+        // CNAV records: position-aware fields (blanks = unavailable)
         const slotLines: (number | null)[][] = [];
         for (let j = 0; j < numDataLines; j++) {
           i++;
           if (i >= lines.length) break;
           slotLines.push(parseDataLineSlots(lines[i]!));
         }
-        if (slotLines.length === numDataLines && (sys === 'G' || sys === 'J')) {
-          cnav.push(
-            buildCnavEphemeris(sys, prn, parsed.date, parsed.values, slotLines)
-          );
+        if (slotLines.length === numDataLines) {
+          if (isBdsCnav && sys === 'C')
+            bdsCnav.push(
+              buildBdsCnavEphemeris(
+                msgType as BdsCnavMessage,
+                prn,
+                parsed.date,
+                parsed.values,
+                slotLines
+              )
+            );
+          else if (sys === 'G' || sys === 'J')
+            cnav.push(
+              buildCnavEphemeris(
+                sys,
+                prn,
+                parsed.date,
+                parsed.values,
+                slotLines
+              )
+            );
         }
         i++;
         continue;
@@ -711,7 +839,10 @@ export function parseNavFile(text: string): NavResult {
     i++;
   }
 
-  return cnav.length > 0
-    ? { header, ephemerides, cnav }
-    : { header, ephemerides };
+  return {
+    header,
+    ephemerides,
+    ...(cnav.length > 0 && { cnav }),
+    ...(bdsCnav.length > 0 && { bdsCnav }),
+  };
 }

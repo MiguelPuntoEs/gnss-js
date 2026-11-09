@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.11.0
+
+### New — BeiDou-3 B-CNAV ephemerides (`sbf`, `rinex`)
+
+The BeiDou-3 civil navigation messages are now decoded: B-CNAV1 (B1C), B-CNAV2 (B2a) and B-CNAV3 (B2b). Septentrio's raw `BDSRawB1C` / `BDSRawB2a` / `BDSRawB2b` blocks (4218 / 4219 / 4242) are assembled into `BdsCnavEphemeris` records — ephemeris, clock, IODE/IODC, TGD/ISC group delays, health, integrity flags and accuracy indices — through `parseSbfBdsCnav` and the one-pass `decodeSbfNavigation` (new `bdsCnav` list and `counts.bdsCnavRaw`). The decoders are receiver-independent (`navbits/bds-cnav`: `BdsCnav1Assembler`, `BdsCnav2Assembler`, `BdsCnav3Assembler`) and work from the CSNO interface control documents (B1C, B2a, B2b v1.0).
+
+RINEX 4 navigation files now read and write the matching `CNV1` / `CNV2` / `CNV3` records (`NavResult.bdsCnav`, `writeRinexNav4({ bdsCnav })`); they used to be skipped.
+
+Validated against DLR's merged RINEX 4 broadcast file (BRD400DLR): every decoded orbit, clock, issue-of-data and group-delay field of 29 B1C/B2a/B2b ephemerides from a TU Delft receiver equals the published record. As with GPS CNAV, these records are decoded and exported; positioning still uses the D1/D2 ephemerides the same satellites broadcast.
+
 ## 2.10.1
 
 ### Fixed — compact-MSM stations in the stream census (`rtcm3`)

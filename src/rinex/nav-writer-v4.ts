@@ -3,7 +3,8 @@
  *
  * Produces `> EPH` data records for the classic ephemeris types
  * (GPS/QZSS/NavIC LNAV, Galileo INAV, BeiDou D1/D2, GLONASS FDMA,
- * SBAS), `> EPH ... CNAV` records for GPS/QZSS CNAV ephemerides, and
+ * SBAS), `> EPH ... CNAV` records for GPS/QZSS CNAV ephemerides, BeiDou-3
+ * `CNV1`/`CNV2`/`CNV3` records for B-CNAV ephemerides, and
  * `> ION` records for the header's Klobuchar/NeQuick-G coefficients,
  * per the RINEX 4.01 record tables (A9-A18, A21, A26, A32, A33).
  */
@@ -16,6 +17,7 @@ import type {
   KeplerEphemeris,
   GlonassEphemeris,
   RinexCnavEphemeris,
+  BdsCnavEphemeris,
 } from './nav';
 
 /** Input for {@link writeRinexNav4}: a NavResult, optionally with CNAV. */
@@ -23,6 +25,7 @@ export interface Nav4Input {
   header: NavHeader;
   ephemerides: Ephemeris[];
   cnav?: RinexCnavEphemeris[];
+  bdsCnav?: BdsCnavEphemeris[];
 }
 
 /* ================================================================== */
@@ -177,6 +180,35 @@ function cnavRecord(eph: RinexCnavEphemeris): string {
   ].join('\n');
 }
 
+/**
+ * BeiDou-3 CNV1/CNV2/CNV3 record body (RINEX 4.02 Tables A24-A26).
+ * Fields not yet received are written blank.
+ */
+function bdsCnavRecord(eph: BdsCnavEphemeris): string {
+  const lines = [
+    epochLine4(eph.prn, eph.tocDate, [eph.af0, eph.af1, eph.af2]),
+    orbitLine4([eph.aDot, eph.crs, eph.deltaN0, eph.m0]),
+    orbitLine4([eph.cuc, eph.e, eph.cus, Math.sqrt(eph.a)]),
+    orbitLine4([eph.toe, eph.cic, eph.omega0, eph.cis]),
+    orbitLine4([eph.i0, eph.crc, eph.omega, eph.omegaDot]),
+    orbitLine4([eph.i0Dot, eph.deltaN0Dot, eph.satType, eph.top]),
+    orbitLine4([eph.sisaiOe, eph.sisaiOcb, eph.sisaiOc1, eph.sisaiOc2]),
+  ];
+  if (eph.message === 'CNV3') {
+    lines.push(
+      orbitLine4([eph.sismai, eph.health, eph.integrityFlags, eph.tgdB2bI]),
+      orbitLine4([eph.tow])
+    );
+  } else {
+    lines.push(
+      orbitLine4([eph.iscB1Cd, eph.iscB2ad, eph.tgdB1Cp, eph.tgdB2ap]),
+      orbitLine4([eph.sismai, eph.health, eph.integrityFlags, eph.iodc]),
+      orbitLine4([eph.tow, null, null, eph.iode])
+    );
+  }
+  return lines.join('\n');
+}
+
 /* ================================================================== */
 /*  ION records                                                        */
 /* ================================================================== */
@@ -285,8 +317,9 @@ function writeHeader4(header: NavHeader): string {
  * Write a RINEX 4.01 mixed navigation file.
  *
  * Emits `> EPH` records for every classic ephemeris (message labels
- * per constellation: LNAV, INAV, D1/D2, FDMA, SBAS) and every CNAV
- * ephemeris (`CNAV`), sorted by PRN, epoch, then label; followed by
+ * per constellation: LNAV, INAV, D1/D2, FDMA, SBAS), every GPS/QZSS
+ * CNAV ephemeris (`CNAV`) and every BeiDou-3 B-CNAV ephemeris (`CNV1`/
+ * `CNV2`/`CNV3`), sorted by PRN, epoch, then label; followed by
  * `> ION` records when the header carries Klobuchar (GPSA/GPSB,
  * QZSA/QZSB, BDSA/BDSB, IRNA/IRNB) or NeQuick-G (GAL) coefficients.
  * ION records need a transmit-time epoch, which RINEX 3-style headers
@@ -321,6 +354,14 @@ export function writeRinexNav4(nav: Nav4Input): string {
       time: eph.tocDate.getTime(),
       label: 'CNAV',
       body: `> EPH ${padL(eph.prn, 3)} CNAV\n` + cnavRecord(eph),
+    });
+  }
+  for (const eph of nav.bdsCnav ?? []) {
+    records.push({
+      prn: eph.prn,
+      time: eph.tocDate.getTime(),
+      label: eph.message,
+      body: `> EPH ${padL(eph.prn, 3)} ${eph.message}\n` + bdsCnavRecord(eph),
     });
   }
 
