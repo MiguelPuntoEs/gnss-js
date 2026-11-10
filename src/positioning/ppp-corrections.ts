@@ -72,6 +72,10 @@ export function applyCorrections(
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { sunEcef, moonEcef, solidEarthTide } from './ppp-astro';
 import {
+  oceanLoadingEnu,
+  type OceanLoadingCoefficients,
+} from './ocean-loading';
+import {
   type PppAntennaModel,
   satBodyFrame,
   satPcoToEcef,
@@ -92,6 +96,8 @@ export interface PppCorrectionConfig {
   rcvPco?: boolean;
   tides?: boolean;
   windup?: boolean;
+  /** The station's ocean tide loading coefficients (BLQ), when known. */
+  oceanLoading?: OceanLoadingCoefficients;
 }
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
@@ -118,6 +124,15 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       const tideDisp = useTides
         ? solidEarthTide(rcvEcef, sun, moon)
         : ([0, 0, 0] as [number, number, number]);
+      if (cfg.oceanLoading) {
+        // Ocean loading ENU → ECEF, added to the receiver displacement.
+        const [e, n, u] = oceanLoadingEnu(cfg.oceanLoading, timeMs);
+        const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
+        const d = enuToEcef([e, n, u], lat, lon);
+        tideDisp[0] += d[0];
+        tideDisp[1] += d[1];
+        tideDisp[2] += d[2];
+      }
       return { timeMs, sun, moon, tideDisp };
     },
     evaluate(geom, ctx) {
@@ -190,7 +205,7 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       }
 
       // ── Solid-earth tides (receiver displacement projected on LOS) ──
-      if (useTides && ctx) {
+      if (ctx) {
         rangeM -= vdot(e, ctx.tideDisp);
       }
 

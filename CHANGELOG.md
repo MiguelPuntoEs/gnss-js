@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New — ocean tide loading (`positioning`)
+
+`createPppCorrections({ oceanLoading })` applies a station's ocean tide loading displacement, given its BLQ coefficients (the Onsala service's format). `parseBlq` reads BLQ files and `oceanLoadingEnu` synthesises the displacement from the 11 main constituents with IERS astronomical arguments, as RTKLIB does. At Brest (M2 radial 4.2 cm), over 24 monthly days of 2-hour PPP sessions, it cut the height bias from 25.4 to 5.1 mm and the height scatter from 53.9 to 17.9 mm. Full-day solutions barely change (the loading averages out), as expected.
+
 ### New — realistic velocity uncertainties (`analysis`)
 
 `fitCoordinateSeries` now also fits a white + flicker noise model by maximum likelihood (new `fitWhiteFlicker`, the CATS/Hector approach), giving each component `velocitySigmaRealistic` and `flickerShare` alongside the white-noise `velocitySigma`. GNSS position series carry flicker noise, which white-noise errors ignore. In a Monte Carlo of 60 weekly 4-year series with flicker, the realistic sigma averaged 0.538 mm/yr against an actual velocity scatter of 0.543 mm/yr; the white-noise sigma averaged 0.134 mm/yr, 4× too small. Series longer than 360 samples are thinned for the full-covariance fit. `noiseModel: false` skips it.
