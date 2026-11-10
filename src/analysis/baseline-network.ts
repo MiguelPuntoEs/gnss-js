@@ -209,7 +209,9 @@ export function adjustBaselineNetwork(
     const flat = norm.flat().filter((x): x is number => x != null);
     const sorted = [...flat].sort((a, b) => a - b);
     const med = sorted.length ? sorted[sorted.length >> 1]! : 0;
-    const scaleW = Math.max(1.4826 * med, 1e-12);
+    // Floored at half the a-priori σ₀: noise-free (or over-smooth) data
+    // would otherwise turn rounding noise into "outliers".
+    const scaleW = Math.max(1.4826 * med, 0.5);
     const ws = norm.map((n) =>
       sol.redundancy > 0 ? Math.max(...n.map((x) => (x ?? 0) / scaleW)) : null
     );

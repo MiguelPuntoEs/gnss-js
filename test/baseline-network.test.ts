@@ -56,6 +56,7 @@ describe('adjustBaselineNetwork', () => {
       for (let i = 0; i < 3; i++)
         expect(r.points.get(p)!.ecef[i]).toBeCloseTo(P[p]![i]!, 6);
     expect(r.redundancy).toBe(9); // 6 baselines × 3 − 3 points × 3
+    expect(r.baselines.every((b) => b.status === 'used')).toBe(true);
     expect(r.loops).toHaveLength(3);
     for (const l of r.loops) expect(l.lengthM).toBeLessThan(1e-9);
   });
