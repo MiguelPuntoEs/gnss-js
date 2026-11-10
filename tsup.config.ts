@@ -26,6 +26,7 @@ export default defineConfig({
     signals: './src/signals/index.ts',
     osnma: './src/osnma/index.ts',
     android: './src/android/index.ts',
+    troposphere: './src/troposphere/index.ts',
   },
   dts: true,
   shims: true,

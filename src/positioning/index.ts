@@ -695,6 +695,7 @@ export type {
   PppSatObs,
   PppEpoch,
   PppOptions,
+  PppTroposphereModel,
   PppEpochResult,
   PppSolution,
   PppArc,
@@ -739,3 +740,4 @@ export type {
   NetworkFcbResult,
   NetworkFcbSummary,
 } from './ppp-fcb';
+export * from './ocean-loading';

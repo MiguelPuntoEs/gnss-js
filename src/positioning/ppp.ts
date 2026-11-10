@@ -104,6 +104,10 @@ export interface PppOptions {
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
   troposphere?: boolean;
+  /** A-priori troposphere model (zenith hydrostatic delay, mapping
+   *  functions, gradients) — e.g. GPT3 + VMF3 from `gnss-js/troposphere`.
+   *  Default: Saastamoinen with the standard atmosphere + Niell. */
+  troposphereModel?: PppTroposphereModel;
   /** Expose the final EKF state (position + ambiguities + covariance) in the
    * solution for ambiguity-resolved positioning. Default false. */
   exposeState?: boolean;
@@ -145,6 +149,19 @@ export interface PppOptions {
         /** Max χ²/dof of the float ambiguities vs the integers. Default 20. */
         maxChi2?: number;
       };
+}
+
+/** A troposphere model the PPP engine can use (structurally the
+ *  `TroposphereModel` of `gnss-js/troposphere`). */
+export interface PppTroposphereModel {
+  delays(
+    utcMs: number,
+    latRad: number,
+    lonRad: number,
+    hEll: number,
+    elRad: number,
+    azRad: number
+  ): { zhd: number; mh: number; mw: number; gradient: number };
 }
 
 export interface PppEpochResult {
@@ -810,7 +827,7 @@ export class PppEngine {
 
     const rcv: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
     // ecefToGeodetic returns radians.
-    const [latRad, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
+    const [latRad, lonRad, heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
 
     // Sun/Moon-dependent corrections computed once per epoch.
     const epochCtx = corrections?.epochContext?.(epoch.timeMs, rcv) ?? null;
@@ -870,8 +887,20 @@ export class PppEngine {
 
       const trop =
         (opts.troposphere ?? true)
-          ? niellMapping(elRad, latRad, heightM, epoch.timeMs)
-          : { zhd: 0, mh: 0, mw: 0 };
+          ? opts.troposphereModel
+            ? opts.troposphereModel.delays(
+                epoch.timeMs,
+                latRad,
+                lonRad,
+                heightM,
+                elRad,
+                azRad
+              )
+            : {
+                ...niellMapping(elRad, latRad, heightM, epoch.timeMs),
+                gradient: 0,
+              }
+          : { zhd: 0, mh: 0, mw: 0, gradient: 0 };
       const { zhd, mh, mw } = trop;
       epochZhd = zhd;
 
@@ -900,7 +929,7 @@ export class PppEngine {
         lIf,
         satClkM: sat.state.clkM,
         range,
-        tropoFixed: zhd * mh + corr.rangeM,
+        tropoFixed: zhd * mh + trop.gradient + corr.rangeM,
         mw,
         windupM: corr.phaseWindupM,
         slip,

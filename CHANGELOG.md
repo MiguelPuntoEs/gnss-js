@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### New — GPT3 + VMF3 troposphere (`troposphere`)
+
+A new `gnss-js/troposphere` entry implements GPT3 and VMF3 (Landskron & Böhm 2018) on TU Wien's grid (VMF Data Server, CC BY 4.0). GPT3 is an empirical 5° climatology of pressure, temperature, humidity, mapping coefficients and gradients. VMF3 provides the mapping functions, with degree-12 empirical b/c coefficients and the Niell height correction.
+
+- `parseGpt3Grid`, `gpt3` and `vmf3`;
+- `saastamoinenZhd`;
+- `createGpt3Troposphere(grid)`, which plugs into the PPP engine through the new `PppOptions.troposphereModel` (a-priori ZHD from GPT3 pressure, VMF3 mapping, GPT3 gradients).
+
+Niell with the standard atmosphere stays the default. Over 24-hour and 2-hour PPP at WTZR (42 days) and BRST (24 days), GPT3 + VMF3 did not change the height scatter beyond noise, because the estimated wet delay absorbs the a-priori differences.
+
+### New — ocean tide loading (`positioning`)
+
+`createPppCorrections({ oceanLoading })` applies a station's ocean tide loading displacement, given its BLQ coefficients (the Onsala service's format). `parseBlq` reads BLQ files and `oceanLoadingEnu` synthesises the displacement from the 11 main constituents with IERS astronomical arguments, as RTKLIB does. At Brest (M2 radial 4.2 cm), over 24 monthly days of 2-hour PPP sessions, it cut the height bias from 25.4 to 5.1 mm and the height scatter from 53.9 to 17.9 mm. Full-day solutions barely change (the loading averages out), as expected.
+
+### New — realistic velocity uncertainties (`analysis`)
+
+`fitCoordinateSeries` now also fits a white + flicker noise model by maximum likelihood (new `fitWhiteFlicker`, the CATS/Hector approach), giving each component `velocitySigmaRealistic` and `flickerShare` alongside the white-noise `velocitySigma`. GNSS position series carry flicker noise, which white-noise errors ignore. In a Monte Carlo of 60 weekly 4-year series with flicker, the realistic sigma averaged 0.538 mm/yr against an actual velocity scatter of 0.543 mm/yr; the white-noise sigma averaged 0.134 mm/yr, 4× too small. Series longer than 360 samples are thinned for the full-covariance fit. `noiseModel: false` skips it.
+
+### New — network alignment (`analysis`)
+
+`estimateHelmert(from, to, opts)` estimates the transformation that maps one day's solutions of reference stations onto their known coordinates. It is robust: the worst reference is dropped while any residual exceeds `maxResidualM` (1.5 cm). Two models are available: `'translation'` (regional networks) and `'similarity'` (7 parameters, centred for conditioning). `applyHelmertFit` applies the result to every station of the day. This is the daily datum definition / common-mode removal of network GNSS processing.
+
+### New — station coordinate time series (`analysis`)
+
+`fitCoordinateSeries(samples, opts)` turns a station's position solutions (e.g. daily PPP) into the standard trajectory model:
+
+- an offset and a velocity per local East/North/Up component;
+- steps at given jumps (antenna changes, earthquakes);
+- annual and semi-annual terms, automatically once the span reaches two years;
+- weights from the daily formal errors.
+
+Outliers are rejected iteratively against a robust scale (1.4826 × MAD). Further jumps can be found by a greedy BIC search. It reports velocities with white-noise formal errors scaled by the variance factor, step sizes, seasonal amplitudes, the WRMS, and per-point model values and outlier flags.
+
+On 42 monthly daily PPP solutions of WTZR (2023–2026) it recovers the IGS20 velocity to 0.09 / 0.03 / 0.5 mm/yr (E/N/U), with a WRMS of 2.1 / 1.4 / 5.0 mm.
+
 ## 2.13.1
 
 ### Fixed — PPP with receivers whose clock drifts (`positioning`)

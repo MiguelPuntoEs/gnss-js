@@ -4,3 +4,5 @@ export * from './completeness';
 export * from './ionosphere';
 export * from './dcb';
 export * from './quality-analysis';
+export * from './coordinate-series';
+export * from './network-alignment';
