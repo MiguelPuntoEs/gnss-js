@@ -55,6 +55,8 @@ export interface SeriesFitOptions {
 export interface SeriesComponent {
   /** Value at the reference epoch (m), relative to the reference position. */
   offset: number;
+  /** Formal 1σ of `offset` (white noise, scaled by the variance factor). */
+  offsetSigma: number;
   /** Velocity (m/yr). */
   velocity: number;
   /** White-noise formal 1σ of the velocity, scaled by the variance factor. */
@@ -365,6 +367,7 @@ export function fitCoordinateSeries(
         : null;
     return {
       offset: s.x[0]!,
+      offsetSigma: Math.sqrt(s.Ninv[0]![0]! * vf),
       velocity: s.x[1]!,
       velocitySigma: Math.sqrt(s.Ninv[1]![1]! * vf),
       velocitySigmaRealistic: noise?.velocitySigma ?? null,

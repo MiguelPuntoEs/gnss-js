@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### New — SINEX writer and reader (`rinex`)
+
+`writeSinex` writes a SINEX 2.02 station solution: SITE/ID, SOLUTION/EPOCHS, SOLUTION/ESTIMATE (STAX…VELZ) and a block-diagonal SOLUTION/MATRIX_ESTIMATE. That is the format IGS, EUREF and agencies exchange coordinates and velocities in. `parseSinexEstimates` reads any SINEX file's position and velocity estimates; it reads all 1,401 solutions of IGS's IGS20.ssc. `fitCoordinateSeries` components now also report `offsetSigma`.
+
 ## 2.14.0
 
 ### New — GPT3 + VMF3 troposphere (`troposphere`)
