@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed — static PPP-AR reported float when the last attempt failed (`positioning`)
+
+`solvePpp(..., { ar })` took the ambiguity-fixed position from the final fixing attempt only. A static Brest session fixed at 80% of its epochs over 2 hours, and 38% over 24 hours, still came back float because its last attempt didn't pass. Static sessions now fall back to the most recent accepted fix; kinematic sessions keep the end-only rule. The new `ar.positionEpochMs` says when that fix was. Against Brest's IGS20 coordinates (2024-015, CNES products), the 2-hour Up error went from 33.0 mm (float) to 21.9 mm and the 24-hour one from 1.3 to −0.1 mm. East and North are unchanged or better.
+
 ### New — `parseRinexHeaderText` (`rinex`)
 
 Reads a RINEX observation header (2/3/4, including Hatanaka) from its leading text alone: marker, antenna and radome, antenna offsets, receiver and first epoch. This lets you review an occupation without parsing the observations.

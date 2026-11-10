@@ -208,8 +208,11 @@ export interface PppSolution {
     firstFixSec: number | null;
     /** Ambiguities fixed at the end (0: the session ends float). */
     nFixedEnd: number;
-    /** The ambiguity-fixed position at the end, or null. */
+    /** The ambiguity-fixed position: at the end, or (static) at the last
+     *  accepted fix when the final attempt failed; null if never fixed. */
     position: [number, number, number] | null;
+    /** Epoch of that fix (ms). */
+    positionEpochMs: number | null;
     /** Share of epochs with at least one ambiguity fixed. */
     fixedEpochShare: number;
   };
@@ -639,6 +642,12 @@ export class PppEngine {
   /** Consecutive gated-out phase updates per satellite. */
   private phaseRejects!: Map<string, number>;
   /** PPP-AR: the latest accepted fix (null: float). */
+  /** The most recent accepted fix (static sessions fall back to it when
+   *  the final attempt fails). */
+  private lastAccepted: {
+    position: [number, number, number];
+    tMs: number;
+  } | null = null;
   private lastFix!: {
     position: [number, number, number];
     nFixed: number;
@@ -1349,6 +1358,7 @@ export class PppEngine {
       nFixed: fx.nFixed,
       ratio: fx.ratio,
     };
+    this.lastAccepted = { position: fx.position, tMs };
     this.firstFixMs ??= tMs;
   }
 
@@ -1425,7 +1435,17 @@ export class PppEngine {
                   ? null
                   : (this.firstFixMs - series[0]!.timeMs) / 1000,
               nFixedEnd: this.lastFix?.nFixed ?? 0,
-              position: this.lastFix?.position ?? null,
+              // Static: the last accepted fix when the final attempt
+              // failed — a 2-hour session fixed 80% of the time used to
+              // report float because its last attempt didn't pass.
+              position:
+                this.lastFix?.position ??
+                (this.kinematic ? null : (this.lastAccepted?.position ?? null)),
+              positionEpochMs: this.lastFix
+                ? (series[series.length - 1]?.timeMs ?? null)
+                : this.kinematic
+                  ? null
+                  : (this.lastAccepted?.tMs ?? null),
               fixedEpochShare: series.length
                 ? this.fixedEpochs / series.length
                 : 0,
