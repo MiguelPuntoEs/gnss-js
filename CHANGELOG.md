@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.16.0
 
 ### Fixed — RTK across receiver makes: Galileo dropped, BeiDou biased (`positioning`)
 
