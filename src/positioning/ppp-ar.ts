@@ -59,6 +59,18 @@ export interface ArOptions {
   wlThreshold?: number;
   /** Min LAMBDA ratio to accept the narrow-lane fix. Default 3. */
   ratioThreshold?: number;
+  /** Partial fixing: when the full set fails the ratio test, drop the
+   *  lowest-elevation satellite and retry while more than this many
+   *  between-satellite ambiguities remain. Default 4. */
+  minPartial?: number;
+  /** Min bootstrapped success rate (0–1) to accept a fix, besides the
+   *  ratio test. Default 0 (ratio test only). */
+  minSuccessRate?: number;
+  /** `fixPppPosition`: min between-satellite ambiguities to accept. Default 1. */
+  minFixed?: number;
+  /** `fixPppPosition`: max χ²/dof of the float ambiguities against the fixed
+   *  integers (a wrong fix sits many σ away). Default Infinity. */
+  maxChi2?: number;
 }
 
 export interface ArFixedSat {
@@ -67,6 +79,9 @@ export interface ArFixedSat {
   n1: number;
   /** Fixed IF ambiguity (m). */
   aIF: number;
+  /** PRN of this satellite's single-difference reference (itself for a
+   *  reference satellite). */
+  ref: string;
 }
 
 export interface ArResult {
@@ -74,9 +89,13 @@ export interface ArResult {
   fixed: boolean;
   /** LAMBDA ratio statistic (second-best / best). */
   ratio: number;
-  /** Reference PRN whose absolute N1 stays float (SD datum). */
+  /** Reference PRN of the first constellation (whose absolute N1 stays
+   *  float); see `refPrns` for all. */
   refPrn: string | null;
-  /** Fixed satellites (includes the reference with its float-rounded N1). */
+  /** One reference per constellation — differences are taken within a
+   *  constellation, where the receiver phase bias is common. */
+  refPrns: string[];
+  /** Satellites in the fix (references included, with a float-rounded N1). */
   sats: ArFixedSat[];
   /** PRNs whose wide-lane did not round confidently (excluded). */
   rejectedWl: string[];
@@ -88,6 +107,11 @@ export interface ArResult {
  * `sats`. Returns the fixed narrow-lane / wide-lane integers and the ratio
  * test result. A `fixed: false` result means the data did not support a
  * confident fix (keep the float solution).
+ *
+ * Everything is differenced between satellites of the same constellation
+ * (one reference each, the highest), which removes the receiver's
+ * wide-lane and narrow-lane phase biases — those differ per constellation
+ * and per receiver, so an undifferenced ambiguity is never an integer.
  */
 export function resolvePppAmbiguities(
   sats: ArSat[],
@@ -96,110 +120,127 @@ export function resolvePppAmbiguities(
 ): ArResult {
   const wlThreshold = opts.wlThreshold ?? 0.25;
   const ratioThreshold = opts.ratioThreshold ?? 3;
+  const minPartial = opts.minPartial ?? 4;
+  const minSuccess = opts.minSuccessRate ?? 0;
+  const n = sats.length;
+  const none = (rejectedWl: string[], ratio = 0): ArResult => ({
+    fixed: false,
+    ratio,
+    refPrn: null,
+    refPrns: [],
+    sats: [],
+    rejectedWl,
+  });
 
-  // --- Step 1: wide-lane rounding (per satellite) --------------------
-  const kept: number[] = []; // indices into sats
-  const nWl: number[] = [];
+  // --- Step 1: per-constellation reference + wide-lane rounding ------
+  // SD wide-lane: (MW_i − b_i) − (MW_ref − b_ref) is an integer. The
+  // reference's own N_WL is set to round(MW_ref − b_ref) — any integer
+  // works, its receiver part cancels in every difference below.
+  const elev = (i: number) => sats[i]!.elevDeg ?? -1;
+  const wlOf = (i: number) => sats[i]!.mwCyc - (sats[i]!.wlBiasCyc ?? 0);
+  const refOfSys = new Map<string, number>();
+  for (let i = 0; i < n; i++) {
+    const sys = sats[i]!.prn[0]!;
+    const r = refOfSys.get(sys);
+    if (r === undefined || elev(i) > elev(r)) refOfSys.set(sys, i);
+  }
+  const nWlOf = new Map<number, number>();
+  const refIdx = new Map<number, number>(); // sat → its reference
   const rejectedWl: string[] = [];
-  for (let i = 0; i < sats.length; i++) {
-    const s = sats[i]!;
-    const wlFloat = s.mwCyc - (s.wlBiasCyc ?? 0);
-    const r = Math.round(wlFloat);
-    if (Math.abs(wlFloat - r) <= wlThreshold) {
-      kept.push(i);
-      nWl.push(r);
-    } else {
-      rejectedWl.push(s.prn);
-    }
+  for (const r of refOfSys.values()) {
+    nWlOf.set(r, Math.round(wlOf(r)));
+    refIdx.set(r, r);
+  }
+  for (let i = 0; i < n; i++) {
+    if (refIdx.has(i)) continue;
+    const r = refOfSys.get(sats[i]!.prn[0]!)!;
+    const sdWl = wlOf(i) - wlOf(r);
+    const k = Math.round(sdWl);
+    if (Math.abs(sdWl - k) <= wlThreshold) {
+      nWlOf.set(i, nWlOf.get(r)! + k);
+      refIdx.set(i, r);
+    } else rejectedWl.push(sats[i]!.prn);
   }
 
-  if (kept.length < 2) {
-    return {
-      fixed: false,
-      ratio: 0,
-      refPrn: null,
-      sats: [],
-      rejectedWl,
-    };
-  }
-
-  // --- Step 2: float narrow-lane N1 per kept satellite ---------------
+  // --- Step 2: float narrow-lane N1 per satellite --------------------
   // A_IF = λ_NL·N1 + λ_NL·(f2/(f1−f2))·N_WL  ⇒  N1 = A_IF/λ_NL − (f2/(f1−f2))·N_WL,
   // then remove the satellite NL fractional-cycle bias.
-  const n1Float: number[] = [];
-  const lamNl: number[] = [];
-  for (let k = 0; k < kept.length; k++) {
-    const s = sats[kept[k]!]!;
-    const lNl = nlWavelength(s.f1, s.f2);
-    lamNl.push(lNl);
-    const n1 =
-      s.aIF / lNl - (s.f2 / (s.f1 - s.f2)) * nWl[k]! - (s.nlBiasCyc ?? 0);
-    n1Float.push(n1);
-  }
+  const lamNl = (i: number) => nlWavelength(sats[i]!.f1, sats[i]!.f2);
+  const n1Float = (i: number) => {
+    const s = sats[i]!;
+    return (
+      s.aIF / lamNl(i) -
+      (s.f2 / (s.f1 - s.f2)) * nWlOf.get(i)! -
+      (s.nlBiasCyc ?? 0)
+    );
+  };
+  const qN1 = (a: number, b: number) =>
+    Qaif[a * n + b]! / (lamNl(a) * lamNl(b));
 
-  // Reference satellite: highest elevation (or first) — its absolute N1
-  // stays float; single differences fix the rest relative to it.
-  let ref = 0;
-  for (let k = 1; k < kept.length; k++) {
-    const e = sats[kept[k]!]!.elevDeg ?? -1;
-    if (e > (sats[kept[ref]!]!.elevDeg ?? -1)) ref = k;
-  }
+  // --- Step 3+4: SD ambiguities, LAMBDA, partial fixing --------------
+  // Candidates: non-reference satellites with a fixed wide-lane, highest
+  // first, so partial fixing drops from the low end.
+  let cand = [...refIdx.keys()]
+    .filter((i) => refIdx.get(i) !== i)
+    .sort((a, b) => elev(b) - elev(a));
+  if (cand.length < 1) return none(rejectedWl);
 
-  // --- Step 3: build SD float ambiguities + covariance ---------------
-  // N1 covariance from the IF covariance: Q_N1[i,j] = Q_aif[i,j]/(λ_NLi·λ_NLj).
-  // SD operator D removes the reference: sd_k = N1_k − N1_ref.
-  const m = kept.length - 1; // number of SD ambiguities
-  const sd = new Float64Array(m);
-  const Qsd = new Float64Array(m * m);
-  const others: number[] = [];
-  for (let k = 0; k < kept.length; k++) if (k !== ref) others.push(k);
-
-  const n = sats.length;
-  const qN1 = (ka: number, kb: number): number =>
-    Qaif[kept[ka]! * n + kept[kb]!]! / (lamNl[ka]! * lamNl[kb]!);
-
-  for (let a = 0; a < m; a++) {
-    const ka = others[a]!;
-    sd[a] = n1Float[ka]! - n1Float[ref]!;
-    for (let b = 0; b < m; b++) {
-      const kb = others[b]!;
-      // Var(N1_ka − N1_ref, N1_kb − N1_ref)
-      Qsd[a * m + b] =
-        qN1(ka, kb) - qN1(ka, ref) - qN1(ref, kb) + qN1(ref, ref);
+  let best: { set: number[]; ratio: number; fix: Float64Array } | null = null;
+  let firstRatio = 0;
+  for (;;) {
+    const m = cand.length;
+    const sd = new Float64Array(m);
+    const Qsd = new Float64Array(m * m);
+    for (let a = 0; a < m; a++) {
+      const ia = cand[a]!;
+      const ra = refIdx.get(ia)!;
+      sd[a] = n1Float(ia) - n1Float(ra);
+      for (let b = 0; b < m; b++) {
+        const ib = cand[b]!;
+        const rb = refIdx.get(ib)!;
+        Qsd[a * m + b] = qN1(ia, ib) - qN1(ia, rb) - qN1(ra, ib) + qN1(ra, rb);
+      }
     }
+    const res = lambdaSearch(sd, Qsd, m, 2);
+    const ratio = res ? Math.min(res.ratio, 999.9) : 0;
+    if (best === null && firstRatio === 0) firstRatio = ratio;
+    if (res && ratio >= ratioThreshold && res.successRate >= minSuccess) {
+      best = { set: cand, ratio, fix: Float64Array.from(res.candidates[0]!) };
+      break;
+    }
+    if (m <= minPartial) break;
+    cand = cand.slice(0, -1);
   }
-
-  // --- Step 4: LAMBDA integer least squares on the SD ambiguities ----
-  const res = lambdaSearch(sd, Qsd, m, 2);
-  const ratio = res ? Math.min(res.ratio, 999.9) : 0;
-  const fixed = !!res && ratio >= ratioThreshold;
+  if (!best) return { ...none(rejectedWl, firstRatio), refPrn: null };
 
   // --- Step 5: assemble fixed integers -------------------------------
-  const refN1 = Math.round(n1Float[ref]!);
-  const sdFix = res?.candidates[0];
-  const outSats: ArFixedSat[] = [];
-  for (let k = 0; k < kept.length; k++) {
-    const s = sats[kept[k]!]!;
-    let n1: number;
-    if (k === ref) {
-      n1 = refN1;
-    } else {
-      const a = others.indexOf(k);
-      n1 =
-        fixed && sdFix
-          ? refN1 + Math.round(sdFix[a]!)
-          : Math.round(n1Float[k]!);
-    }
-    const lNl = lamNl[k]!;
-    const aIF = lNl * n1 + lNl * (s.f2 / (s.f1 - s.f2)) * nWl[k]!;
-    outSats.push({ prn: s.prn, nWl: nWl[k]!, n1, aIF });
-  }
-
+  const refN1 = new Map<number, number>();
+  for (const r of refOfSys.values()) refN1.set(r, Math.round(n1Float(r)));
+  const out: ArFixedSat[] = [];
+  const emit = (i: number, n1: number) => {
+    const s = sats[i]!;
+    const l = lamNl(i);
+    const nWl = nWlOf.get(i)!;
+    out.push({
+      prn: s.prn,
+      nWl,
+      n1,
+      aIF: l * n1 + l * (s.f2 / (s.f1 - s.f2)) * nWl,
+      ref: sats[refIdx.get(i)!]!.prn,
+    });
+  };
+  const usedRefs = new Set(best.set.map((i) => refIdx.get(i)!));
+  for (const r of usedRefs) emit(r, refN1.get(r)!);
+  best.set.forEach((i, a) =>
+    emit(i, refN1.get(refIdx.get(i)!)! + Math.round(best!.fix[a]!))
+  );
+  const refPrns = [...usedRefs].map((r) => sats[r]!.prn);
   return {
-    fixed,
-    ratio,
-    refPrn: sats[kept[ref]!]!.prn,
-    sats: outSats,
+    fixed: true,
+    ratio: best.ratio,
+    refPrn: refPrns[0] ?? null,
+    refPrns,
+    sats: out,
     rejectedWl,
   };
 }
@@ -301,51 +342,59 @@ export function fixPppPosition(
     for (let j = 0; j < n; j++)
       Qaif[i * n + j] = state.covariance[amb[i]!.index]![amb[j]!.index]!;
 
-  const res = resolvePppAmbiguities(sats, Qaif, opts);
+  const res = resolvePppAmbiguities(sats, Qaif, {
+    ...opts,
+    minPartial: opts.minPartial ?? Math.max(4, opts.minFixed ?? 0),
+  });
   if (!res.fixed || res.refPrn === null) {
     return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
   }
 
-  // Kept satellites (WL-fixed) in the resolver's order, mapped to EKF indices
-  // and their float / fixed IF ambiguities.
+  // Fixed satellites mapped to EKF indices; each non-reference one gives a
+  // between-satellite constraint against its constellation's reference.
   const idxOfPrn = new Map(amb.map((a) => [a.prn, a.index]));
   const floatOfPrn = new Map(amb.map((a) => [a.prn, a.aIF]));
-  const kept = res.sats.filter((s) => idxOfPrn.has(s.prn));
-  const refPos = kept.findIndex((s) => s.prn === res.refPrn);
-  if (refPos < 0 || kept.length < 2) {
+  const fixedOf = new Map(res.sats.map((s) => [s.prn, s.aIF]));
+  const pairs = res.sats
+    .filter(
+      (s) => s.ref !== s.prn && idxOfPrn.has(s.prn) && idxOfPrn.has(s.ref)
+    )
+    .map((s) => ({ prn: s.prn, ref: s.ref }));
+  const m = pairs.length;
+  if (m < Math.max(1, opts.minFixed ?? 1))
     return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
-  }
 
-  const ambIdx = kept.map((s) => idxOfPrn.get(s.prn)!);
-  const aFloat = kept.map((s) => floatOfPrn.get(s.prn)!);
-  const aFixed = kept.map((s) => s.aIF);
-  const others = kept.map((_, i) => i).filter((i) => i !== refPos);
-  const m = others.length;
-
-  // Q_aa (kept×kept) and Q_xa (3×kept) from the EKF covariance.
+  // Q_aa and Q_xa from the EKF covariance.
   const P = state.covariance;
-  const qAA = (i: number, j: number) => P[ambIdx[i]!]![ambIdx[j]!]!;
-  const qXA = (r: number, i: number) => P[r]![ambIdx[i]!]!;
+  const ix = (prn: string) => idxOfPrn.get(prn)!;
+  const qAA = (i: string, j: string) => P[ix(i)]![ix(j)]!;
+  const qXA = (r: number, i: string) => P[r]![ix(i)]!;
 
-  // z = D·a (single differences vs the reference): Q_zz and Q_xz.
+  // z = D·a (single differences vs each reference): Q_zz and Q_xz.
   const Qzz: number[][] = Array.from({ length: m }, () => new Array(m).fill(0));
   const z: number[] = new Array(m).fill(0);
   for (let a = 0; a < m; a++) {
-    const ia = others[a]!;
-    z[a] = aFloat[ia]! - aFloat[refPos]! - (aFixed[ia]! - aFixed[refPos]!);
+    const { prn: ia, ref: ra } = pairs[a]!;
+    z[a] =
+      floatOfPrn.get(ia)! -
+      floatOfPrn.get(ra)! -
+      (fixedOf.get(ia)! - fixedOf.get(ra)!);
     for (let b = 0; b < m; b++) {
-      const ib = others[b]!;
-      Qzz[a]![b] =
-        qAA(ia, ib) - qAA(ia, refPos) - qAA(refPos, ib) + qAA(refPos, refPos);
+      const { prn: ib, ref: rb } = pairs[b]!;
+      Qzz[a]![b] = qAA(ia, ib) - qAA(ia, rb) - qAA(ra, ib) + qAA(ra, rb);
     }
   }
   const Qxz: number[][] = [0, 1, 2].map((r) =>
-    others.map((ia) => qXA(r, ia) - qXA(r, refPos))
+    pairs.map(({ prn, ref }) => qXA(r, prn) - qXA(r, ref))
   );
 
   // x_fixed = x_float − Q_xz · Q_zz⁻¹ · z.
   const y = solveSpd(Qzz, z);
   if (!y) return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
+  let chi2 = 0;
+  for (let a = 0; a < m; a++) chi2 += z[a]! * y[a]!;
+  if (chi2 / m > (opts.maxChi2 ?? Infinity))
+    return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
   const shift: [number, number, number] = [0, 0, 0];
   for (let r = 0; r < 3; r++) {
     let s = 0;

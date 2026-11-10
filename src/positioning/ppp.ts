@@ -25,6 +25,13 @@ import { C_LIGHT, OMEGA_E } from '../constants/gnss';
 import { ecefToGeodetic, getEnuDifference, getAer } from '../coordinates/ecef';
 import { sp3Position, type Sp3File } from '../rinex/sp3';
 import { clkBias, type ClkFile } from '../rinex/clk';
+import type { SatOsbTable } from '../rinex/bias-sinex';
+import { fixPppPosition } from './ppp-ar';
+
+const NO_FCB = {
+  satWlFcb: new Map<string, number>(),
+  satNlFcb: new Map<string, number>(),
+};
 import { niellMapping } from './ppp-tropo';
 import {
   type PppCorrections,
@@ -56,6 +63,11 @@ export interface PppSatObs {
    * up satellite code (OSB) biases from an SSR/HAS source; optional. */
   code1?: string;
   code2?: string;
+  /** RINEX-3 tracking codes of the two *carriers* (e.g. '1C','2W'), for
+   *  satellite phase-bias (OSB) lookup when they differ from the code's
+   *  (GPS: C1W code with L1C phase). Default: `code1` / `code2`. */
+  phase1?: string;
+  phase2?: string;
   /** True if a cycle slip is flagged on either band (LLI or detected). */
   slip: boolean;
 }
@@ -100,6 +112,39 @@ export interface PppOptions {
    * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
    * Satellites/epochs absent from the CLK fall back to the SP3 clock. */
   clk?: ClkFile;
+  /** Satellite observable-specific biases (code + phase OSB) consistent with
+   *  the orbit/clock product — e.g. the CNES "ABS" biases that accompany GFZ
+   *  rapid products. With phase OSBs the float ambiguities keep their integer
+   *  nature (between satellites), which is what PPP-AR (`fixPppPosition`)
+   *  needs. Used with an Sp3File; a custom source supplies its own biases. */
+  osb?: SatOsbTable;
+  /**
+   * Integer ambiguity resolution (PPP-AR). Needs satellite phase biases
+   * (`osb`, or a source with `phaseBias`) — without them the ambiguities
+   * aren't integers and this is ignored. Every `everyS` seconds the
+   * converged ambiguities are resolved (wide-lane by rounding, narrow-lane
+   * by LAMBDA, between satellites of a constellation) and, if the fix is
+   * accepted, the epoch gets an ambiguity-fixed position next to the float
+   * one. `true` uses the defaults.
+   */
+  ar?:
+    | boolean
+    | {
+        /** LAMBDA ratio test threshold. Default 3. */
+        ratio?: number;
+        /** Max wide-lane fractional part (cycles). Default 0.15. */
+        wlThreshold?: number;
+        /** Min arc age before an ambiguity is a candidate (s). Default 600. */
+        minArcS?: number;
+        /** Attempt interval (s). Default 120. */
+        everyS?: number;
+        /** Min bootstrapped success rate. Default 0.999. */
+        successRate?: number;
+        /** Min between-satellite ambiguities in a fix. Default 5. */
+        minFixed?: number;
+        /** Max χ²/dof of the float ambiguities vs the integers. Default 20. */
+        maxChi2?: number;
+      };
 }
 
 export interface PppEpochResult {
@@ -116,6 +161,10 @@ export interface PppEpochResult {
   ztdHydrostatic: number;
   /** RMS of post-fit phase residuals this epoch (m). */
   phaseResRms: number;
+  /** PPP-AR: between-satellite ambiguities fixed (0 = float only). */
+  nFixed: number;
+  /** PPP-AR: the ambiguity-fixed position, when the latest attempt fixed. */
+  fixedPosition: [number, number, number] | null;
 }
 
 export interface PppSolution {
@@ -136,6 +185,17 @@ export interface PppSolution {
   convergenceSec: number | null;
   /** Final 3D error vs ground truth (m), if given. */
   finalError3d: number | null;
+  /** PPP-AR summary, when `ar` was requested with a phase-bias product. */
+  ar?: {
+    /** Seconds from the first epoch to the first accepted fix (null: none). */
+    firstFixSec: number | null;
+    /** Ambiguities fixed at the end (0: the session ends float). */
+    nFixedEnd: number;
+    /** The ambiguity-fixed position at the end, or null. */
+    position: [number, number, number] | null;
+    /** Share of epochs with at least one ambiguity fixed. */
+    fixedEpochShare: number;
+  };
   /** Per-arc converged float ambiguities — one per continuous satellite
    * tracking arc — the raw material for ambiguity resolution (PPP-AR). */
   arcs: PppArc[];
@@ -330,6 +390,10 @@ export interface PppEphemerisSource {
    *  corrected code is `observed − codeBias`. SP3/CLK sources omit this (the
    *  float ambiguity + broadcast clock reference absorb it). */
   codeBias?(prn: string, signalCode: string, tEmitMs: number): number | null;
+  /** Optional satellite *phase* bias (m) for a carrier tracking code
+   *  ('1C','2W'…): the corrected carrier is `observed − phaseBias`. Only
+   *  integer-clock products (for PPP-AR) provide these. */
+  phaseBias?(prn: string, signalCode: string, tEmitMs: number): number | null;
 }
 
 /** Default source: SP3 orbits + clocks, with optional high-rate CLK. Velocity
@@ -338,8 +402,16 @@ export interface PppEphemerisSource {
 export class Sp3EphemerisSource implements PppEphemerisSource {
   constructor(
     private readonly sp3: Sp3File,
-    private readonly clk?: ClkFile
-  ) {}
+    private readonly clk?: ClkFile,
+    private readonly osb?: SatOsbTable
+  ) {
+    if (osb) {
+      this.codeBias = (prn, code, t) => osb.get(prn, 'C' + code, t);
+      this.phaseBias = (prn, code, t) => osb.get(prn, 'L' + code, t);
+    }
+  }
+  codeBias?: PppEphemerisSource['codeBias'];
+  phaseBias?: PppEphemerisSource['phaseBias'];
   satState(prn: string, tEmitMs: number): SatSample | null {
     const p = sp3Position(this.sp3, prn, tEmitMs);
     if (!p || p.clk == null) return null;
@@ -356,6 +428,34 @@ export class Sp3EphemerisSource implements PppEphemerisSource {
     const clkS = (this.clk ? clkBias(this.clk, prn, tEmitMs) : null) ?? p.clk;
     return { x: p.x, y: p.y, z: p.z, vx, vy, vz, clkS };
   }
+}
+
+/**
+ * Remove the source's satellite code/phase biases (OSB) from one observation,
+ * so the code matches the clock reference and — with phase OSBs — the carrier
+ * ambiguities are integers between satellites. Code biases are optional
+ * (SP3/CLK sources fold them into the float ambiguity); a source that
+ * publishes phase biases but has none for this satellite/signal drops it,
+ * since one non-integer ambiguity would spoil the fix for all.
+ */
+function applySatBiases(
+  source: PppEphemerisSource,
+  o: PppSatObs,
+  tMs: number
+): PppSatObs | null {
+  if (!source.codeBias && !source.phaseBias) return o;
+  const b1 = source.codeBias?.(o.prn, o.code1 ?? '', tMs) ?? 0;
+  const b2 = source.codeBias?.(o.prn, o.code2 ?? '', tMs) ?? 0;
+  let l1 = o.l1;
+  let l2 = o.l2;
+  if (source.phaseBias) {
+    const p1 = source.phaseBias(o.prn, o.phase1 ?? o.code1 ?? '', tMs);
+    const p2 = source.phaseBias(o.prn, o.phase2 ?? o.code2 ?? '', tMs);
+    if (p1 == null || p2 == null) return null;
+    l1 -= p1 / (C_LIGHT / o.f1);
+    l2 -= p2 / (C_LIGHT / o.f2);
+  }
+  return { ...o, c1: o.c1 - b1, c2: o.c2 - b2, l1, l2 };
 }
 
 /* ================================================================== */
@@ -485,6 +585,15 @@ export class PppEngine {
   >;
   /** Consecutive gated-out phase updates per satellite. */
   private phaseRejects!: Map<string, number>;
+  /** PPP-AR: the latest accepted fix (null: float). */
+  private lastFix!: {
+    position: [number, number, number];
+    nFixed: number;
+    ratio: number;
+  } | null;
+  private lastArMs!: number;
+  private firstFixMs!: number | null;
+  private fixedEpochs!: number;
   private series!: PppEpochResult[];
   private ei = 0;
   private t0 = 0;
@@ -525,6 +634,10 @@ export class PppEngine {
     this.mwState = new Map();
     this.tdPrev = new Map();
     this.phaseRejects = new Map();
+    this.lastFix = null;
+    this.lastArMs = -Infinity;
+    this.firstFixMs = null;
+    this.fixedEpochs = 0;
     this.series = [];
     this.ei = 0;
     this.t0 = 0;
@@ -687,8 +800,11 @@ export class PppEngine {
     // Zenith hydrostatic delay is station-level (same for every satellite this
     // epoch); capture it so ZTD = ZHD + ZWD can be reported.
     let epochZhd = 0;
-    for (const o of epoch.obs) {
-      if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
+    for (const raw of epoch.obs) {
+      if (raw.c1 === 0 || raw.c2 === 0 || raw.l1 === 0 || raw.l2 === 0)
+        continue;
+      const o = applySatBiases(source, raw, epoch.timeMs);
+      if (!o) continue;
       const slip = detectSlip(o, ei);
       const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv);
       if (!sat) continue;
@@ -712,11 +828,7 @@ export class PppEngine {
       const lam1 = C_LIGHT / o.f1;
       const lam2 = C_LIGHT / o.f2;
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
-      // Satellite code (OSB) biases — align the pseudoranges with the SSR/HAS
-      // clock reference. No-op when the source doesn't provide them (SP3/CLK).
-      const b1 = source.codeBias?.(o.prn, o.code1 ?? '', epoch.timeMs) ?? 0;
-      const b2 = source.codeBias?.(o.prn, o.code2 ?? '', epoch.timeMs) ?? 0;
-      const pIf = g * (o.c1 - b1) - (g - 1) * (o.c2 - b2);
+      const pIf = g * o.c1 - (g - 1) * o.c2;
       const lIf = g * (o.l1 * lam1) - (g - 1) * (o.l2 * lam2);
       if (!Number.isFinite(pIf) || !Number.isFinite(lIf)) continue;
 
@@ -1062,6 +1174,9 @@ export class PppEngine {
       }
     }
 
+    this.tryFix(epoch.timeMs, vis);
+    if (this.lastFix) this.fixedEpochs++;
+
     const pos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
     let enu: [number, number, number] | null = null;
     let error3d: number | null = null;
@@ -1099,10 +1214,77 @@ export class PppEngine {
       ztdWet: x[IDX_ZWD]!,
       ztdHydrostatic: epochZhd,
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
+      nFixed: this.lastFix?.nFixed ?? 0,
+      fixedPosition: this.lastFix?.position ?? null,
     };
     series.push(result);
     this.ei = ei + 1;
     return result;
+  }
+
+  /**
+   * PPP-AR. Every `everyS`, resolve the converged ambiguities of the
+   * satellites in view (between satellites of one constellation) and, when
+   * the fix passes the ratio, success-rate and χ² tests, condition the
+   * float position on it ({@link fixPppPosition}). The float filter itself
+   * is never constrained — a wrong fix can't contaminate later epochs, and
+   * the next attempt starts clean. Between attempts the last fix carries
+   * over (static) or is dropped (kinematic).
+   */
+  private tryFix(
+    tMs: number,
+    vis: readonly { prn: string; elRad: number; f1: number; f2: number }[]
+  ): void {
+    const ar = this.opts.ar;
+    if (!ar || !this.source.phaseBias) return;
+    const cfg = ar === true ? {} : ar;
+    if (tMs - this.lastArMs < (cfg.everyS ?? 120) * 1000) {
+      if (this.kinematic) this.lastFix = null;
+      return;
+    }
+    this.lastArMs = tMs;
+    this.lastFix = null;
+    const { x, P, ambIdx, arcSnap, mwState } = this;
+    const minArcMs = (cfg.minArcS ?? 600) * 1000;
+    const ambiguities: PppFixState['ambiguities'] = [];
+    for (const v of vis) {
+      const index = ambIdx.get(v.prn);
+      const snap = arcSnap.get(v.prn);
+      const mw = mwState.get(v.prn);
+      if (index === undefined || !snap || !mw) continue;
+      if (tMs - snap.startMs < minArcMs || snap.nEpochs < 20) continue;
+      ambiguities.push({
+        prn: v.prn,
+        index,
+        aIF: x[index]!,
+        mwCyc: mw.mean,
+        f1: v.f1,
+        f2: v.f2,
+        elevDeg: (v.elRad * 180) / Math.PI,
+      });
+    }
+    const fx = fixPppPosition(
+      {
+        position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+        covariance: P,
+        ambiguities,
+      },
+      NO_FCB,
+      {
+        ratioThreshold: cfg.ratio ?? 3,
+        wlThreshold: cfg.wlThreshold ?? 0.15,
+        minSuccessRate: cfg.successRate ?? 0.999,
+        minFixed: cfg.minFixed ?? 5,
+        maxChi2: cfg.maxChi2 ?? 20,
+      }
+    );
+    if (!fx.fixed) return;
+    this.lastFix = {
+      position: fx.position,
+      nFixed: fx.nFixed,
+      ratio: fx.ratio,
+    };
+    this.firstFixMs ??= tMs;
   }
 
   /** Finalise the session: capture the AR state, flush open arcs, assemble. */
@@ -1170,6 +1352,21 @@ export class PppEngine {
       finalError3d,
       arcs,
       finalState,
+      ...(opts.ar && this.source.phaseBias
+        ? {
+            ar: {
+              firstFixSec:
+                this.firstFixMs === null || !series.length
+                  ? null
+                  : (this.firstFixMs - series[0]!.timeMs) / 1000,
+              nFixedEnd: this.lastFix?.nFixed ?? 0,
+              position: this.lastFix?.position ?? null,
+              fixedEpochShare: series.length
+                ? this.fixedEpochs / series.length
+                : 0,
+            },
+          }
+        : {}),
     };
   }
 }
@@ -1187,7 +1384,7 @@ export function solvePpp(
   const source: PppEphemerisSource =
     'satState' in sp3OrSource
       ? sp3OrSource
-      : new Sp3EphemerisSource(sp3OrSource, opts.clk);
+      : new Sp3EphemerisSource(sp3OrSource, opts.clk, opts.osb);
   const eng = new PppEngine(opts, source);
   for (const epoch of epochs) eng.process(epoch);
   return eng.solution();

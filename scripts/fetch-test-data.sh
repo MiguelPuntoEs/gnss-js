@@ -19,6 +19,7 @@ checksum_for() {
     brdc_v2_glo.nav.gz) echo "9f040749e0e0be916743bf47f24b3fe530c11876b2bd9cd80cc362755b8d3aee" ;;
     brdc_v3_igs.nav.gz) echo "e68833b1280a4413fe5cf6cfb537ef406d8a396f9e8331d339272d8c9ee27ebe" ;;
     brdc_v4_dlr.nav.gz) echo "ff11082ccb87c8c678f9aa258487ec5d8e838e330f1c5e92ce289134ef15f805" ;;
+    _cnes.tgz)          echo "eb7f28223b413dca23d0577b79e8a2cf1b6ca97a483adace963fe9a500ccec1b" ;;
     oemv_rangecmp.gps)  echo "65c4e666c73598fac9a0dc0b915d340a606daa9628dc26cc81f1812f7dfa4d36" ;;
     *)                  echo "" ;;
   esac
@@ -79,6 +80,29 @@ if [[ ! -f "$DIR/ESA_MGEX_gec.clk.gz" ]]; then
     { sed -n '1,/END OF HEADER/p' "$DIR/_full.clk"; grep -E '^AS [GEC]' "$DIR/_full.clk"; } \
       | gzip -9 > "$DIR/ESA_MGEX_gec.clk.gz"
     rm -f "$DIR/_full_clk.gz" "$DIR/_full.clk"
+  fi
+fi
+
+# CNES integer-clock products (2024/001) for the PPP-AR test: GFZ rapid
+# orbit + 30 s clock and the CNES code/phase biases (OSB, 30 s), from the
+# PPP-Wizard post-processed archive. The bias file is trimmed to the GPS and
+# Galileo signals the test uses (the original is 262 MB). Best-effort: the
+# PPP-AR test skips without them.
+if [[ ! -f "$DIR/CNES_ABS_ge.bia.gz" ]]; then
+  if download "http://www.ppp-wizard.net/products/POST_PROCESSED/post_2024001.tgz" "$DIR/_cnes.tgz"; then
+    mkdir -p "$DIR/_cnes"
+    tar xzf "$DIR/_cnes.tgz" -C "$DIR/_cnes"
+    gzip -9c "$DIR/_cnes/GBM0MGXRAP_20240010000_01D_05M_ORB.SP3" > "$DIR/GBM_RAP.sp3.gz"
+    { sed -n '1,/END OF HEADER/p' "$DIR/_cnes/GBM0MGXRAP_20240010000_01D_30S_CLK.CLK"
+      grep -E '^AS [GE]' "$DIR/_cnes/GBM0MGXRAP_20240010000_01D_30S_CLK.CLK"; } \
+      | gzip -9 > "$DIR/GBM_RAP_ge.clk.gz"
+    { sed -n '1,/^+BIAS\/SOLUTION/p' "$DIR/_cnes/GBM0MGXRAP_20240010000_01D_30S_ABS.BIA"
+      grep -E '^ OSB +(G[0-9]{2} +(C1W|C2W|C1C|L1C|L2W)|E[0-9]{2} +(C1X|C5X|L1X|L5X)) ' \
+        "$DIR/_cnes/GBM0MGXRAP_20240010000_01D_30S_ABS.BIA"
+      echo "-BIAS/SOLUTION"; } | gzip -9 > "$DIR/CNES_ABS_ge.bia.gz"
+    rm -rf "$DIR/_cnes" "$DIR/_cnes.tgz"
+  else
+    echo "  ⚠ CNES products unavailable — the PPP-AR test will skip" >&2
   fi
 fi
 

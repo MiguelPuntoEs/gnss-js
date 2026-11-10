@@ -5,7 +5,9 @@ import {
   parseBiasSinex,
   biasMetres,
   findSatBias,
+  SatOsbTable,
 } from '../src/rinex/bias-sinex';
+import { lambdaSearch } from '../src/positioning/lambda';
 import {
   resolvePppAmbiguities,
   fixPppPosition,
@@ -267,5 +269,151 @@ describe('fixPppPosition', () => {
     expect(r.fixed).toBe(false);
     expect(r.position).toEqual(r.floatPosition);
     expect(Math.hypot(...r.shift)).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Integer-clock products: OSB lookup, per-constellation SD, tests    */
+/* ------------------------------------------------------------------ */
+
+describe('SatOsbTable', () => {
+  const T0 = Date.UTC(2024, 0, 1);
+  const line = (prn: string, obs: string, s: number, e: number, ns: number) =>
+    ` OSB       ${prn}           ${obs}       2024:001:${String(s).padStart(5, '0')} 2024:001:${String(e).padStart(5, '0')} ns ${ns.toFixed(4).padStart(23)}`;
+  const text = [
+    '+BIAS/SOLUTION',
+    line('G01', 'L1C', 0, 30, 1),
+    line('G01', 'L1C', 30, 60, 2),
+    line('G01', 'C1W', 0, 86399, 10),
+    line('E11', 'L1X', 0, 86399, -3),
+    '-BIAS/SOLUTION',
+  ].join('\n');
+  const t = new SatOsbTable(parseBiasSinex(text));
+  const m = (ns: number) => ns * 1e-9 * 299792458;
+
+  it('finds the record valid at the epoch (time-varying phase biases)', () => {
+    expect(t.hasPhase).toBe(true);
+    expect(t.get('G01', 'L1C', T0 + 10_000)).toBeCloseTo(m(1), 9);
+    expect(t.get('G01', 'L1C', T0 + 45_000)).toBeCloseTo(m(2), 9);
+    expect(t.get('G01', 'L1C', T0 + 120_000)).toBeNull(); // past the last
+    expect(t.get('G01', 'L1C', T0 - 1)).toBeNull();
+    expect(t.get('G01', 'C1W', T0 + 3600e3)).toBeCloseTo(m(10), 9);
+  });
+
+  it("falls back to the band's combined 'X' signal", () => {
+    // CNES publishes Galileo biases on L1X/C1X only; L1C is the same carrier.
+    expect(t.get('E11', 'L1C', T0 + 5_000)).toBeCloseTo(m(-3), 9);
+    expect(t.get('E11', 'L5Q', T0 + 5_000)).toBeNull();
+  });
+});
+
+describe('LAMBDA bootstrapped success rate', () => {
+  it('is ~1 for a precise float solution and low for a vague one', () => {
+    const a = new Float64Array([3.02, -1.97]);
+    const tight = new Float64Array([0.01 ** 2, 0, 0, 0.01 ** 2]);
+    // σ = 0.6 cycle: (2Φ(1/1.2) − 1)² ≈ 0.35.
+    const loose = new Float64Array([0.6 ** 2, 0, 0, 0.6 ** 2]);
+    expect(lambdaSearch(a, tight, 2)!.successRate).toBeGreaterThan(0.999);
+    expect(lambdaSearch(a, loose, 2)!.successRate).toBeLessThan(0.5);
+  });
+});
+
+describe('PPP-AR across constellations', () => {
+  const FE1 = FREQ.E!['1']!;
+  const FE5 = FREQ.E!['5']!;
+  /** Undifferenced ambiguities carry a receiver bias per constellation
+   *  (wide-lane and narrow-lane): only within-system differences are
+   *  integers. */
+  function multi() {
+    const G = [
+      { prn: 'G05', n1: 12, nWl: -3, el: 70 },
+      { prn: 'G13', n1: -7, nWl: 5, el: 45 },
+      { prn: 'G20', n1: 3, nWl: 1, el: 30 },
+    ];
+    const E = [
+      { prn: 'E11', n1: 4, nWl: 2, el: 60 },
+      { prn: 'E24', n1: -9, nWl: -6, el: 40 },
+      { prn: 'E31', n1: 15, nWl: 7, el: 25 },
+    ];
+    const sats: ArSat[] = [];
+    const add = (
+      list: typeof G,
+      f1: number,
+      f2: number,
+      rcvWl: number,
+      rcvNl: number
+    ) => {
+      const l = nlWavelength(f1, f2);
+      for (const t of list)
+        sats.push({
+          prn: t.prn,
+          aIF: l * (t.n1 + rcvNl) + l * (f2 / (f1 - f2)) * (t.nWl + rcvWl),
+          mwCyc: t.nWl + rcvWl,
+          f1,
+          f2,
+          elevDeg: t.el,
+        });
+    };
+    add(G, F1, F2, 0.37, 0.21);
+    add(E, FE1, FE5, -0.18, 0.44);
+    const n = sats.length;
+    const Q = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) Q[i * n + i] = 0.01 ** 2;
+    return { sats, Q, G, E };
+  }
+
+  it('differences within each constellation, cancelling its receiver biases', () => {
+    const { sats, Q, G, E } = multi();
+    const r = resolvePppAmbiguities(sats, Q, { minPartial: 2 });
+    expect(r.fixed).toBe(true);
+    expect(r.rejectedWl).toEqual([]);
+    expect(new Set(r.refPrns)).toEqual(new Set(['G05', 'E11']));
+    const by = new Map(r.sats.map((s) => [s.prn, s]));
+    for (const [list, ref] of [
+      [G, 'G05'],
+      [E, 'E11'],
+    ] as const) {
+      const r0 = list.find((t) => t.prn === ref)!;
+      for (const t of list) {
+        expect(by.get(t.prn)!.ref).toBe(ref);
+        expect(by.get(t.prn)!.n1 - by.get(ref)!.n1).toBe(t.n1 - r0.n1);
+        expect(by.get(t.prn)!.nWl - by.get(ref)!.nWl).toBe(t.nWl - r0.nWl);
+      }
+    }
+  });
+
+  it('fixPppPosition honours minFixed and the χ² test', () => {
+    const { sats } = multi();
+    const n = sats.length;
+    const P: number[][] = Array.from({ length: 3 + n }, () =>
+      new Array(3 + n).fill(0)
+    );
+    for (let i = 0; i < 3; i++) P[i]![i] = 0.04;
+    for (let a = 0; a < n; a++) P[3 + a]![3 + a] = 0.01 ** 2;
+    const state: PppFixState = {
+      position: [1, 2, 3],
+      covariance: P,
+      ambiguities: sats.map((s, a) => ({
+        prn: s.prn,
+        index: 3 + a,
+        aIF: s.aIF,
+        mwCyc: s.mwCyc,
+        f1: s.f1,
+        f2: s.f2,
+        elevDeg: s.elevDeg!,
+      })),
+    };
+    const fcb = { satWlFcb: new Map(), satNlFcb: new Map() };
+    expect(fixPppPosition(state, fcb, { minPartial: 2 }).nFixed).toBe(4);
+    expect(
+      fixPppPosition(state, fcb, { minPartial: 2, minFixed: 5 }).fixed
+    ).toBe(false);
+    // Shift one float ambiguity by 3σ (0.3 of a narrow-lane cycle still
+    // rounds right): χ²/dof jumps and a strict test refuses the fix.
+    state.ambiguities[1]!.aIF += 0.03;
+    expect(fixPppPosition(state, fcb, { minPartial: 2 }).fixed).toBe(true);
+    expect(
+      fixPppPosition(state, fcb, { minPartial: 2, maxChi2: 1 }).fixed
+    ).toBe(false);
   });
 });
