@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed — RTK dropped the antenna height of an uncalibrated antenna (`positioning`)
+
+With `antenna` configured, a receiver whose antenna type wasn't in the model had its marker→ARP offset (`deltaEnu`, the antenna height) ignored along with the missing PCO/PCV. The solution then put the marker at the antenna, centimetres to metres off on a tripod. The offset now always applies, and only PCO/PCV need a calibration.
+
 ### New — baseline network adjustment (`analysis`)
 
 `adjustBaselineNetwork(fixed, baselines)` adjusts one session's static GNSS baselines by least squares, as Bernese and survey software do. It returns:

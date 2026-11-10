@@ -68,6 +68,34 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(res.track.some((p) => p.status === 'fixed')).toBe(true);
     });
 
+    it("applies an uncalibrated antenna's height (marker → ARP)", () => {
+      const opts = {
+        mode: 'static' as const,
+        elevationMaskDeg: 15,
+        ambiguityResolution: 'instant' as const,
+      };
+      const plain = postProcessRtk(base, rover, ephs, WHU_BASE, opts).final!;
+      const noModel = { rcvOffset: () => null };
+      const onPole = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        ...opts,
+        antenna: {
+          model: noModel,
+          rover: { type: 'UNKNOWN', deltaEnu: [0, 0, 1] },
+        },
+      }).final!;
+      // The marker sits 1 m below the antenna: 1 m lower along the up axis.
+      const [dE, dN, dU] = getEnuDifference(
+        WHU_BASE[0] + onPole.baseline[0],
+        WHU_BASE[1] + onPole.baseline[1],
+        WHU_BASE[2] + onPole.baseline[2],
+        WHU_BASE[0] + plain.baseline[0],
+        WHU_BASE[1] + plain.baseline[1],
+        WHU_BASE[2] + plain.baseline[2]
+      );
+      expect(dU).toBeCloseTo(-1, 2);
+      expect(Math.hypot(dE, dN)).toBeLessThan(0.01);
+    });
+
     it('summarises the session: last fixed baseline and its covariance', () => {
       const res = postProcessRtk(base, rover, ephs, WHU_BASE, {
         mode: 'static',

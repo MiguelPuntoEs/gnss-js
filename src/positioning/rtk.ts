@@ -240,6 +240,14 @@ function resolveEphemeris(
   return (src as ReadonlyMap<string, Ephemeris>).get(prn) ?? null;
 }
 
+/** No PCO/PCV: an antenna missing from the model (its offset still applies). */
+const NO_CALIBRATION: RtkAntennaOffset = {
+  pco: [0, 0, 0],
+  pcvZen1Deg: 0,
+  pcvDzenDeg: 0,
+  pcvNoazi: [],
+};
+
 /** Per-satellite geometry shared by the DGNSS and float solvers. */
 interface SatGeometry {
   prn: string;
@@ -350,7 +358,11 @@ function buildGeometry(
     if (antenna) {
       const antexFreq = antexFreqOfGroup(group);
       if (antenna.base) {
-        const offB = antenna.model.rcvOffset(antenna.base.type, antexFreq);
+        // An uncalibrated antenna still has its marker→ARP offset (a tripod
+        // height) applied — only the PCO/PCV are missing.
+        const offB =
+          antenna.model.rcvOffset(antenna.base.type, antexFreq) ??
+          (antenna.base.deltaEnu ? NO_CALIBRATION : null);
         if (offB) {
           const inv = 1 / rhoB;
           const losB: [number, number, number] = [
@@ -369,7 +381,9 @@ function buildGeometry(
         }
       }
       if (antenna.rover) {
-        offR = antenna.model.rcvOffset(antenna.rover.type, antexFreq);
+        offR =
+          antenna.model.rcvOffset(antenna.rover.type, antexFreq) ??
+          (antenna.rover.deltaEnu ? NO_CALIBRATION : null);
         roverDelta = antenna.rover.deltaEnu ?? ZERO_DELTA;
       }
     }
