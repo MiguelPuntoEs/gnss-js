@@ -488,13 +488,18 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
 const SINEX_TRUTH: Record<string, [number, number, number]> = {
   ANMG: [-1270827.11054, 6242631.27079, 307792.38356],
   ALIC: [-4052052.90341, 4212835.97164, -2545104.37612],
+  // Not in ESA's daily SINEX: IGS20 (IGS20.ssc) propagated to 2024-01-01.
+  // A Septentrio PolaRx5 whose clock drifts up to a millisecond — the
+  // regression test for taking the satellite emission time from the
+  // pseudorange (it was ~0.4 m off East before).
+  ABMF: [2919785.8184, -5383744.9223, 1774604.915],
 };
 
 describe.skipIf(!HAS_NET || !HAS_ATX)(
   'float PPP vs true ITRF coordinate',
   () => {
     it.each(Object.keys(SINEX_TRUTH))(
-      '%s: static GPS+Galileo PPP lands within 2 cm of the ESA SINEX coordinate',
+      '%s: static GPS+Galileo PPP lands within 2 cm of the true ITRF2020 coordinate',
       { timeout: 120_000 },
       async (st) => {
         const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));

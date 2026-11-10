@@ -486,13 +486,49 @@ function sagnacRotate(
  * Satellite ECEF position at reception frame, plus clock (incl. periodic
  * relativistic term). Returns null if outside the SP3 span or clock
  * missing. `travelS` in/out via the returned geometry range.
+ *
+ * The emission time comes from the pseudorange, t_rx − P/c − dt_sat (as
+ * RTKLIB's satposs): P carries the receiver clock offset, so a receiver
+ * whose clock drifts up to a millisecond (many Septentrio and Javad
+ * receivers by default, free-running phone clocks) still gets satellites
+ * at the right instant. Timing the emission from the geometric range alone
+ * misplaced them by the receiver clock offset — at 0.36 ms that was
+ * ~11 cm of East error through Earth rotation (IGS station GRAZ).
  */
 function satStateAtEmission(
   source: PppEphemerisSource,
   prn: string,
   recvTimeMs: number,
-  rcv: [number, number, number]
+  rcv: [number, number, number],
+  pseudorangeM?: number
 ): { state: SatState; travelS: number } | null {
+  if (pseudorangeM !== undefined && pseudorangeM > 1e6) {
+    let tEmit = recvTimeMs - (pseudorangeM / C_LIGHT) * 1000;
+    const s0 = source.satState(prn, tEmit);
+    if (!s0) return null;
+    tEmit -= s0.clkS * 1000;
+    const s = source.satState(prn, tEmit);
+    if (!s) return null;
+    // Earth rotation during the (geometric) travel time.
+    let travelS = 0.075;
+    let pos: [number, number, number] = [s.x, s.y, s.z];
+    for (let iter = 0; iter < 3; iter++) {
+      pos = sagnacRotate(s.x, s.y, s.z, travelS);
+      travelS =
+        Math.hypot(pos[0] - rcv[0], pos[1] - rcv[1], pos[2] - rcv[2]) / C_LIGHT;
+    }
+    const velDotPos = s.x * s.vx + s.y * s.vy + s.z * s.vz;
+    const relS = (-2 * velDotPos) / (C_LIGHT * C_LIGHT);
+    return {
+      state: {
+        x: pos[0],
+        y: pos[1],
+        z: pos[2],
+        clkM: C_LIGHT * (s.clkS + relS),
+      },
+      travelS,
+    };
+  }
   let travelS = 0.075; // ~ 20000 km / c initial guess
   let sx = 0;
   let sy = 0;
@@ -806,7 +842,7 @@ export class PppEngine {
       const o = applySatBiases(source, raw, epoch.timeMs);
       if (!o) continue;
       const slip = detectSlip(o, ei);
-      const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv);
+      const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv, o.c1);
       if (!sat) continue;
       const [elRad, azRad] = getAer(
         sat.state.x,

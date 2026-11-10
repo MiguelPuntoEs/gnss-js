@@ -178,14 +178,15 @@ function load() {
 }
 
 /**
- * ABMF's RINEX header coordinate is not at the observation epoch: GPS-,
- * Galileo- and BeiDou-only fully corrected solutions all agree (±4 cm)
- * that the station sits ~0.54 m East and ~0.24 m North of it (Caribbean
- * plate motion since the header was written). Errors below are measured
- * from the header shifted by that offset. Absolute centimetre accuracy is
- * validated against true ITRF2020 coordinates in ppp-fcb.test.ts.
+ * ABMF's RINEX header coordinate is not at the observation epoch: against
+ * its IGS20 coordinate (propagated to 2024-01-01, which the fully corrected
+ * solution matches to < 1 cm) the station sits 0.16 m East and 0.24 m North
+ * of the header (Caribbean plate motion since the header was written).
+ * Errors below are measured from the header shifted by that offset.
+ * (An earlier 0.54 m East here was a PPP bug: satellite emission time
+ * ignored the receiver clock offset, which this PolaRx5 lets drift.)
  */
-const ABMF_HEADER_OFFSET_EN = [0.54, 0.24];
+const ABMF_HEADER_OFFSET_EN = [0.16, 0.24];
 const vsRef = (enu: readonly number[]) => [
   enu[0]! - ABMF_HEADER_OFFSET_EN[0]!,
   enu[1]! - ABMF_HEADER_OFFSET_EN[1]!,

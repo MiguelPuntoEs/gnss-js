@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.13.1
+
+### Fixed — PPP with receivers whose clock drifts (`positioning`)
+
+The PPP engine timed each satellite's emission from the geometric range alone, ignoring the receiver clock offset. Receivers that let their clock drift up to a millisecond before stepping it (Septentrio by default, some Javad models, free-running phone clocks) therefore had satellites placed up to a millisecond off. Through Earth rotation that is up to ~10 cm of East error, varying from day to day with the clock state. The emission time now comes from the pseudorange (reception − P/c − satellite clock, as RTKLIB does), which carries the receiver clock with it.
+
+- IGS station GRAZ (PolaRx5) went from 11 cm off its IGS20 coordinate to 2–9 mm, with GPS, Galileo and BeiDou now agreeing.
+- ABMF (PolaRx5) lands within 3 / 6 / 7 mm (E/N/U) of IGS20. Its old test anchor of "0.54 m East" was this bug, not plate motion.
+- Steered-clock receivers are unaffected.
+
 ## 2.13.0
 
 ### New — Android raw GNSS logs (`android`)
