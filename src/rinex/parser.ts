@@ -3,6 +3,7 @@
  * Supports RINEX 2.x, 3.x/4.x and Compact RINEX (Hatanaka) 1.0/3.0.
  */
 
+import { isUnixCompress, uncompressLzw } from './unlzw';
 import { crxRepair, parseCrxDataLine, crxDecompress } from './crx';
 import type { DiffState } from './crx';
 import { SYSTEM_NAMES } from '../constants/gnss';
@@ -929,18 +930,24 @@ export async function parseRinexStream(
   }
 
   // Detect compression by magic bytes
-  const magic = new Uint8Array(await file.slice(0, 2).arrayBuffer());
-  const isGz = magic[0] === 0x1f && magic[1] === 0x8b;
-  if (magic[0] === 0x1f && magic[1] === 0x9d) {
-    throw new Error(
-      'Unix compress (.Z) files are not supported. Please decompress first (e.g. uncompress or gzip -d).'
-    );
+  let src: Blob = file;
+  let magic = new Uint8Array(await src.slice(0, 3).arrayBuffer());
+  // Unix compress (.Z, older archives): not streamable; decode whole (a
+  // daily Hatanaka file is a few MB).
+  if (isUnixCompress(magic)) {
+    src = new Blob([
+      uncompressLzw(
+        new Uint8Array(await file.arrayBuffer())
+      ) as Uint8Array<ArrayBuffer>,
+    ]);
+    magic = new Uint8Array(await src.slice(0, 3).arrayBuffer());
   }
+  const isGz = magic[0] === 0x1f && magic[1] === 0x8b;
 
   if (isGz) {
     // Streaming gzip decompression via DecompressionStream
     let bytesRead = 0;
-    const raw = file.stream();
+    const raw = src.stream();
     const decompressed = raw.pipeThrough(new DecompressionStream('gzip'));
     const reader = decompressed.getReader();
 
@@ -955,24 +962,24 @@ export async function parseRinexStream(
       processChunkText(decoder.decode(value, { stream: true }), false);
       // Progress based on compressed bytes is not exact, estimate from decompressed
       onProgress?.(
-        Math.min(99, Math.round((bytesRead / (file.size * 4)) * 100))
+        Math.min(99, Math.round((bytesRead / (src.size * 4)) * 100))
       );
       await yield_();
     }
     processChunkText(decoder.decode(), true);
   } else {
     // Plain file: slice in chunks for memory efficiency
-    for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
+    for (let offset = 0; offset < src.size; offset += CHUNK_SIZE) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      const end = Math.min(offset + CHUNK_SIZE, file.size);
-      const slice = file.slice(offset, end);
+      const end = Math.min(offset + CHUNK_SIZE, src.size);
+      const slice = src.slice(offset, end);
       const arrayBuf = await slice.arrayBuffer();
       processChunkText(
-        decoder.decode(arrayBuf, { stream: end < file.size }),
+        decoder.decode(arrayBuf, { stream: end < src.size }),
         false
       );
-      onProgress?.(Math.min(99, Math.round((end / file.size) * 100)));
+      onProgress?.(Math.min(99, Math.round((end / src.size) * 100)));
       await yield_();
     }
 
