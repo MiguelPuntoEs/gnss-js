@@ -118,3 +118,39 @@ describe('fitCoordinateSeries', () => {
     expect(fitCoordinateSeries(series({}).slice(0, 4))).toBeNull();
   });
 });
+
+describe('fitCoordinateSeries outlier test on short series', () => {
+  // Seeded Gaussian noise (Park–Miller + Box–Muller).
+  let seed = 7;
+  const uni = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const gauss = () =>
+    Math.sqrt(-2 * Math.log(uni() + 1e-12)) * Math.cos(2 * Math.PI * uni());
+  const monthly = (n: number, blunderUp = 0): CoordinateSample[] =>
+    Array.from({ length: n }, (_, i) => {
+      const tMs = T0 + i * 30 * DAY;
+      const yr = (tMs - T0) / YEAR;
+      return {
+        tMs,
+        ecef: enuToEcef(
+          0.02 * yr + 0.0015 * gauss(),
+          0.015 * yr + 0.0015 * gauss(),
+          0.004 * gauss() + (i === n >> 1 ? blunderUp : 0)
+        ),
+        sigmaEnu: [0.002, 0.002, 0.005],
+      };
+    });
+
+  it('keeps every day of clean 12-day series (it used to drop one in 7)', () => {
+    let lost = 0;
+    for (let rep = 0; rep < 100; rep++)
+      if (fitCoordinateSeries(monthly(12))!.outliers) lost++;
+    expect(lost).toBeLessThanOrEqual(5);
+  });
+
+  it('still catches a 3 cm vertical blunder in 12 days', () => {
+    let caught = 0;
+    for (let rep = 0; rep < 50; rep++)
+      if (fitCoordinateSeries(monthly(12, 0.03))!.points[6]!.outlier) caught++;
+    expect(caught).toBeGreaterThanOrEqual(40);
+  });
+});
