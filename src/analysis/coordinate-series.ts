@@ -15,12 +15,13 @@
  * search that adds a step where it lowers the Bayesian information
  * criterion most.
  *
- * The velocity uncertainty is the white-noise formal error scaled by the
- * fit's variance factor. Real GNSS series also carry flicker noise, which
- * makes realistic velocity errors larger, typically 2–5× for daily series;
- * callers should say so.
+ * Two velocity uncertainties are given: the white-noise formal error
+ * scaled by the variance factor, and a realistic one from a white + flicker
+ * noise model fitted by maximum likelihood (./noise-model) — GNSS series
+ * carry flicker noise, which the white-noise error ignores.
  */
 import { ecefToGeodetic } from '../coordinates/ecef';
+import { fitWhiteFlicker } from './noise-model';
 
 /** One position solution (e.g. a daily PPP result). */
 export interface CoordinateSample {
@@ -47,6 +48,8 @@ export interface SeriesFitOptions {
   refEpochMs?: number;
   /** Samples a detected jump needs on each side. Default 5. */
   minSamplesPerSide?: number;
+  /** Fit white + flicker noise for realistic velocity sigmas. Default true. */
+  noiseModel?: boolean;
 }
 
 export interface SeriesComponent {
@@ -56,6 +59,12 @@ export interface SeriesComponent {
   velocity: number;
   /** White-noise formal 1σ of the velocity, scaled by the variance factor. */
   velocitySigma: number;
+  /** Velocity 1σ under a white + flicker noise model fitted by maximum
+   *  likelihood — the realistic uncertainty; null if the series is too
+   *  short or `noiseModel` is off. */
+  velocitySigmaRealistic: number | null;
+  /** Share of the residual variance the noise fit attributes to flicker. */
+  flickerShare: number | null;
   /** Step size at each jump (m), in the order of `SeriesFit.jumps`. */
   steps: number[];
   /** Annual / semi-annual amplitudes (m), when fitted. */
@@ -346,10 +355,20 @@ export function fitCoordinateSeries(
     const vf = nUsed > p ? s.wrss / (nUsed - p) : 1;
     const amp = (i: number) =>
       seasonal ? Math.hypot(s.x[i]!, s.x[i + 1]!) : null;
+    const noise =
+      (opts.noiseModel ?? true)
+        ? fitWhiteFlicker(
+            t.flatMap((ti, i) => (used[i] ? [designRow(ti, design)] : [])),
+            series[c]!.filter((_, i) => used[i]),
+            t.flatMap((ti, i) => (used[i] ? [ti / MS_PER_YEAR] : []))
+          )
+        : null;
     return {
       offset: s.x[0]!,
       velocity: s.x[1]!,
       velocitySigma: Math.sqrt(s.Ninv[1]![1]! * vf),
+      velocitySigmaRealistic: noise?.velocitySigma ?? null,
+      flickerShare: noise?.flickerShare ?? null,
       steps: s.x.slice(2, 2 + nJ),
       annualAmplitude: amp(2 + nJ),
       semiannualAmplitude: amp(4 + nJ),
