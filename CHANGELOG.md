@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed — RTK across receiver makes: Galileo dropped, BeiDou biased (`positioning`)
+
+- **Galileo.** It was only differenced when both receivers logged the same E1 attribute. Leica logs E1C and Javad E1X, so mixed pairs silently lost Galileo. Both are accepted now, and a base/rover pair on the same band is differenced: RINEX 3.01+ aligns carrier phases on one frequency.
+- **BeiDou.** BDS-2 and BDS-3 now have separate reference satellites (signal group `C2I3`). A receiver-make dependent bias between the generations doesn't cancel across them: at Wettzell (Leica against Javad, 1.6 m) the float baseline was 28 mm off in East with them together, and within 2 mm with either generation alone. Fixed BeiDou solutions between these makes still show about 1 cm in Up, so static millimetre work should use GPS + Galileo.
+
+Validation, Wettzell 2024-015 (WTZR→WTZZ, 1.6 m, fixed, against EPN weekly coordinates): GPS −0.9/1.2/−0.9 mm and GPS + Galileo −0.7/0.8/−1.4 mm (E/N/U).
+
 ### Fixed — RTK dropped the antenna height of an uncalibrated antenna (`positioning`)
 
 With `antenna` configured, a receiver whose antenna type wasn't in the model had its marker→ARP offset (`deltaEnu`, the antenna height) ignored along with the missing PCO/PCV. The solution then put the marker at the antenna, centimetres to metres off on a tripod. The offset now always applies, and only PCO/PCV need a calibration.
