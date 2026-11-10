@@ -6,3 +6,5 @@ export * from './dcb';
 export * from './quality-analysis';
 export * from './coordinate-series';
 export * from './network-alignment';
+export * from './baseline-network';
+export * from './quantiles';

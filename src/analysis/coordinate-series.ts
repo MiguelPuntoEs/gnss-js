@@ -20,6 +20,7 @@
  * noise model fitted by maximum likelihood (./noise-model) — GNSS series
  * carry flicker noise, which the white-noise error ignores.
  */
+import { normalQuantile } from './quantiles';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { fitWhiteFlicker } from './noise-model';
 
@@ -154,6 +155,35 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }
 
+/**
+ * Known steps the data can resolve: within the series, and one per gap
+ * between consecutive samples — several steps with no sample between them
+ * (an earthquake sequence between two monthly days) are indistinguishable
+ * and would make the fit singular. The first of each gap is kept.
+ */
+function identifiableJumps(
+  jumps: readonly number[],
+  t: readonly number[]
+): number[] {
+  const out: number[] = [];
+  let lastGap = -1;
+  for (const j of [...jumps].sort((a, b) => a - b)) {
+    if (!(j > t[0]! && j <= t[t.length - 1]!)) continue;
+    // Index of the first sample at or after the step.
+    let lo = 0;
+    let hi = t.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (t[mid]! >= j) hi = mid;
+      else lo = mid + 1;
+    }
+    if (lo === lastGap) continue;
+    lastGap = lo;
+    out.push(j);
+  }
+  return out;
+}
+
 /** Robust standard deviation: 1.4826 × median absolute deviation. */
 function robustSigma(xs: number[]): number {
   if (xs.length < 2) return 0;
@@ -268,9 +298,7 @@ export function fitCoordinateSeries(
       : opts.seasonal;
   const design: Design = {
     refEpochMs: opts.refEpochMs ?? (t[0]! + t[t.length - 1]!) / 2,
-    jumps: [...(opts.jumps ?? [])]
-      .filter((j) => j > t[0]! && j <= t[t.length - 1]!)
-      .sort((a, b) => a - b),
+    jumps: identifiableJumps(opts.jumps ?? [], t),
     seasonal,
   };
   const detected = new Set<number>();
@@ -283,18 +311,35 @@ export function fitCoordinateSeries(
     );
 
   // Robust loop: reject samples whose residual in any component exceeds k
-  // robust sigmas, refit, until stable.
+  // robust sigmas, refit, until stable. The scale is the MAD of every
+  // residual (already robust — taking it over the survivors only would
+  // shrink it with each rejection and cascade), corrected for the fitted
+  // parameters and floored at half the typical formal sigma; k grows with
+  // the 3n tests so a clean series keeps all its days (~1% false-alarm
+  // chance per series); with under 6 degrees of freedom nothing is
+  // rejected. Before this, clean 12-day series lost a day 14% of the time.
+  const nParams = 2 + design.jumps.length + (seasonal ? 4 : 0);
+  const kEff = Math.max(k, normalQuantile(1 - 0.01 / (2 * 3 * t.length)));
+  const sigmaFloor = [0, 1, 2].map(
+    (c) => 0.5 * median(pts.map((p) => p.sigmaEnu?.[c] ?? 0))
+  );
   const robustPass = (): ComponentSolution[] | null => {
     for (let iter = 0; iter < 10; iter++) {
       const sol = fitAll();
       if (sol.some((s) => !s)) return null;
-      const scales = sol.map((s) =>
-        Math.max(robustSigma(s!.residuals.filter((_, i) => used[i])), 1e-4)
+      const dof = t.length - nParams;
+      if (dof < 6) return sol as ComponentSolution[];
+      const scales = sol.map((s, c) =>
+        Math.max(
+          robustSigma(s!.residuals) * Math.sqrt(t.length / dof),
+          sigmaFloor[c]!,
+          1e-4
+        )
       );
       let changed = false;
       for (let i = 0; i < t.length; i++) {
         const bad = sol.some(
-          (s, c) => Math.abs(s!.residuals[i]!) > k * scales[c]!
+          (s, c) => Math.abs(s!.residuals[i]!) > kEff * scales[c]!
         );
         if (bad === used[i]) {
           used[i] = !bad;

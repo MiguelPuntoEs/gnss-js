@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — RTK across receiver makes: Galileo dropped, BeiDou biased (`positioning`)
+
+- **Galileo.** It was only differenced when both receivers logged the same E1 attribute. Leica logs E1C and Javad E1X, so mixed pairs silently lost Galileo. Both are accepted now, and a base/rover pair on the same band is differenced: RINEX 3.01+ aligns carrier phases on one frequency.
+- **BeiDou.** BDS-2 and BDS-3 now have separate reference satellites (signal group `C2I3`). A receiver-make dependent bias between the generations doesn't cancel across them: at Wettzell (Leica against Javad, 1.6 m) the float baseline was 28 mm off in East with them together, and within 2 mm with either generation alone. Fixed BeiDou solutions between these makes still show about 1 cm in Up, so static millimetre work should use GPS + Galileo.
+
+Validation, Wettzell 2024-015 (WTZR→WTZZ, 1.6 m, fixed, against EPN weekly coordinates): GPS −0.9/1.2/−0.9 mm and GPS + Galileo −0.7/0.8/−1.4 mm (E/N/U).
+
+### Fixed — RTK dropped the antenna height of an uncalibrated antenna (`positioning`)
+
+With `antenna` configured, a receiver whose antenna type wasn't in the model had its marker→ARP offset (`deltaEnu`, the antenna height) ignored along with the missing PCO/PCV. The solution then put the marker at the antenna, centimetres to metres off on a tripod. The offset now always applies, and only PCO/PCV need a calibration.
+
+### New — baseline network adjustment (`analysis`)
+
+`adjustBaselineNetwork(fixed, baselines)` adjusts one session's static GNSS baselines by least squares, as Bernese and survey software do. It returns:
+
+- the free points' coordinates and covariances;
+- the a-posteriori variance factor σ̂₀² with a χ² test;
+- a w-test on every baseline component, with data snooping that drops the worst failing baseline as long as every point stays connected;
+- the misclosure of each independent loop, in mm and ppm (also available alone as `loopMisclosures`).
+
+The w-test scales normalised residuals by their robust spread, so a blunder can't hide behind the σ̂₀² it inflates, and the 5× optimistic formal covariances typical of GNSS don't trigger mass rejection. Coordinate covariances are rescaled by σ̂₀² when it exceeds 1. `chi2Quantile` and `normalQuantile` are exported.
+
+### New — session baseline and fixed covariance from RTK post-processing (`positioning`)
+
+`postProcessRtk` now returns `final`, the session's static baseline: the last ambiguity-fixed epoch (else the last float one) with its covariance. RTK solutions carry `covariance`; when fixed, it's the covariance given the integers, P_xx − P_xb·Q_b⁻¹·P_bx.
+
+### New — Unix compress (.Z) support (`rinex`)
+
+`parseRinexStream` now reads `.Z` files directly; it used to reject them with "Please decompress first". GNSS archives stored daily files that way until about 2020 (`wtzr0010.20d.Z`: Hatanaka, then compress). `uncompressLzw` and `isUnixCompress` are exported. The decoder is a port of the BSD/ncompress reader and is byte-identical to the system `uncompress` on a 9.9 MB Hatanaka file, 3 MB of random data (16-bit codes, table clears) and a real 2016 IGS archive file.
+
+### Fixed — static PPP-AR reported float when the last attempt failed (`positioning`)
+
+`solvePpp(..., { ar })` took the ambiguity-fixed position from the final fixing attempt only. A static Brest session fixed at 80% of its epochs over 2 hours, and 38% over 24 hours, still came back float because its last attempt didn't pass. Static sessions now fall back to the most recent accepted fix; kinematic sessions keep the end-only rule. The new `ar.positionEpochMs` says when that fix was. Against Brest's IGS20 coordinates (2024-015, CNES products), the 2-hour Up error went from 33.0 mm (float) to 21.9 mm and the 24-hour one from 1.3 to −0.1 mm. East and North are unchanged or better.
+
+### New — `parseRinexHeaderText` (`rinex`)
+
+Reads a RINEX observation header (2/3/4, including Hatanaka) from its leading text alone: marker, antenna and radome, antenna offsets, receiver and first epoch. This lets you review an occupation without parsing the observations.
+
+### Fixed — clustered known jumps made the fit fail (`analysis`)
+
+Known jumps with no sample between them, such as an earthquake sequence falling between two monthly days, are indistinguishable. Before, they made the fit singular and `fitCoordinateSeries` returned null. They now merge into one step, keeping the first.
+
+### Fixed — outlier test rejected good days in short series (`analysis`)
+
+`fitCoordinateSeries` dropped good days far too often on short series. It recomputed the robust scale from the surviving days after each rejection, so the scale shrank and the rejections cascaded. On clean simulated 12-day series it dropped a day in 14% of them; 2% of all days were flagged where a 4σ test should flag about 0.02%. The scale now comes from every residual, corrected for the fitted parameters and floored at half the median formal σ. The threshold grows with the 3n component tests (at least `outlierK`), and series with under 6 degrees of freedom keep every day. Clean 12-day series now lose a day 1% of the time, and a 3 cm vertical blunder is still caught 90% of the time (95% before).
+
 ## 2.15.0
 
 ### New — SINEX writer and reader (`rinex`)

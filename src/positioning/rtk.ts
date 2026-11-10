@@ -49,8 +49,9 @@
  * delay cancel too; the residual troposphere is modelled by the same
  * simple elevation-mapped zenith model `solveSpp` uses, applied
  * differentially. DDs are formed per *signal group* (constellation
- * letter + RINEX code, e.g. `G1C`, `C2I`) so that only like signals
- * are differenced.
+ * letter + the rover's RINEX code, e.g. `G1C`, `C2I`; BDS-3 apart as
+ * `C2I3`) so that only like signals are differenced; the base may log
+ * another attribute on the same band (E1C against E1X).
  *
  * GLONASS (FDMA): DD phase is formed in metres with per-satellite
  * wavelengths (λ_s·SDφ_s − λ_r·SDφ_r). The common receiver clock
@@ -126,7 +127,9 @@ export interface RawObservation {
 /** Preferred L1-band code per system, in preference order. */
 const L1_CODES: Record<string, string[]> = {
   G: ['1C'],
-  E: ['1C'],
+  // E1 pilot (1C) or data+pilot (1X): receivers log either, and RINEX
+  // 3.01+ aligns their carrier phases, so they difference together.
+  E: ['1C', '1X'],
   R: ['1C'],
   J: ['1C'],
   C: ['2I', '1P'], // B1I first (classic B1), then B1C
@@ -240,6 +243,14 @@ function resolveEphemeris(
   return (src as ReadonlyMap<string, Ephemeris>).get(prn) ?? null;
 }
 
+/** No PCO/PCV: an antenna missing from the model (its offset still applies). */
+const NO_CALIBRATION: RtkAntennaOffset = {
+  pco: [0, 0, 0],
+  pcvZen1Deg: 0,
+  pcvDzenDeg: 0,
+  pcvNoazi: [],
+};
+
 /** Per-satellite geometry shared by the DGNSS and float solvers. */
 interface SatGeometry {
   prn: string;
@@ -307,7 +318,9 @@ function buildGeometry(
     const sys = prn[0]!;
     if (!'GERCJ'.includes(sys)) continue;
     const mB = base.get(prn);
-    if (!mB || mB.code !== mR.code) continue;
+    // Same band at both ends (E1C at one receiver, E1X at the other is
+    // fine: phases on one frequency are aligned in RINEX 3.01+).
+    if (!mB || mB.code[0] !== mR.code[0]) continue;
     if (
       mR.pr === null ||
       mB.pr === null ||
@@ -339,7 +352,12 @@ function buildGeometry(
     const elB = ecefToAzEl(basePos[0], basePos[1], basePos[2], bx, by, bz).el;
     if (elB < maskRad) continue;
 
-    const group = sys + mR.code;
+    // BDS-2 and BDS-3 are differenced separately (their own reference
+    // satellites): a receiver-dependent bias between the two generations
+    // differs between receiver makes and doesn't cancel across them —
+    // Leica vs Javad at Wettzell: 28 mm East together, ≤ 2 mm apart.
+    const group =
+      sys + mR.code + (sys === 'C' && Number(prn.slice(1)) >= 19 ? '3' : '');
 
     // Receiver antenna phase-centre corrections (per frequency; the satellite
     // antenna cancels in the double difference). The base correction is fixed
@@ -350,7 +368,11 @@ function buildGeometry(
     if (antenna) {
       const antexFreq = antexFreqOfGroup(group);
       if (antenna.base) {
-        const offB = antenna.model.rcvOffset(antenna.base.type, antexFreq);
+        // An uncalibrated antenna still has its marker→ARP offset (a tripod
+        // height) applied — only the PCO/PCV are missing.
+        const offB =
+          antenna.model.rcvOffset(antenna.base.type, antexFreq) ??
+          (antenna.base.deltaEnu ? NO_CALIBRATION : null);
         if (offB) {
           const inv = 1 / rhoB;
           const losB: [number, number, number] = [
@@ -369,7 +391,9 @@ function buildGeometry(
         }
       }
       if (antenna.rover) {
-        offR = antenna.model.rcvOffset(antenna.rover.type, antexFreq);
+        offR =
+          antenna.model.rcvOffset(antenna.rover.type, antexFreq) ??
+          (antenna.rover.deltaEnu ? NO_CALIBRATION : null);
         roverDelta = antenna.rover.deltaEnu ?? ZERO_DELTA;
       }
     }
@@ -886,6 +910,9 @@ export interface RtkFloatSolution {
   fixedBaseline?: [number, number, number];
   /** Integer DD ambiguity (cycles) per fixed PRN (when fixed). */
   fixedAmbiguities?: Record<string, number>;
+  /** Position covariance (ECEF, m²): given the integers when fixed, the
+   *  float filter's otherwise. */
+  covariance: number[][];
   /** Formal position sigmas (filter covariance), ECEF metres. */
   sigmas: [number, number, number];
   /** Float DD ambiguity (cycles) per non-reference PRN. */
@@ -1036,6 +1063,8 @@ export class RtkFloatEngine {
     ratio: number;
     position: [number, number, number];
     intAmb: number[];
+    /** Position covariance given the integers: P_xx − P_xb·Q_b⁻¹·P_bx. */
+    covariance: number[][];
   } | null {
     const k = idxs.length;
     const b = new Float64Array(k);
@@ -1077,7 +1106,24 @@ export class RtkFloatEngine {
       }
       position[r] -= dx;
     }
-    return { ratio: res.ratio, position, intAmb: [...best] };
+    // P_xb·Q_b⁻¹ (3×k), then the conditional covariance.
+    const PxbQ = [0, 1, 2].map((r) =>
+      Array.from({ length: k }, (_, j) => {
+        let v = 0;
+        for (let i = 0; i < k; i++)
+          v += this.P[r]![3 + idxs[i]!]! * QbInv[i]![j]!;
+        return v;
+      })
+    );
+    const covariance = [0, 1, 2].map((r) =>
+      [0, 1, 2].map((c) => {
+        let v = 0;
+        for (let j = 0; j < k; j++)
+          v += PxbQ[r]![j]! * this.P[3 + idxs[j]!]![c]!;
+        return (this.P[r]![c]! + this.P[c]![r]!) / 2 - v;
+      })
+    );
+    return { ratio: res.ratio, position, intAmb: [...best], covariance };
   }
 
   /**
@@ -1398,6 +1444,7 @@ export class RtkFloatEngine {
     let ratio: number | undefined;
     let nFixed: number | undefined;
     let fixedPos: [number, number, number] | null = null;
+    let fixedCov: number[][] | undefined;
     let fixedAmbiguities: Record<string, number> | undefined;
     if (o.ambiguityResolution === 'instant') {
       // Candidates: ambiguities measured (phase row) this epoch, above
@@ -1431,6 +1478,7 @@ export class RtkFloatEngine {
           status = 'fixed';
           nFixed = cands.length;
           fixedPos = fix.position;
+          fixedCov = fix.covariance;
           fixedAmbiguities = {};
           cands.forEach((c, i) => {
             fixedAmbiguities![this.amb[c.idx]!.prn] = fix.intAmb[i]!;
@@ -1476,6 +1524,8 @@ export class RtkFloatEngine {
           ]
         : undefined,
       fixedAmbiguities,
+      covariance:
+        fixedCov ?? [0, 1, 2].map((r) => [0, 1, 2].map((c) => this.P[r]![c]!)),
       sigmas: [
         Math.sqrt(Math.max(this.P[0]![0]!, 0)),
         Math.sqrt(Math.max(this.P[1]![1]!, 0)),

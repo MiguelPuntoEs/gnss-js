@@ -27,6 +27,7 @@
 !/test-fixtures/dlf500_osnma_e1b.sbf
 !/test-fixtures/dlf500_osnma_pkr_e1b.sbf
 !/test-fixtures/anmg_crx_slice.crx
+!/test-fixtures/anmg_crx_slice.crx.Z
 !/test-fixtures/antex_ppp_slice.atx
 !/test-fixtures/dlf500_sbf_setup_slice.sbf
 !/test-fixtures/f9p_rawnav_slice.ubx

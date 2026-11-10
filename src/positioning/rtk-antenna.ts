@@ -97,8 +97,8 @@ export interface RtkReceiverAntenna {
 }
 
 /** RTK antenna configuration: a per-frequency model + the base/rover antennas.
- *  Corrections are applied only for a receiver whose antenna is supplied and
- *  found in the model; the satellite antenna is never needed (cancels in the
+ *  PCO/PCV are applied for a receiver whose antenna is found in the model;
+ *  its marker→ARP `deltaEnu` is applied either way; the satellite antenna is never needed (cancels in the
  *  double difference). */
 export interface RtkAntennaConfig {
   model: RtkAntennaModel;
