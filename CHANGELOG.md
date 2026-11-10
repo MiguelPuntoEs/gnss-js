@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### New — baseline network adjustment (`analysis`)
+
+`adjustBaselineNetwork(fixed, baselines)` adjusts one session's static GNSS baselines by least squares, as Bernese and survey software do. It returns:
+
+- the free points' coordinates and covariances;
+- the a-posteriori variance factor σ̂₀² with a χ² test;
+- a w-test on every baseline component, with data snooping that drops the worst failing baseline as long as every point stays connected;
+- the misclosure of each independent loop, in mm and ppm (also available alone as `loopMisclosures`).
+
+The w-test scales normalised residuals by their robust spread, so a blunder can't hide behind the σ̂₀² it inflates, and the 5× optimistic formal covariances typical of GNSS don't trigger mass rejection. Coordinate covariances are rescaled by σ̂₀² when it exceeds 1. `chi2Quantile` and `normalQuantile` are exported.
+
+### New — session baseline and fixed covariance from RTK post-processing (`positioning`)
+
+`postProcessRtk` now returns `final`, the session's static baseline: the last ambiguity-fixed epoch (else the last float one) with its covariance. RTK solutions carry `covariance`; when fixed, it's the covariance given the integers, P_xx − P_xb·Q_b⁻¹·P_bx.
+
 ### New — Unix compress (.Z) support (`rinex`)
 
 `parseRinexStream` now reads `.Z` files directly; it used to reject them with "Please decompress first". GNSS archives stored daily files that way until about 2020 (`wtzr0010.20d.Z`: Hatanaka, then compress). `uncompressLzw` and `isUnixCompress` are exported. The decoder is a port of the BSD/ncompress reader and is byte-identical to the system `uncompress` on a 9.9 MB Hatanaka file, 3 MB of random data (16-bit codes, table clears) and a real 2016 IGS archive file.

@@ -78,6 +78,20 @@ export interface RtkPostProcessResult {
   unmatched: number;
   /** Fraction of solved epochs with an integer-fixed solution (0–1). */
   fixRate: number;
+  /**
+   * The session's baseline for static processing: the last ambiguity-fixed
+   * epoch (the static filter has used every epoch up to it), else the last
+   * float one; null with no carrier-phase solution (or `codeOnly`).
+   */
+  final: {
+    timeMs: number;
+    status: 'fixed' | 'float';
+    /** Rover − base, ECEF (m). */
+    baseline: [number, number, number];
+    /** Its covariance, ECEF (m²): given the integers when fixed. */
+    covariance: number[][];
+    ratio?: number;
+  } | null;
 }
 
 const epochsOf = (o: RtkObsInput): readonly RtkObsEpoch[] =>
@@ -159,6 +173,8 @@ export function postProcessRtk(
   let solved = 0;
   let unmatched = 0;
   let fixed = 0;
+  let lastFixed: RtkPostProcessResult['final'] = null;
+  let lastFloat: RtkPostProcessResult['final'] = null;
 
   const sorted = [...roverEpochs].sort((a, b) => a.timeMs - b.timeMs);
   for (const rEp of sorted) {
@@ -207,6 +223,21 @@ export function postProcessRtk(
             nFixed: sol.nFixed,
           }
         : null;
+      if (sol && (sol.status === 'fixed' || sol.status === 'float')) {
+        const f = {
+          timeMs: rEp.timeMs,
+          status: sol.status,
+          baseline: [
+            sol.position[0] - baseEcef[0],
+            sol.position[1] - baseEcef[1],
+            sol.position[2] - baseEcef[2],
+          ] as [number, number, number],
+          covariance: sol.covariance,
+          ...(sol.ratio != null ? { ratio: sol.ratio } : {}),
+        };
+        if (sol.status === 'fixed') lastFixed = f;
+        else lastFloat = f;
+      }
     }
     if (!point) continue;
     solved++;
@@ -219,5 +250,11 @@ export function postProcessRtk(
     track.push({ ...point, lat, lon, height, enu: enuOf(point.position) });
   }
 
-  return { track, solved, unmatched, fixRate: solved ? fixed / solved : 0 };
+  return {
+    track,
+    solved,
+    unmatched,
+    fixRate: solved ? fixed / solved : 0,
+    final: lastFixed ?? lastFloat,
+  };
 }

@@ -886,6 +886,9 @@ export interface RtkFloatSolution {
   fixedBaseline?: [number, number, number];
   /** Integer DD ambiguity (cycles) per fixed PRN (when fixed). */
   fixedAmbiguities?: Record<string, number>;
+  /** Position covariance (ECEF, m²): given the integers when fixed, the
+   *  float filter's otherwise. */
+  covariance: number[][];
   /** Formal position sigmas (filter covariance), ECEF metres. */
   sigmas: [number, number, number];
   /** Float DD ambiguity (cycles) per non-reference PRN. */
@@ -1036,6 +1039,8 @@ export class RtkFloatEngine {
     ratio: number;
     position: [number, number, number];
     intAmb: number[];
+    /** Position covariance given the integers: P_xx − P_xb·Q_b⁻¹·P_bx. */
+    covariance: number[][];
   } | null {
     const k = idxs.length;
     const b = new Float64Array(k);
@@ -1077,7 +1082,24 @@ export class RtkFloatEngine {
       }
       position[r] -= dx;
     }
-    return { ratio: res.ratio, position, intAmb: [...best] };
+    // P_xb·Q_b⁻¹ (3×k), then the conditional covariance.
+    const PxbQ = [0, 1, 2].map((r) =>
+      Array.from({ length: k }, (_, j) => {
+        let v = 0;
+        for (let i = 0; i < k; i++)
+          v += this.P[r]![3 + idxs[i]!]! * QbInv[i]![j]!;
+        return v;
+      })
+    );
+    const covariance = [0, 1, 2].map((r) =>
+      [0, 1, 2].map((c) => {
+        let v = 0;
+        for (let j = 0; j < k; j++)
+          v += PxbQ[r]![j]! * this.P[3 + idxs[j]!]![c]!;
+        return (this.P[r]![c]! + this.P[c]![r]!) / 2 - v;
+      })
+    );
+    return { ratio: res.ratio, position, intAmb: [...best], covariance };
   }
 
   /**
@@ -1398,6 +1420,7 @@ export class RtkFloatEngine {
     let ratio: number | undefined;
     let nFixed: number | undefined;
     let fixedPos: [number, number, number] | null = null;
+    let fixedCov: number[][] | undefined;
     let fixedAmbiguities: Record<string, number> | undefined;
     if (o.ambiguityResolution === 'instant') {
       // Candidates: ambiguities measured (phase row) this epoch, above
@@ -1431,6 +1454,7 @@ export class RtkFloatEngine {
           status = 'fixed';
           nFixed = cands.length;
           fixedPos = fix.position;
+          fixedCov = fix.covariance;
           fixedAmbiguities = {};
           cands.forEach((c, i) => {
             fixedAmbiguities![this.amb[c.idx]!.prn] = fix.intAmb[i]!;
@@ -1476,6 +1500,8 @@ export class RtkFloatEngine {
           ]
         : undefined,
       fixedAmbiguities,
+      covariance:
+        fixedCov ?? [0, 1, 2].map((r) => [0, 1, 2].map((c) => this.P[r]![c]!)),
       sigmas: [
         Math.sqrt(Math.max(this.P[0]![0]!, 0)),
         Math.sqrt(Math.max(this.P[1]![1]!, 0)),

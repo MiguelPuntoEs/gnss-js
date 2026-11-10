@@ -68,6 +68,27 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(res.track.some((p) => p.status === 'fixed')).toBe(true);
     });
 
+    it('summarises the session: last fixed baseline and its covariance', () => {
+      const res = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        mode: 'static',
+        elevationMaskDeg: 15,
+        ambiguityResolution: 'instant',
+      });
+      const f = res.final!;
+      expect(f.status).toBe('fixed');
+      const truth = WHU_ROVER_TRUTH.map((v, i) => v - WHU_BASE[i]!);
+      const err = Math.hypot(...f.baseline.map((v, i) => v - truth[i]!));
+      expect(err).toBeLessThan(0.3);
+      // A valid covariance given the integers: symmetric, positive
+      // diagonal, well below the float filter's decimetres.
+      for (let i = 0; i < 3; i++) {
+        expect(f.covariance[i]![i]!).toBeGreaterThan(0);
+        expect(Math.sqrt(f.covariance[i]![i]!)).toBeLessThan(0.05);
+        for (let j = 0; j < 3; j++)
+          expect(f.covariance[i]![j]).toBeCloseTo(f.covariance[j]![i]!, 12);
+      }
+    });
+
     it('code-only (DGNSS) solves every epoch to metre level, no fixes', () => {
       const res = postProcessRtk(base, rover, ephs, WHU_BASE, {
         elevationMaskDeg: 15,
