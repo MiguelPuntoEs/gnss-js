@@ -14,3 +14,4 @@ export * from './obs-writer';
 export * from './obs-writer-v2';
 export * from './obs-writer-v4';
 export * from './obs-writer-common';
+export * from './sinex';
