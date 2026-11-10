@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.14.0
 
 ### New — GPT3 + VMF3 troposphere (`troposphere`)
 
