@@ -17,6 +17,7 @@ Everything is exposed through subpath exports (`gnss-js/rinex`, `gnss-js/positio
 - **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX.
 - **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression.
 - **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2 and B-CNAV1/2/3 (B1C/B2a/B2b), GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
+- **Authentication** — Galileo OSNMA: the full chain of trust from the Merkle root through ECDSA-signed TESLA keys to per-satellite MAC tags, flagging navigation data Galileo did not sign.
 - **Orbits** — satellite position/velocity, Doppler, DOP, azimuth/elevation, pass prediction and almanac propagation.
 - **Positioning** — SPP, static and kinematic float PPP, PPP-AR (LAMBDA + wide-/narrow-lane FCB estimation), post-processed RTK, DGNSS, and SBAS/DFMC augmentation.
 - **Quality** — multipath, cycle slips, completeness and slant-TEC ionosphere analysis, with SINEX-DCB calibration.
@@ -97,6 +98,20 @@ import { parseBinex } from 'gnss-js/binex'; // BINEX
 const sbf = parseSbfMeas(bytes); // measurement epochs + counts
 const nav = parseSbfNav(bytes); // GPS/GAL/BDS/GLO ephemeris from raw blocks
 const has = parseSbfHas(bytes); // Galileo HAS (E6 C/NAV) SSR corrections
+```
+
+### Galileo OSNMA (navigation message authentication)
+
+`OsnmaReceiver` takes Galileo E1-B I/NAV pages and verifies them the way the OSNMA SIS ICD v1.1 prescribes: public key against the Merkle root (built in, or broadcast in DSM-PKR), the DSM-KROOT's ECDSA signature, every TESLA chain key back to the root key, and the MAC tags over each satellite's ephemeris/clock (ADKD 0/12) and timing parameters (ADKD 4). A tag that fails means the data differ from what Galileo signed. Validated against the official ICD test vectors and live receivers.
+
+```ts
+import { OsnmaReceiver, verifySbfOsnma } from 'gnss-js/osnma';
+
+const s = verifySbfOsnma(sbfBytes); // whole capture
+s.chains; // verified TESLA chains; s.tags → { ok, failed, ... }
+s.satellites; // per PRN: ced.authenticatedIodNav, timing.lastAuthenticated, failures
+
+const rx = new OsnmaReceiver(); // live: rx.pushPage(svid, wn, tow, page); rx.status()
 ```
 
 ### RTCM (RTCM3, RTCM2, SSR)

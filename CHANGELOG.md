@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.12.0
+
+### New — Galileo OSNMA navigation message authentication (`osnma`)
+
+A new `gnss-js/osnma` entry verifies Galileo's Open Service Navigation Message Authentication end to end, after the OSNMA SIS ICD v1.1. `OsnmaReceiver` takes E1-B I/NAV nominal pages (`pushPage`, live or batch; `verifySbfOsnma` runs it over a Septentrio SBF capture) and checks the whole chain of trust: the public key against the Merkle root (the GSC tree in force since 2025-12-10 and its PKID 2 key are built in; a key broadcast in DSM-PKR is accepted once its Merkle path verifies), the DSM-KROOT's ECDSA P-256 or P-521 signature, each TESLA chain key back to the root key, the MACSEQ and MAC look-up table, and the HMAC tags over every satellite's ephemeris, clock and status (ADKD 0 and slow-MAC 12) and GST timing parameters (ADKD 4), with tag accumulation to the Receiver Guidelines' 80/40-bit thresholds. Cross-authentication covers satellites that broadcast no OSNMA themselves. Chain renewal and revocation, public-key renewal and revocation, Merkle tree renewal and the Alert Message are followed. `status()` reports the NMA header, verified keys and chains, per-satellite authenticated IODnav and timing, and the events that matter — a tag that does not verify means the navigation data differ from what Galileo signed.
+
+The cryptography is synchronous and dependency-free (SHA-256, SHA-512, HMAC-SHA-256, ECDSA P-256/P-521 in BigInt), checked against NIST examples and `node:crypto`.
+
+Validated on the 19 official ICD test-vector scenarios: zero false failures; 14 match the authenticated-tag counts of the reference implementation OSNMAlib exactly, one is off by a single tag, and four differ only in how tags around "don't use" periods are counted. On live TU Delft receivers the PKID 2 key, a broadcast DSM-PKR, the KROOT and every tag verify; altering one satellite's ephemeris word, or one TESLA key, is caught.
+
+### Fixed — centimetre static PPP (`positioning`)
+
+Static float PPP now lands within **0.5–0.8 cm 3D of the true ITRF2020 coordinate** after 24 h on all seven IGS stations tested (ANMG, ALIC, WTZR, KOUR, HOB2, DRAO, MATE, 2024-001, ESA MGEX 5-min products, truth from ESA's daily SINEX); a median of 1.3 cm after 6 h, 3.4 cm after 2 h and 3.7 cm after 1 h. Before, 24 h runs were 9–42 cm off. Kinematic PPP, which was metres to tens of metres off per epoch, now tracks a static station at 1.5–2 cm horizontal (median per epoch, 95% within 4–5.5 cm) once converged. Five model errors were behind it:
+
+- `ecefToGeodetic` returns radians, but the PPP corrections, the PPP troposphere latitude and the RTK receiver-antenna correction converted its output from degrees, so receiver antenna offsets, antenna heights and wind-up were applied in a wrong local frame (and Niell mapping used latitude ≈ 0).
+- Phase wind-up used the receiver dipole's East axis where the model (Wu et al., RTKLIB `windupcorr`) uses West: a sign error that biased the horizontal by up to 15 cm.
+- The ANTEX validity dates written by `parseAntex` were not understood by the PPP antenna model, so every GPS satellite got the phase-centre offset of the _first_ spacecraft that ever used its PRN (e.g. a 1978 Block I for G04), a GPS-only vertical bias of several centimetres.
+- Within an epoch, each satellite's innovation reused the range computed at the predicted position, ignoring how far the preceding sequential updates had already moved the estimate. Harmless once a static solution has converged, it made every kinematic epoch (and every static start-up) re-apply corrections already made, so the estimate drifted and oscillated. Ranges are now linearised about the current state.
+- Ambiguities were re-initialised whenever a phase innovation exceeded 15 cm, which also fired while the epoch's receiver clock was still settling, chopping arcs and keeping the solution code-dominated. Static mode now detects cycle slips with a clock-free time-differenced carrier-phase test (plus Melbourne–Wübbena), re-initialises only after three consecutive gated-out phases, and screens gross code outliers against each constellation's median first. Kinematic mode applies all code updates before any phase, and its time-differenced test fits the receiver's own displacement (a carrier-phase velocity) first.
+
+Side effect for PPP-AR: arcs long enough for narrow-lane FCB estimation rose ~9× (GPS 32 → ~300 on the six-station test network; BeiDou now contributes ~200). `PppSolution.llh` is now in degrees as documented (it was radians).
+
+### New — PPP with integer ambiguity resolution (`positioning`, `rinex`)
+
+`solvePpp` / `PppEngine` can now fix the carrier-phase ambiguities to integers (PPP-AR) with an integer-clock product: pass the product's satellite code and phase biases as `osb` (a `SatOsbTable` built from a Bias-SINEX file) and set `ar: true`. The engine then applies the biases to every observation, and every two minutes resolves the converged ambiguities. The wide-lane is rounded from Melbourne–Wübbena, the narrow-lane is resolved with LAMBDA (both between satellites of the same constellation), and accepted fixes give an ambiguity-fixed position (`PppEpochResult.fixedPosition`, `PppSolution.ar`) next to the float one. A fix needs a ratio of ≥ 3, a bootstrapped success rate of ≥ 0.999 (new `LambdaResult.successRate`), at least five between-satellite ambiguities and float ambiguities consistent with the integers (χ²). Otherwise the epoch stays float. The float filter is never constrained, so a wrong fix cannot carry into later epochs.
+
+Validated on seven IGS stations (2024-001, 1–4 h windows at six times of day, GFZ rapid orbits and 30 s clocks with CNES's code/phase biases from the PPP-Wizard archive, truth from ESA's daily SINEX):
+
+| Session | Median horizontal error, float → fixed | Median 3D error, float → fixed |
+| ------- | -------------------------------------- | ------------------------------ |
+| 1 h     | 1.7 → 0.8 cm                           | 2.9 → 2.0 cm                   |
+| 30 min  | 2.7 → 1.0 cm                           | 4.0 → 2.6 cm                   |
+
+From 2 h on, float PPP is already at about a centimetre and fixing changes little.
+
+Other changes:
+
+- `PppSatObs.phase1` / `phase2` name the carriers when they differ from the code (GPS C1W with L1C).
+- `PppEphemerisSource.phaseBias` lets a custom source supply phase biases.
+- `SatOsbTable.get` falls back from a tracking mode to the band's combined `X` signal, as CNES publishes Galileo biases on `L1X`/`L5X`.
+- `resolvePppAmbiguities` and `fixPppPosition` now difference within each constellation, with one reference per constellation (`ArResult.refPrns`, `ArFixedSat.ref`). Before, one reference spanned all systems, and the per-satellite wide-lane rounding kept the receiver's bias, so real multi-GNSS data could not fix.
+- When a full fix fails, the resolver drops the lowest satellites and retries (partial fixing, `minPartial`).
+- New `ArOptions`: `minSuccessRate`, `minFixed`, `maxChi2`.
+- Code biases from a source (Galileo HAS) now correct the code observations themselves, so they reach the Melbourne–Wübbena slip detector consistently, not only the ionosphere-free code.
+
+### Fixed — Hatanaka (CRINEX) decoding (`rinex`)
+
+Compact RINEX files whose epochs change satellite count could decode with satellites shifted or invented: the epoch-line text repair dropped characters when a difference ran past the previous line, the satellite list was read beyond the epoch's satellite count, and the repaired line was not trimmed as `crx2rnx` trims it. Eleven IGS daily files (26 million observations) now decode identically to `crx2rnx` 4.2.0. Satellite ids written with a space (`G 2`) are normalised to `G02` in CRINEX, RINEX 3 and RINEX 2 observation files, so those satellites match precise orbits and broadcast ephemerides.
+
 ## 2.11.0
 
 ### New — BeiDou-3 B-CNAV ephemerides (`sbf`, `rinex`)

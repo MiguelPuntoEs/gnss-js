@@ -131,3 +131,67 @@ export function findSatBias(
   }
   return null;
 }
+
+/**
+ * Fast time-aware lookup of satellite OSBs (metres) — the form PPP needs.
+ * Products with integer-recoverable clocks (CNES/GFZ "ABS", CODE) publish
+ * phase OSBs that change every 30 s–15 min, so one PRN/observable can carry
+ * thousands of records; they're sorted once and found by binary search.
+ * Values are as published (observed = true + bias), so the corrected
+ * observable is `observed − osb(...)`.
+ */
+export class SatOsbTable {
+  private readonly byKey = new Map<
+    string,
+    { start: Float64Array; end: Float64Array; m: Float64Array }
+  >();
+
+  constructor(bias: BiasSinex | BiasRecord[]) {
+    const recs = Array.isArray(bias) ? bias : bias.records;
+    const groups = new Map<string, BiasRecord[]>();
+    for (const r of recs) {
+      if (r.type !== 'OSB' || !r.prn || r.station) continue;
+      if (r.unit !== 'ns') continue; // cycle-unit OSBs are not used here
+      const k = `${r.prn} ${r.obs1}`;
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = []));
+      g.push(r);
+    }
+    for (const [k, g] of groups) {
+      g.sort((a, b) => a.startMs - b.startMs);
+      this.byKey.set(k, {
+        start: Float64Array.from(g, (r) => r.startMs),
+        end: Float64Array.from(g, (r) => r.endMs),
+        m: Float64Array.from(g, biasMetres),
+      });
+    }
+  }
+
+  /** Whether any phase (L…) OSB is present — i.e. the product supports AR. */
+  get hasPhase(): boolean {
+    for (const k of this.byKey.keys())
+      if (k.split(' ')[1]![0] === 'L') return true;
+    return false;
+  }
+
+  /** OSB (m) of `prn`'s observable `obs` (e.g. 'C1W', 'L2W') at `tMs`;
+   *  null when the product has none valid then. */
+  get(prn: string, obs: string, tMs: number): number | null {
+    // A satellite's bias is the same for every tracking mode of one band in
+    // products that publish only the combined 'X' signal (CNES: Galileo
+    // L1X/L5X, BeiDou L2I…): fall back to it.
+    const e =
+      this.byKey.get(`${prn} ${obs}`) ??
+      this.byKey.get(`${prn} ${obs.slice(0, 2)}X`);
+    if (!e) return null;
+    let lo = 0;
+    let hi = e.start.length - 1;
+    if (tMs < e.start[0]!) return null;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (e.start[mid]! <= tMs) lo = mid;
+      else hi = mid - 1;
+    }
+    return tMs <= e.end[lo]! ? e.m[lo]! : null;
+  }
+}

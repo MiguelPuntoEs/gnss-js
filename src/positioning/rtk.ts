@@ -296,9 +296,12 @@ function buildGeometry(
   let baseLatRad = 0;
   let baseLonRad = 0;
   if (antenna?.base) {
-    const [latDeg, lonDeg] = ecefToGeodetic(basePos[0], basePos[1], basePos[2]);
-    baseLatRad = (latDeg * Math.PI) / 180;
-    baseLonRad = (lonDeg * Math.PI) / 180;
+    // ecefToGeodetic returns radians.
+    [baseLatRad, baseLonRad] = ecefToGeodetic(
+      basePos[0],
+      basePos[1],
+      basePos[2]
+    );
   }
   for (const [prn, mR] of rover) {
     const sys = prn[0]!;
@@ -433,12 +436,12 @@ function roverTerms(
   // range. u is the satellite→receiver unit vector, so −u is the line of sight
   // receiver→satellite the correction expects.
   if (g.offR) {
-    const [latDeg, lonDeg] = ecefToGeodetic(x, y, z);
+    const [latRad, lonRad] = ecefToGeodetic(x, y, z); // radians
     rho += rcvAntennaRangeM(
       g.offR,
       [-u[0], -u[1], -u[2]],
-      (latDeg * Math.PI) / 180,
-      (lonDeg * Math.PI) / 180,
+      latRad,
+      lonRad,
       elR,
       g.roverDelta
     );

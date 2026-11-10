@@ -24,6 +24,7 @@ export default defineConfig({
     antex: './src/antex/index.ts',
     nmea: './src/nmea/index.ts',
     signals: './src/signals/index.ts',
+    osnma: './src/osnma/index.ts',
   },
   dts: true,
   shims: true,

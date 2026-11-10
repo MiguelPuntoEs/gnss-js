@@ -453,17 +453,24 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
           minArcEpochs: 120,
           fixWindow: 0.15,
         });
-        // GPS narrow-lane fixes on clean ≥1 h arcs at the centimetre level.
+        // GPS narrow-lane fixes on ≥1 h arcs at the centimetre level. Since
+        // slips are found by time-differenced phase instead of filter
+        // innovations, arcs are no longer chopped: ~300 GPS arcs qualify
+        // (32 before), so the fixed-arc count rose ~6× even though the
+        // per-arc rate over this broader set is ~60% (was 81% of 32).
         expect(net.perSystem.G).toBeDefined();
-        expect(net.perSystem.G!.nlUsedArcs).toBeGreaterThan(10);
-        expect(net.perSystem.G!.nlFixRate).toBeGreaterThan(0.6);
-        // Narrow-lane residual is centimetre (0.15 cyc ≈ 1.6 cm).
-        expect(net.perSystem.G!.nlResidRms).toBeLessThan(0.2);
+        expect(net.perSystem.G!.nlUsedArcs).toBeGreaterThan(200);
+        expect(
+          net.perSystem.G!.nlFixRate * net.perSystem.G!.nlUsedArcs
+        ).toBeGreaterThan(150);
+        // Narrow-lane residual is centimetre (0.2 cyc ≈ 2 cm).
+        expect(net.perSystem.G!.nlResidRms).toBeLessThan(0.25);
         // Multi-GNSS: Galileo contributes its own fixable arcs, roughly
         // doubling GPS-only coverage. Per-satellite FCBs merge both systems.
         expect(net.perSystem.E).toBeDefined();
-        expect(net.perSystem.E!.nlUsedArcs).toBeGreaterThan(5);
-        expect(net.satNlFcb.size).toBeGreaterThan(net.perSystem.G!.nlUsedArcs);
+        expect(net.perSystem.E!.nlUsedArcs).toBeGreaterThan(100);
+        // Per-satellite FCBs for GPS, Galileo and BeiDou (> 32 GPS PRNs).
+        expect(net.satNlFcb.size).toBeGreaterThan(60);
       }
     );
   }
@@ -480,27 +487,24 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
 // ESA MGEX products, at the observation day (no epoch propagation needed).
 const SINEX_TRUTH: Record<string, [number, number, number]> = {
   ANMG: [-1270827.11054, 6242631.27079, 307792.38356],
+  ALIC: [-4052052.90341, 4212835.97164, -2545104.37612],
 };
 
 describe.skipIf(!HAS_NET || !HAS_ATX)(
   'float PPP vs true ITRF coordinate',
   () => {
-    it(
-      'agrees with the ESA SINEX coordinate at the centimetre–decimetre level',
+    it.each(Object.keys(SINEX_TRUTH))(
+      '%s: static GPS+Galileo PPP lands within 2 cm of the ESA SINEX coordinate',
       { timeout: 120_000 },
-      async () => {
+      async (st) => {
         const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
         const antenna = buildPppAntenna(
           parseAntex(readFileSync(join(FIX, 'igs20.atx'), 'utf8'))
         );
-        const arcsWithStation = await stationPppArcs('ANMG.crx', sp3, antenna);
-        void arcsWithStation; // (solve is re-run below for the position)
-
-        // Re-solve ANMG (GPS+Galileo, full corrections) for the position.
-        const crx = new Uint8Array(readFileSync(join(FIX, 'ANMG.crx')));
+        const crx = new Uint8Array(readFileSync(join(FIX, st + '.crx')));
         const byTime = new Map<number, PppEpoch['obs']>();
         const res = await parseRinexStream(
-          new File([crx], 'ANMG.crx'),
+          new File([crx], st + '.crx'),
           undefined,
           undefined,
           (time, prn, codes, values) => {
@@ -555,16 +559,16 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
         const epochs = [...byTime.entries()]
           .sort((a, b) => a[0] - b[0])
           .map(([timeMs, obs]) => ({ timeMs, obs }));
-        const truth = SINEX_TRUTH.ANMG!;
+        const truth = SINEX_TRUTH[st]!;
+        const d = res.header.antDelta ?? [0, 0, 0]; // H/E/N
         const corrections = createPppCorrections({
           antenna,
           rcvAntType: res.header.antType,
-          rcvPco: true,
-          tides: true,
-          windup: true,
+          antDeltaEnu: [d[1]!, d[2]!, d[0]!],
         });
+        const apriori = res.header.approxPosition as [number, number, number];
         const sol = solvePpp(epochs, sp3, {
-          aprioriPos: truth,
+          aprioriPos: apriori,
           groundTruth: truth,
           elevationMaskDeg: 10,
           corrections,
@@ -574,10 +578,11 @@ describe.skipIf(!HAS_NET || !HAS_ATX)(
           sol.position[1] - truth[1],
           sol.position[2] - truth[2]
         );
-        // Float multi-GNSS PPP agrees with the true ITRF coordinate to ~9 cm
-        // (measured), well within a decimetre — genuine absolute accuracy,
-        // not merely agreement with the dm-level header.
-        expect(err3d).toBeLessThan(0.15);
+        // 24 h static float PPP with the full model (satellite + receiver
+        // antenna PCO/PCV, antenna height, solid tides, wind-up): 0.6–0.8 cm
+        // 3D against the true ITRF2020 coordinate on these and five more
+        // IGS stations (measured 2026-11-09).
+        expect(err3d).toBeLessThan(0.02);
       }
     );
   }

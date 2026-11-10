@@ -25,6 +25,13 @@ import { C_LIGHT, OMEGA_E } from '../constants/gnss';
 import { ecefToGeodetic, getEnuDifference, getAer } from '../coordinates/ecef';
 import { sp3Position, type Sp3File } from '../rinex/sp3';
 import { clkBias, type ClkFile } from '../rinex/clk';
+import type { SatOsbTable } from '../rinex/bias-sinex';
+import { fixPppPosition } from './ppp-ar';
+
+const NO_FCB = {
+  satWlFcb: new Map<string, number>(),
+  satNlFcb: new Map<string, number>(),
+};
 import { niellMapping } from './ppp-tropo';
 import {
   type PppCorrections,
@@ -56,6 +63,11 @@ export interface PppSatObs {
    * up satellite code (OSB) biases from an SSR/HAS source; optional. */
   code1?: string;
   code2?: string;
+  /** RINEX-3 tracking codes of the two *carriers* (e.g. '1C','2W'), for
+   *  satellite phase-bias (OSB) lookup when they differ from the code's
+   *  (GPS: C1W code with L1C phase). Default: `code1` / `code2`. */
+  phase1?: string;
+  phase2?: string;
   /** True if a cycle slip is flagged on either band (LLI or detected). */
   slip: boolean;
 }
@@ -100,6 +112,39 @@ export interface PppOptions {
    * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
    * Satellites/epochs absent from the CLK fall back to the SP3 clock. */
   clk?: ClkFile;
+  /** Satellite observable-specific biases (code + phase OSB) consistent with
+   *  the orbit/clock product — e.g. the CNES "ABS" biases that accompany GFZ
+   *  rapid products. With phase OSBs the float ambiguities keep their integer
+   *  nature (between satellites), which is what PPP-AR (`fixPppPosition`)
+   *  needs. Used with an Sp3File; a custom source supplies its own biases. */
+  osb?: SatOsbTable;
+  /**
+   * Integer ambiguity resolution (PPP-AR). Needs satellite phase biases
+   * (`osb`, or a source with `phaseBias`) — without them the ambiguities
+   * aren't integers and this is ignored. Every `everyS` seconds the
+   * converged ambiguities are resolved (wide-lane by rounding, narrow-lane
+   * by LAMBDA, between satellites of a constellation) and, if the fix is
+   * accepted, the epoch gets an ambiguity-fixed position next to the float
+   * one. `true` uses the defaults.
+   */
+  ar?:
+    | boolean
+    | {
+        /** LAMBDA ratio test threshold. Default 3. */
+        ratio?: number;
+        /** Max wide-lane fractional part (cycles). Default 0.15. */
+        wlThreshold?: number;
+        /** Min arc age before an ambiguity is a candidate (s). Default 600. */
+        minArcS?: number;
+        /** Attempt interval (s). Default 120. */
+        everyS?: number;
+        /** Min bootstrapped success rate. Default 0.999. */
+        successRate?: number;
+        /** Min between-satellite ambiguities in a fix. Default 5. */
+        minFixed?: number;
+        /** Max χ²/dof of the float ambiguities vs the integers. Default 20. */
+        maxChi2?: number;
+      };
 }
 
 export interface PppEpochResult {
@@ -116,6 +161,10 @@ export interface PppEpochResult {
   ztdHydrostatic: number;
   /** RMS of post-fit phase residuals this epoch (m). */
   phaseResRms: number;
+  /** PPP-AR: between-satellite ambiguities fixed (0 = float only). */
+  nFixed: number;
+  /** PPP-AR: the ambiguity-fixed position, when the latest attempt fixed. */
+  fixedPosition: [number, number, number] | null;
 }
 
 export interface PppSolution {
@@ -136,6 +185,17 @@ export interface PppSolution {
   convergenceSec: number | null;
   /** Final 3D error vs ground truth (m), if given. */
   finalError3d: number | null;
+  /** PPP-AR summary, when `ar` was requested with a phase-bias product. */
+  ar?: {
+    /** Seconds from the first epoch to the first accepted fix (null: none). */
+    firstFixSec: number | null;
+    /** Ambiguities fixed at the end (0: the session ends float). */
+    nFixedEnd: number;
+    /** The ambiguity-fixed position at the end, or null. */
+    position: [number, number, number] | null;
+    /** Share of epochs with at least one ambiguity fixed. */
+    fixedEpochShare: number;
+  };
   /** Per-arc converged float ambiguities — one per continuous satellite
    * tracking arc — the raw material for ambiguity resolution (PPP-AR). */
   arcs: PppArc[];
@@ -200,6 +260,51 @@ function matVec(P: number[][], h: number[]): number[] {
   }
   return out;
 }
+
+/** Least-squares [Δx, Δy, Δz, Δclock] from time-differenced phase. */
+function tdLsq(
+  qs: readonly { v: { e: [number, number, number] }; d: number }[]
+): [number, number, number, number] | null {
+  const M = [0, 1, 2, 3].map(() => [0, 0, 0, 0, 0]);
+  for (const q of qs) {
+    const a = [-q.v.e[0], -q.v.e[1], -q.v.e[2], 1];
+    for (let i = 0; i < 4; i++) {
+      M[i]![4]! += a[i]! * q.d;
+      for (let j = 0; j < 4; j++) M[i]![j]! += a[i]! * a[j]!;
+    }
+  }
+  // Gauss–Jordan with partial pivoting on the 4×4 normal equations.
+  for (let c = 0; c < 4; c++) {
+    let p = c;
+    for (let r = c + 1; r < 4; r++)
+      if (Math.abs(M[r]![c]!) > Math.abs(M[p]![c]!)) p = r;
+    if (Math.abs(M[p]![c]!) < 1e-9) return null;
+    [M[c], M[p]] = [M[p]!, M[c]!];
+    for (let r = 0; r < 4; r++) {
+      if (r === c) continue;
+      const f = M[r]![c]! / M[c]![c]!;
+      for (let k = c; k < 5; k++) M[r]![k]! -= f * M[c]![k]!;
+    }
+  }
+  return [0, 1, 2, 3].map((i) => M[i]![4]! / M[i]![i]!) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+}
+
+function tdResidual(
+  q: { v: { e: [number, number, number] }; d: number },
+  s: [number, number, number, number]
+): number {
+  return q.d - (-q.v.e[0] * s[0] - q.v.e[1] * s[1] - q.v.e[2] * s[2] + s[3]);
+}
+
+/** Time-differenced iono-free phase jump (m) that flags a cycle slip. */
+const TD_SLIP_M = 0.08;
+/** Code residual spread (m, beyond 3σ of position) that screens a satellite. */
+const CODE_GATE_M = 15;
 
 /**
  * Sequential (scalar) EKF measurement update — process one measurement at
@@ -285,6 +390,10 @@ export interface PppEphemerisSource {
    *  corrected code is `observed − codeBias`. SP3/CLK sources omit this (the
    *  float ambiguity + broadcast clock reference absorb it). */
   codeBias?(prn: string, signalCode: string, tEmitMs: number): number | null;
+  /** Optional satellite *phase* bias (m) for a carrier tracking code
+   *  ('1C','2W'…): the corrected carrier is `observed − phaseBias`. Only
+   *  integer-clock products (for PPP-AR) provide these. */
+  phaseBias?(prn: string, signalCode: string, tEmitMs: number): number | null;
 }
 
 /** Default source: SP3 orbits + clocks, with optional high-rate CLK. Velocity
@@ -293,8 +402,16 @@ export interface PppEphemerisSource {
 export class Sp3EphemerisSource implements PppEphemerisSource {
   constructor(
     private readonly sp3: Sp3File,
-    private readonly clk?: ClkFile
-  ) {}
+    private readonly clk?: ClkFile,
+    private readonly osb?: SatOsbTable
+  ) {
+    if (osb) {
+      this.codeBias = (prn, code, t) => osb.get(prn, 'C' + code, t);
+      this.phaseBias = (prn, code, t) => osb.get(prn, 'L' + code, t);
+    }
+  }
+  codeBias?: PppEphemerisSource['codeBias'];
+  phaseBias?: PppEphemerisSource['phaseBias'];
   satState(prn: string, tEmitMs: number): SatSample | null {
     const p = sp3Position(this.sp3, prn, tEmitMs);
     if (!p || p.clk == null) return null;
@@ -311,6 +428,34 @@ export class Sp3EphemerisSource implements PppEphemerisSource {
     const clkS = (this.clk ? clkBias(this.clk, prn, tEmitMs) : null) ?? p.clk;
     return { x: p.x, y: p.y, z: p.z, vx, vy, vz, clkS };
   }
+}
+
+/**
+ * Remove the source's satellite code/phase biases (OSB) from one observation,
+ * so the code matches the clock reference and — with phase OSBs — the carrier
+ * ambiguities are integers between satellites. Code biases are optional
+ * (SP3/CLK sources fold them into the float ambiguity); a source that
+ * publishes phase biases but has none for this satellite/signal drops it,
+ * since one non-integer ambiguity would spoil the fix for all.
+ */
+function applySatBiases(
+  source: PppEphemerisSource,
+  o: PppSatObs,
+  tMs: number
+): PppSatObs | null {
+  if (!source.codeBias && !source.phaseBias) return o;
+  const b1 = source.codeBias?.(o.prn, o.code1 ?? '', tMs) ?? 0;
+  const b2 = source.codeBias?.(o.prn, o.code2 ?? '', tMs) ?? 0;
+  let l1 = o.l1;
+  let l2 = o.l2;
+  if (source.phaseBias) {
+    const p1 = source.phaseBias(o.prn, o.phase1 ?? o.code1 ?? '', tMs);
+    const p2 = source.phaseBias(o.prn, o.phase2 ?? o.code2 ?? '', tMs);
+    if (p1 == null || p2 == null) return null;
+    l1 -= p1 / (C_LIGHT / o.f1);
+    l2 -= p2 / (C_LIGHT / o.f2);
+  }
+  return { ...o, c1: o.c1 - b1, c2: o.c2 - b2, l1, l2 };
 }
 
 /* ================================================================== */
@@ -432,6 +577,23 @@ export class PppEngine {
     }
   >;
   private mwState!: Map<string, { mean: number; n: number; lastEi: number }>;
+  /** Previous epoch's phase terms per satellite, for the time-differenced
+   *  (clock-free) cycle-slip test. */
+  private tdPrev!: Map<
+    string,
+    { ei: number; lIf: number; sat: [number, number, number]; model: number }
+  >;
+  /** Consecutive gated-out phase updates per satellite. */
+  private phaseRejects!: Map<string, number>;
+  /** PPP-AR: the latest accepted fix (null: float). */
+  private lastFix!: {
+    position: [number, number, number];
+    nFixed: number;
+    ratio: number;
+  } | null;
+  private lastArMs!: number;
+  private firstFixMs!: number | null;
+  private fixedEpochs!: number;
   private series!: PppEpochResult[];
   private ei = 0;
   private t0 = 0;
@@ -470,6 +632,12 @@ export class PppEngine {
     this.arcs = [];
     this.arcSnap = new Map();
     this.mwState = new Map();
+    this.tdPrev = new Map();
+    this.phaseRejects = new Map();
+    this.lastFix = null;
+    this.lastArMs = -Infinity;
+    this.firstFixMs = null;
+    this.fixedEpochs = 0;
     this.series = [];
     this.ei = 0;
     this.t0 = 0;
@@ -571,6 +739,8 @@ export class PppEngine {
       arcSnap,
       mwState,
       series,
+      tdPrev,
+      phaseRejects,
     } = this;
     const flushArc = this.flushArc.bind(this);
     const detectSlip = this.detectSlip.bind(this);
@@ -603,8 +773,8 @@ export class PppEngine {
     P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
 
     const rcv: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
-    const [latDeg, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
-    const latRad = (latDeg * Math.PI) / 180;
+    // ecefToGeodetic returns radians.
+    const [latRad, , heightM] = ecefToGeodetic(rcv[0], rcv[1], rcv[2]);
 
     // Sun/Moon-dependent corrections computed once per epoch.
     const epochCtx = corrections?.epochContext?.(epoch.timeMs, rcv) ?? null;
@@ -624,13 +794,17 @@ export class PppEngine {
       slip: boolean;
       f1: number;
       f2: number;
+      sat: [number, number, number];
     }
     const vis: Vis[] = [];
     // Zenith hydrostatic delay is station-level (same for every satellite this
     // epoch); capture it so ZTD = ZHD + ZWD can be reported.
     let epochZhd = 0;
-    for (const o of epoch.obs) {
-      if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
+    for (const raw of epoch.obs) {
+      if (raw.c1 === 0 || raw.c2 === 0 || raw.l1 === 0 || raw.l2 === 0)
+        continue;
+      const o = applySatBiases(source, raw, epoch.timeMs);
+      if (!o) continue;
       const slip = detectSlip(o, ei);
       const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv);
       if (!sat) continue;
@@ -654,11 +828,7 @@ export class PppEngine {
       const lam1 = C_LIGHT / o.f1;
       const lam2 = C_LIGHT / o.f2;
       if (o.c1 === 0 || o.c2 === 0 || o.l1 === 0 || o.l2 === 0) continue;
-      // Satellite code (OSB) biases — align the pseudoranges with the SSR/HAS
-      // clock reference. No-op when the source doesn't provide them (SP3/CLK).
-      const b1 = source.codeBias?.(o.prn, o.code1 ?? '', epoch.timeMs) ?? 0;
-      const b2 = source.codeBias?.(o.prn, o.code2 ?? '', epoch.timeMs) ?? 0;
-      const pIf = g * (o.c1 - b1) - (g - 1) * (o.c2 - b2);
+      const pIf = g * o.c1 - (g - 1) * o.c2;
       const lIf = g * (o.l1 * lam1) - (g - 1) * (o.l2 * lam2);
       if (!Number.isFinite(pIf) || !Number.isFinite(lIf)) continue;
 
@@ -700,7 +870,75 @@ export class PppEngine {
         slip,
         f1: o.f1,
         f2: o.f2,
+        sat: [sat.state.x, sat.state.y, sat.state.z],
       });
+    }
+
+    // ── Time-differenced carrier-phase slip test (static) ──
+    // Between consecutive epochs the iono-free phase changes by the
+    // geometric range change (both epochs evaluated at the current receiver
+    // position), the satellite clock change, the modelled delay change and
+    // the receiver clock change — the last common to every satellite (one
+    // oscillator), so it is removed with the median. What is left is phase
+    // noise + clock-interpolation error (cm) unless a cycle slip occurred
+    // (≥ ~0.1 m even for an equal (1,1) slip that the Melbourne–Wübbena test
+    // cannot see). Unlike an innovation test it does not depend on how well
+    // the filter's clock is settled within the epoch.
+    {
+      const dq: { v: Vis; d: number }[] = [];
+      for (const v of vis) {
+        const prev = tdPrev.get(v.prn);
+        const model = -v.satClkM + v.tropoFixed + v.windupM;
+        if (prev && prev.ei === ei - 1 && !v.slip) {
+          const r0 = Math.hypot(
+            prev.sat[0] - rcv[0],
+            prev.sat[1] - rcv[1],
+            prev.sat[2] - rcv[2]
+          );
+          dq.push({
+            v,
+            d: v.lIf - prev.lIf - (v.range - r0) - (model - prev.model),
+          });
+        }
+        tdPrev.set(v.prn, { ei, lIf: v.lIf, sat: v.sat, model });
+      }
+      if (!kinematic) {
+        if (dq.length >= 4) {
+          const sorted = dq.map((q) => q.d).sort((a, b) => a - b);
+          const med = sorted[Math.floor(sorted.length / 2)]!;
+          for (const q of dq)
+            if (Math.abs(q.d - med) > TD_SLIP_M) q.v.slip = true;
+        }
+      } else if (dq.length >= 6) {
+        // A moving receiver adds −e·Δr to every satellite's difference: fit
+        // [Δr, Δclock] by least squares (carrier-phase velocity), drop the
+        // worst satellite while one stands out, then flag the outliers.
+        let use = dq;
+        for (let iter = 0; iter < 6; iter++) {
+          const sol = use.length >= 6 ? tdLsq(use) : null;
+          if (!sol) {
+            for (const q of dq) q.v.slip = true; // can't tell: reset all
+            break;
+          }
+          let worst = -1;
+          let worstR = 0;
+          use.forEach((q, k) => {
+            const r = Math.abs(tdResidual(q, sol));
+            if (r > worstR) {
+              worstR = r;
+              worst = k;
+            }
+          });
+          if (worstR <= TD_SLIP_M || iter === 5) {
+            for (const q of dq)
+              if (Math.abs(tdResidual(q, sol)) > TD_SLIP_M) q.v.slip = true;
+            break;
+          }
+          use = use.filter((_, k) => k !== worst);
+        }
+      } else {
+        for (const q of dq) q.v.slip = true;
+      }
     }
 
     // ── Receiver clock: a white-noise state, jointly estimated with
@@ -725,6 +963,25 @@ export class PppEngine {
       if (arr) arr.push(r);
       else bySys.set(sys, [r]);
     }
+    // Gross code outliers: the clock is re-estimated every epoch, so the
+    // filter's own gate is loose for the first satellites processed; screen
+    // each satellite's code residual against its constellation's median
+    // first (the receiver clock cancels), allowing for the current position
+    // uncertainty. A screened satellite sits this epoch out.
+    const posSigma = Math.sqrt(
+      P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
+    );
+    const codeGate = CODE_GATE_M + 3 * posSigma;
+    const screened = new Set<string>();
+    for (const [sys, res] of bySys) {
+      if (res.length < 4) continue;
+      const med = [...res].sort((a, b) => a - b)[Math.floor(res.length / 2)]!;
+      for (const v of vis) {
+        if (v.prn[0] !== sys) continue;
+        const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw);
+        if (Math.abs(r - med) > codeGate) screened.add(v.prn);
+      }
+    }
     for (const [sys, res] of bySys) {
       const ci = clockOf(sys);
       if (!clockSeeded.has(sys)) {
@@ -737,14 +994,24 @@ export class PppEngine {
 
     // ── Pass 2: EKF measurement updates ──
     let nSats = 0;
-    for (const v of vis) {
-      const ci = clockOf(v.prn[0]!);
-      const common = v.range + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+    const live = vis.filter((v) => !screened.has(v.prn));
+    /** Geometric range at the CURRENT position estimate: pass 1 evaluated it
+     *  at the predicted position, and each sequential update moves the
+     *  state — by metres within a kinematic epoch — so linearise about it
+     *  (moving the receiver by d changes the range by −e·d). */
+    const rangeNow = (v: Vis): number =>
+      v.range -
+      (v.e[0] * (x[IDX_X]! - rcv[0]) +
+        v.e[1] * (x[IDX_Y]! - rcv[1]) +
+        v.e[2] * (x[IDX_Z]! - rcv[2]));
 
+    /** Create the ambiguity on first sight, reset it on a slip. */
+    const prepAmbiguity = (v: Vis): number => {
+      const ci = clockOf(v.prn[0]!);
+      const common =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
       // A flagged/detected slip ends the current arc before re-init.
       if (v.slip) flushArc(v.prn);
-
-      // Ambiguity state — create/reset on first sight or cycle slip.
       let ai = ambIdx.get(v.prn);
       if (ai === undefined || v.slip) {
         const bInit = v.lIf - (common + v.windupM);
@@ -760,82 +1027,106 @@ export class PppEngine {
         }
         ambIdx.set(v.prn, ai);
       }
+      return ai;
+    };
 
-      const n = x.length;
+    const codeUpdate = (v: Vis): void => {
+      const ci = clockOf(v.prn[0]!);
+      const common =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
       const sinEl = Math.max(Math.sin(v.elRad), 0.1);
-      const rCode = (codeSigma / sinEl) ** 2;
-      const rPhase = (phaseSigma / sinEl) ** 2;
+      const h = new Array<number>(x.length).fill(0);
+      h[IDX_X] = -v.e[0];
+      h[IDX_Y] = -v.e[1];
+      h[IDX_Z] = -v.e[2];
+      h[ci] = 1;
+      h[IDX_ZWD] = v.mw;
+      const innov = v.pIf - common;
+      // Loose absolute bound (clock jumps up to ~ms); the S-based reject
+      // gate (rejectK) does the real outlier screening once the clock is
+      // pinned.
+      if (Math.abs(innov) < 1e6)
+        ekfUpdateScalar(x, P, h, innov, (codeSigma / sinEl) ** 2, 4);
+    };
 
-      // Code update (with gross-outlier gate).
-      {
-        const h = new Array<number>(n).fill(0);
+    const phaseUpdate = (v: Vis, ai: number): void => {
+      const ci = clockOf(v.prn[0]!);
+      const sinEl = Math.max(Math.sin(v.elRad), 0.1);
+      const rPhase = (phaseSigma / sinEl) ** 2;
+      const commonPh =
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+      const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
+      // Slips are caught before the updates (MW + time-differenced
+      // phase), so a gated-out phase is an outlier, and only a run of them
+      // means the ambiguity itself is wrong.
+      const reinit = (phaseRejects.get(v.prn) ?? 0) >= 3;
+      let used = false;
+      if (!reinit) {
+        const h = new Array<number>(x.length).fill(0);
         h[IDX_X] = -v.e[0];
         h[IDX_Y] = -v.e[1];
         h[IDX_Z] = -v.e[2];
         h[ci] = 1;
         h[IDX_ZWD] = v.mw;
-        const innov = v.pIf - common;
-        // Loose absolute bound (clock jumps up to ~ms); the S-based reject
-        // gate (rejectK) does the real outlier screening once the clock is
-        // pinned.
-        if (Math.abs(innov) < 1e6) ekfUpdateScalar(x, P, h, innov, rCode, 4);
+        h[ai] = 1;
+        used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
       }
-      // Phase update (recompute the common term after the code update moved
-      // the state), including the ambiguity partial.
-      {
-        const commonPh =
-          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
-        const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
-        // A large phase innovation on a converged filter is an undetected
-        // cycle slip → re-initialise this ambiguity rather than corrupt the
-        // state; small innovations get a normal (gated) update.
-        if (Math.abs(innov) > 0.15) {
-          flushArc(v.prn); // undetected slip → close the arc, re-initialise
-          x[ai] = v.lIf - (commonPh + v.windupM);
-          for (let j = 0; j < P.length; j++) {
-            P[ai]![j] = 0;
-            P[j]![ai] = 0;
-          }
-          P[ai]![ai] = 100 * 100;
-        } else {
-          const h = new Array<number>(n).fill(0);
-          h[IDX_X] = -v.e[0];
-          h[IDX_Y] = -v.e[1];
-          h[IDX_Z] = -v.e[2];
-          h[ci] = 1;
-          h[IDX_ZWD] = v.mw;
-          h[ai] = 1;
-          ekfUpdateScalar(x, P, h, innov, rPhase, 4);
+      if (reinit) {
+        flushArc(v.prn); // undetected slip → close the arc, re-initialise
+        x[ai] = v.lIf - (commonPh + v.windupM);
+        for (let j = 0; j < P.length; j++) {
+          P[ai]![j] = 0;
+          P[j]![ai] = 0;
         }
-      }
+        P[ai]![ai] = 100 * 100;
+        phaseRejects.delete(v.prn);
+      } else if (used) phaseRejects.delete(v.prn);
+      else phaseRejects.set(v.prn, (phaseRejects.get(v.prn) ?? 0) + 1);
+    };
 
+    const snapshot = (v: Vis, ai: number): void => {
       // Snapshot the (converged) arc state for PPP-AR.
-      {
-        const elevDeg = (v.elRad * 180) / Math.PI;
-        const mwMean = mwState.get(v.prn)?.mean ?? 0;
-        const s = arcSnap.get(v.prn);
-        if (s) {
-          s.aIF = x[ai]!;
-          s.mwCyc = mwMean;
-          s.elevSum += elevDeg;
-          s.nEpochs++;
-          s.endMs = epoch.timeMs;
-        } else {
-          arcSnap.set(v.prn, {
-            aIF: x[ai]!,
-            mwCyc: mwMean,
-            f1: v.f1,
-            f2: v.f2,
-            elevSum: elevDeg,
-            nEpochs: 1,
-            startMs: epoch.timeMs,
-            endMs: epoch.timeMs,
-          });
-        }
+      const elevDeg = (v.elRad * 180) / Math.PI;
+      const mwMean = mwState.get(v.prn)?.mean ?? 0;
+      const s = arcSnap.get(v.prn);
+      if (s) {
+        s.aIF = x[ai]!;
+        s.mwCyc = mwMean;
+        s.elevSum += elevDeg;
+        s.nEpochs++;
+        s.endMs = epoch.timeMs;
+      } else {
+        arcSnap.set(v.prn, {
+          aIF: x[ai]!,
+          mwCyc: mwMean,
+          f1: v.f1,
+          f2: v.f2,
+          elevSum: elevDeg,
+          nEpochs: 1,
+          startMs: epoch.timeMs,
+          endMs: epoch.timeMs,
+        });
       }
-
       lastSeen.set(v.prn, ei);
       nSats++;
+    };
+
+    if (kinematic) {
+      // A fresh position each epoch: let every code observation place it
+      // before any phase is tested against it.
+      for (const v of live) codeUpdate(v);
+      for (const v of live) {
+        const ai = prepAmbiguity(v);
+        phaseUpdate(v, ai);
+        snapshot(v, ai);
+      }
+    } else {
+      for (const v of live) {
+        const ai = prepAmbiguity(v);
+        codeUpdate(v);
+        phaseUpdate(v, ai);
+        snapshot(v, ai);
+      }
     }
 
     // Post-fit phase residuals: re-evaluate every satellite against the
@@ -856,7 +1147,7 @@ export class PppEngine {
         const sys = v.prn[0]!;
         const ci = clockOf(sys);
         const commonPh =
-          v.range + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
         const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
         if (Math.abs(innov) >= 0.15) continue; // undetected slip / gross outlier
         const arr = bySysRes.get(sys);
@@ -882,6 +1173,9 @@ export class PppEngine {
         flushArc(prn); // the arc ended when the satellite set
       }
     }
+
+    this.tryFix(epoch.timeMs, vis);
+    if (this.lastFix) this.fixedEpochs++;
 
     const pos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
     let enu: [number, number, number] | null = null;
@@ -920,10 +1214,77 @@ export class PppEngine {
       ztdWet: x[IDX_ZWD]!,
       ztdHydrostatic: epochZhd,
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
+      nFixed: this.lastFix?.nFixed ?? 0,
+      fixedPosition: this.lastFix?.position ?? null,
     };
     series.push(result);
     this.ei = ei + 1;
     return result;
+  }
+
+  /**
+   * PPP-AR. Every `everyS`, resolve the converged ambiguities of the
+   * satellites in view (between satellites of one constellation) and, when
+   * the fix passes the ratio, success-rate and χ² tests, condition the
+   * float position on it ({@link fixPppPosition}). The float filter itself
+   * is never constrained — a wrong fix can't contaminate later epochs, and
+   * the next attempt starts clean. Between attempts the last fix carries
+   * over (static) or is dropped (kinematic).
+   */
+  private tryFix(
+    tMs: number,
+    vis: readonly { prn: string; elRad: number; f1: number; f2: number }[]
+  ): void {
+    const ar = this.opts.ar;
+    if (!ar || !this.source.phaseBias) return;
+    const cfg = ar === true ? {} : ar;
+    if (tMs - this.lastArMs < (cfg.everyS ?? 120) * 1000) {
+      if (this.kinematic) this.lastFix = null;
+      return;
+    }
+    this.lastArMs = tMs;
+    this.lastFix = null;
+    const { x, P, ambIdx, arcSnap, mwState } = this;
+    const minArcMs = (cfg.minArcS ?? 600) * 1000;
+    const ambiguities: PppFixState['ambiguities'] = [];
+    for (const v of vis) {
+      const index = ambIdx.get(v.prn);
+      const snap = arcSnap.get(v.prn);
+      const mw = mwState.get(v.prn);
+      if (index === undefined || !snap || !mw) continue;
+      if (tMs - snap.startMs < minArcMs || snap.nEpochs < 20) continue;
+      ambiguities.push({
+        prn: v.prn,
+        index,
+        aIF: x[index]!,
+        mwCyc: mw.mean,
+        f1: v.f1,
+        f2: v.f2,
+        elevDeg: (v.elRad * 180) / Math.PI,
+      });
+    }
+    const fx = fixPppPosition(
+      {
+        position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+        covariance: P,
+        ambiguities,
+      },
+      NO_FCB,
+      {
+        ratioThreshold: cfg.ratio ?? 3,
+        wlThreshold: cfg.wlThreshold ?? 0.15,
+        minSuccessRate: cfg.successRate ?? 0.999,
+        minFixed: cfg.minFixed ?? 5,
+        maxChi2: cfg.maxChi2 ?? 20,
+      }
+    );
+    if (!fx.fixed) return;
+    this.lastFix = {
+      position: fx.position,
+      nFixed: fx.nFixed,
+      ratio: fx.ratio,
+    };
+    this.firstFixMs ??= tMs;
   }
 
   /** Finalise the session: capture the AR state, flush open arcs, assemble. */
@@ -964,7 +1325,12 @@ export class PppEngine {
       x[IDX_Y]!,
       x[IDX_Z]!,
     ];
-    const llh = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+    const geo = ecefToGeodetic(finalPos[0], finalPos[1], finalPos[2]);
+    const llh: [number, number, number] = [
+      (geo[0] * 180) / Math.PI,
+      (geo[1] * 180) / Math.PI,
+      geo[2],
+    ];
     const finalError3d = truth
       ? Math.hypot(
           finalPos[0] - truth[0],
@@ -986,6 +1352,21 @@ export class PppEngine {
       finalError3d,
       arcs,
       finalState,
+      ...(opts.ar && this.source.phaseBias
+        ? {
+            ar: {
+              firstFixSec:
+                this.firstFixMs === null || !series.length
+                  ? null
+                  : (this.firstFixMs - series[0]!.timeMs) / 1000,
+              nFixedEnd: this.lastFix?.nFixed ?? 0,
+              position: this.lastFix?.position ?? null,
+              fixedEpochShare: series.length
+                ? this.fixedEpochs / series.length
+                : 0,
+            },
+          }
+        : {}),
     };
   }
 }
@@ -1003,7 +1384,7 @@ export function solvePpp(
   const source: PppEphemerisSource =
     'satState' in sp3OrSource
       ? sp3OrSource
-      : new Sp3EphemerisSource(sp3OrSource, opts.clk);
+      : new Sp3EphemerisSource(sp3OrSource, opts.clk, opts.osb);
   const eng = new PppEngine(opts, source);
   for (const epoch of epochs) eng.process(epoch);
   return eng.solution();

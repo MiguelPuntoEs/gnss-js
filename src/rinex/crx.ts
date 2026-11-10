@@ -35,22 +35,16 @@ export interface CrxField {
  */
 export function crxRepair(old: string, diff: string): string {
   const chars = old.split('');
-  for (let i = 0; i < diff.length; i++) {
+  const n = Math.min(old.length, diff.length);
+  for (let i = 0; i < n; i++) {
     const dc = diff[i]!;
-    if (dc === ' ') {
-      // no change — keep chars[i] if it exists
-    } else if (dc === '&') {
-      chars[i] = ' ';
-    } else {
-      chars[i] = dc;
-    }
+    if (dc === ' ') continue; // no change
+    chars[i] = dc === '&' ? ' ' : dc;
   }
-  // If diff is longer than old, append excess (with & → space)
-  if (diff.length > chars.length) {
-    for (let i = chars.length; i < diff.length; i++) {
-      chars[i] = diff[i] === '&' ? ' ' : diff[i]!;
-    }
-  }
+  // Past the end of the old line the difference is literal (a space is a
+  // space), with '&' still meaning a blank — crx2rnx's sprintf branch.
+  for (let i = old.length; i < diff.length; i++)
+    chars[i] = diff[i] === '&' ? ' ' : diff[i]!;
   return chars.join('');
 }
 

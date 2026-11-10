@@ -320,6 +320,20 @@ interface EpochLineInfo {
   satIds?: string[];
 }
 
+/**
+ * Canonical satellite id ("G02") from a RINEX one: some writers pad the
+ * number with a space ("G 2"), RINEX 2 may omit the system letter ("12").
+ */
+function normalizePrn(id: string): string {
+  let sys = id[0]!;
+  let num = id.substring(1);
+  if (sys === ' ' || /\d/.test(sys)) {
+    num = id;
+    sys = 'G';
+  }
+  return sys + num.replace(/\s/g, '').padStart(2, '0');
+}
+
 function parseEpochLine3(line: string): EpochLineInfo | null {
   if (line[0] !== '>') return null;
   const yr = parseInt(line.substring(2, 6));
@@ -525,7 +539,7 @@ export async function parseRinexStream(
   function processSatLineV3(line: string) {
     if (!header || line.length < 3) return;
     const sys = line[0]!;
-    const prn = line.substring(0, 3);
+    const prn = normalizePrn(line.substring(0, 3));
     trackSat(sys, prn);
     const obsLine = line.substring(3);
     const codes = header.obsTypes[sys] ?? [];
@@ -557,10 +571,8 @@ export async function parseRinexStream(
 
   function processSatLineV2(line: string) {
     if (!header || v2SatIndex >= v2SatIds.length) return;
-    const satId = v2SatIds[v2SatIndex]!;
-    let sys = satId[0]!;
-    if (sys === ' ' || /\d/.test(sys)) sys = 'G';
-    const prn = sys + satId.substring(1).padStart(2, '0');
+    const prn = normalizePrn(v2SatIds[v2SatIndex]!);
+    const sys = prn[0]!;
 
     // Only count satellite on first line
     if (v2CurrentSatLine === 0) {
@@ -700,6 +712,9 @@ export async function parseRinexStream(
           // Apply text differencing
           epochLine = crxRepair(crxPrevEpochLine, line);
         }
+        // crx2rnx chops trailing blanks off the repaired line (CHOP_BLANK)
+        // before it becomes the reference for the next epoch's difference.
+        epochLine = epochLine.replace(/ +$/, '');
 
         if (isV3) {
           if (epochLine[0] !== '>') return; // not a valid epoch
@@ -723,11 +738,15 @@ export async function parseRinexStream(
 
           resetEpochAccum(info);
 
-          // Extract satellite list from position 41+
-          const satPart = epochLine.substring(41).replace(/\s+$/, '');
+          // Satellite list from position 41+, exactly numSats of them:
+          // when an epoch has fewer satellites than the last, the repaired
+          // line keeps the old line's tail (crx2rnx keeps it too, as the
+          // reference for the next difference) — it must not be read.
           crxSatList = [];
-          for (let i = 0; i + 3 <= satPart.length; i += 3) {
-            crxSatList.push(satPart.substring(i, i + 3));
+          for (let k = 0; k < info.numSats; k++) {
+            crxSatList.push(
+              normalizePrn(epochLine.substring(41 + 3 * k, 44 + 3 * k))
+            );
           }
 
           crxSatIndex = 0;
@@ -753,11 +772,10 @@ export async function parseRinexStream(
           }
 
           resetEpochAccum(info);
-          crxSatList = (info.satIds ?? []).map((id) => {
-            let sys = id[0]!;
-            if (sys === ' ' || /\d/.test(sys)) sys = 'G';
-            return sys + id.substring(1).padStart(2, '0');
-          });
+          // Only numSats ids: the repaired line may keep a stale tail.
+          crxSatList = (info.satIds ?? [])
+            .slice(0, info.numSats)
+            .map(normalizePrn);
           crxSatIndex = 0;
           crxPrevEpochLine = epochLine;
           crxPhase = 'clock';

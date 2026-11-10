@@ -104,6 +104,11 @@
       "types": "./dist/positioning.d.ts",
       "import": "./dist/positioning.js",
       "require": "./dist/positioning.cjs"
+    },
+    "./osnma": {
+      "types": "./dist/osnma.d.ts",
+      "import": "./dist/osnma.js",
+      "require": "./dist/osnma.cjs"
     }
   },
   "main": "./dist/index.cjs",

@@ -305,6 +305,28 @@ export interface LambdaResult {
    * typically cap it (RTKLIB uses 999.9) before thresholding.
    */
   ratio: number;
+  /**
+   * Bootstrapped success rate of the decorrelated ambiguities,
+   * Π (2Φ(1/(2σᵢ)) − 1) over the conditional standard deviations σᵢ —
+   * a lower bound on the probability that the integer solution is right
+   * (Teunissen 1998). Unlike the ratio, it depends only on the model's
+   * precision, so it refuses fixes the float solution can't yet support.
+   */
+  successRate: number;
+}
+
+/** Standard normal CDF (Abramowitz–Stegun 7.1.26 erf, |ε| < 1.5e-7). */
+function normCdf(x: number): number {
+  const z = Math.abs(x) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * z);
+  const erf =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) *
+      t +
+      0.254829592) *
+      t *
+      Math.exp(-z * z);
+  return x >= 0 ? 0.5 * (1 + erf) : 0.5 * (1 - erf);
 }
 
 /**
@@ -359,7 +381,10 @@ export function lambdaSearch(
     candidates.push(v);
   }
   const ratio = m >= 2 && s[0] > 0 ? s[1] / s[0] : Infinity;
-  return { candidates, residuals: s, ratio };
+  let successRate = 1;
+  for (let i = 0; i < n; i++)
+    successRate *= 2 * normCdf(1 / (2 * Math.sqrt(D[i]!))) - 1;
+  return { candidates, residuals: s, ratio, successRate };
 }
 
 /**
