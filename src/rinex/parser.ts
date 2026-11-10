@@ -104,6 +104,21 @@ export function systemName(code: string): string {
 /*  Header parser                                                      */
 /* ================================================================== */
 
+/**
+ * The header of a RINEX observation file (2/3/4, Hatanaka too) from its
+ * leading text — enough to review an occupation (marker, antenna, height,
+ * receiver, first epoch) without reading the observations. Null when the
+ * text holds no complete header.
+ */
+export function parseRinexHeaderText(text: string): RinexHeader | null {
+  const lines = text.split(/\r?\n/);
+  const end = lines.findIndex((l) => l.includes('END OF HEADER'));
+  if (end < 0) return null;
+  const h = parseHeader(lines.slice(0, end + 1));
+  if (/COMPACT RINEX|CRINEX/.test(lines[0] ?? '')) h.isCrx = true;
+  return h;
+}
+
 function parseHeader(lines: string[]): RinexHeader {
   const h: RinexHeader = {
     version: 0,
