@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New — network alignment (`analysis`)
+
+`estimateHelmert(from, to, opts)` estimates the transformation that maps one day's solutions of reference stations onto their known coordinates. It is robust: the worst reference is dropped while any residual exceeds `maxResidualM` (1.5 cm). Two models are available: `'translation'` (regional networks) and `'similarity'` (7 parameters, centred for conditioning). `applyHelmertFit` applies the result to every station of the day. This is the daily datum definition / common-mode removal of network GNSS processing.
+
 ### New — station coordinate time series (`analysis`)
 
 `fitCoordinateSeries(samples, opts)` turns a station's position solutions (e.g. daily PPP) into the standard trajectory model:
