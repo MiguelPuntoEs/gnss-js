@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### New — Android raw GNSS logs (`android`)
+
+A new `gnss-js/android` entry reads the text logs Google's GnssLogger app writes from `android.location.GnssMeasurement`: `parseAndroidGnssLog(text)` returns measurement epochs in the same shape as the receiver decoders (`prn`, RINEX `code`, pseudorange, carrier phase, Doppler, C/N0, a half-cycle flag and a lock time that restarts at cycle slips), the phone's own `Fix` positions and the device line; `isAndroidGnssLog` detects the format.
+
+- **Signals:** GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC and SBAS, on L1/E1/B1C, B1I, L5/E5a/B2a, E5b and E6. The tracking attribute comes from the `CodeType` column when present, otherwise from the band.
+- **Pseudoranges:** reconstructed as Google's gps-measurement-tools and Rokubun's android_rinex do.
+  - Reception time is the hardware clock minus `FullBiasNanos + BiasNanos`. The bias is held per hardware-clock segment, so code and phase stay on one clock.
+  - Transmission time comes from `ReceivedSvTimeNanos` in each system's time scale: GLONASS time of day in UTC+3 h, BeiDou BDT = GPS − 14 s.
+  - The arithmetic is in integer nanoseconds, because these clock values exceed what a double holds exactly.
+- **Filtering:** only code-locked measurements with a resolved time of week (time of day for GLONASS) are kept.
+- **Validation:**
+  - Against Google's own numbers for its demo log: identical satellite-to-satellite pseudoranges (0.0 mm spread over 1,376 measurements).
+  - Against Rokubun's converter on a Samsung S22 log (GPS/GLONASS/Galileo/BeiDou, L1+L5): all 8,101 pseudoranges within 4 cm (RINEX output rounding) and Doppler within 0.0005 Hz.
+  - On a Pixel 8a, epoch-to-epoch code-minus-phase is 2.7 m median against Rokubun's 28.7 m, which computes the clock in floating point.
+
 ## 2.12.0
 
 ### New — Galileo OSNMA navigation message authentication (`osnma`)

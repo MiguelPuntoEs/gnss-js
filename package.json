@@ -109,6 +109,11 @@
       "types": "./dist/osnma.d.ts",
       "import": "./dist/osnma.js",
       "require": "./dist/osnma.cjs"
+    },
+    "./android": {
+      "types": "./dist/android.d.ts",
+      "import": "./dist/android.js",
+      "require": "./dist/android.cjs"
     }
   },
   "main": "./dist/index.cjs",

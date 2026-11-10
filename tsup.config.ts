@@ -25,6 +25,7 @@ export default defineConfig({
     nmea: './src/nmea/index.ts',
     signals: './src/signals/index.ts',
     osnma: './src/osnma/index.ts',
+    android: './src/android/index.ts',
   },
   dts: true,
   shims: true,

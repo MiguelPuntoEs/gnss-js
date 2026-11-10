@@ -14,7 +14,7 @@ Everything is exposed through subpath exports (`gnss-js/rinex`, `gnss-js/positio
 
 ## What's inside
 
-- **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX.
+- **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX; Android raw GNSS logs (GnssLogger).
 - **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression.
 - **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2 and B-CNAV1/2/3 (B1C/B2a/B2b), GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
 - **Authentication** — Galileo OSNMA: the full chain of trust from the Merkle root through ECDSA-signed TESLA keys to per-satellite MAC tags, flagging navigation data Galileo did not sign.
@@ -94,11 +94,14 @@ import { parseUbxRawx, parseUbxRawNav } from 'gnss-js/ubx'; // u-blox
 import { parseNovatelRange, parseNovatelNav } from 'gnss-js/novatel'; // NovAtel OEM4
 import { parseTrimble, parseTrimbleNav } from 'gnss-js/trimble'; // Trimble
 import { parseBinex } from 'gnss-js/binex'; // BINEX
+import { parseAndroidGnssLog } from 'gnss-js/android'; // Android GnssLogger text logs
 
 const sbf = parseSbfMeas(bytes); // measurement epochs + counts
 const nav = parseSbfNav(bytes); // GPS/GAL/BDS/GLO ephemeris from raw blocks
 const has = parseSbfHas(bytes); // Galileo HAS (E6 C/NAV) SSR corrections
 ```
+
+Android phones log raw measurements (`android.location.GnssMeasurement`) through Google's GnssLogger app. `parseAndroidGnssLog(text)` rebuilds pseudoranges, carrier phase, Doppler and C/N0 per signal (GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC, SBAS; L1/E1/B1 and L5/E5a/B2a), in the same epoch shape as the receiver decoders, plus the phone's own position fixes. It matches Google's gps-measurement-tools pseudoranges exactly.
 
 ### Galileo OSNMA (navigation message authentication)
 
