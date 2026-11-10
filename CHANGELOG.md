@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### New — GPT3 + VMF3 troposphere (`troposphere`)
+
+A new `gnss-js/troposphere` entry implements GPT3 and VMF3 (Landskron & Böhm 2018) on TU Wien's grid (VMF Data Server, CC BY 4.0). GPT3 is an empirical 5° climatology of pressure, temperature, humidity, mapping coefficients and gradients. VMF3 provides the mapping functions, with degree-12 empirical b/c coefficients and the Niell height correction.
+
+- `parseGpt3Grid`, `gpt3` and `vmf3`;
+- `saastamoinenZhd`;
+- `createGpt3Troposphere(grid)`, which plugs into the PPP engine through the new `PppOptions.troposphereModel` (a-priori ZHD from GPT3 pressure, VMF3 mapping, GPT3 gradients).
+
+Niell with the standard atmosphere stays the default. Over 24-hour and 2-hour PPP at WTZR (42 days) and BRST (24 days), GPT3 + VMF3 did not change the height scatter beyond noise, because the estimated wet delay absorbs the a-priori differences.
+
 ### New — ocean tide loading (`positioning`)
 
 `createPppCorrections({ oceanLoading })` applies a station's ocean tide loading displacement, given its BLQ coefficients (the Onsala service's format). `parseBlq` reads BLQ files and `oceanLoadingEnu` synthesises the displacement from the 11 main constituents with IERS astronomical arguments, as RTKLIB does. At Brest (M2 radial 4.2 cm), over 24 monthly days of 2-hour PPP sessions, it cut the height bias from 25.4 to 5.1 mm and the height scatter from 53.9 to 17.9 mm. Full-day solutions barely change (the loading averages out), as expected.

@@ -106,6 +106,12 @@ if [[ ! -f "$DIR/CNES_ABS_ge.bia.gz" ]]; then
   fi
 fi
 
+# TU Wien GPT3 5° grid (VMF Data Server, CC BY 4.0) for the troposphere
+# tests. Best-effort: they skip without it.
+if ! download "https://vmf.geo.tuwien.ac.at/codes/gpt3_5.grd" "$DIR/gpt3_5.grd"; then
+  echo "  ⚠ GPT3 grid unavailable — the GPT3 tests will skip" >&2
+fi
+
 # ESA MGEX final orbits (SP3, 2024/001) — precise-orbit truth for the
 # broadcast-vs-precise test. Best-effort: ESA's navigation-office server
 # is the only source and is unreliable from CI IPs, so a failure here

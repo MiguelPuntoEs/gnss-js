@@ -114,6 +114,11 @@
       "types": "./dist/android.d.ts",
       "import": "./dist/android.js",
       "require": "./dist/android.cjs"
+    },
+    "./troposphere": {
+      "types": "./dist/troposphere.d.ts",
+      "import": "./dist/troposphere.js",
+      "require": "./dist/troposphere.cjs"
     }
   },
   "main": "./dist/index.cjs",
