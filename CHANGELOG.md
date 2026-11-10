@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### New — station coordinate time series (`analysis`)
+
+`fitCoordinateSeries(samples, opts)` turns a station's position solutions (e.g. daily PPP) into the standard trajectory model:
+
+- an offset and a velocity per local East/North/Up component;
+- steps at given jumps (antenna changes, earthquakes);
+- annual and semi-annual terms, automatically once the span reaches two years;
+- weights from the daily formal errors.
+
+Outliers are rejected iteratively against a robust scale (1.4826 × MAD). Further jumps can be found by a greedy BIC search. It reports velocities with white-noise formal errors scaled by the variance factor, step sizes, seasonal amplitudes, the WRMS, and per-point model values and outlier flags.
+
+On 42 monthly daily PPP solutions of WTZR (2023–2026) it recovers the IGS20 velocity to 0.09 / 0.03 / 0.5 mm/yr (E/N/U), with a WRMS of 2.1 / 1.4 / 5.0 mm.
+
 ## 2.13.1
 
 ### Fixed — PPP with receivers whose clock drifts (`positioning`)
