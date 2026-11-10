@@ -154,3 +154,27 @@ describe('fitCoordinateSeries outlier test on short series', () => {
     expect(caught).toBeGreaterThanOrEqual(40);
   });
 });
+
+describe('fitCoordinateSeries known jumps', () => {
+  it('merges steps with no sample between them instead of failing', () => {
+    const pts: CoordinateSample[] = Array.from({ length: 13 }, (_, i) => {
+      const tMs = T0 + i * 30 * DAY;
+      const step = i >= 5 ? 0.02 : 0;
+      return {
+        tMs,
+        ecef: enuToEcef(0.02 * ((tMs - T0) / YEAR) + step, 0, 0),
+        sigmaEnu: [0.002, 0.002, 0.005],
+      };
+    });
+    // Three steps inside the gap between samples 4 and 5 (an earthquake
+    // sequence between two monthly days).
+    const gap = T0 + 4 * 30 * DAY;
+    const f = fitCoordinateSeries(pts, {
+      jumps: [gap + 2 * DAY, gap + 9 * DAY, gap + 20 * DAY],
+      detectJumps: false,
+    });
+    expect(f).not.toBeNull();
+    expect(f!.jumps).toHaveLength(1);
+    expect(f!.e.steps[0]).toBeCloseTo(0.02, 3);
+  });
+});

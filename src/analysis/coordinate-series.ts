@@ -154,6 +154,35 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }
 
+/**
+ * Known steps the data can resolve: within the series, and one per gap
+ * between consecutive samples — several steps with no sample between them
+ * (an earthquake sequence between two monthly days) are indistinguishable
+ * and would make the fit singular. The first of each gap is kept.
+ */
+function identifiableJumps(
+  jumps: readonly number[],
+  t: readonly number[]
+): number[] {
+  const out: number[] = [];
+  let lastGap = -1;
+  for (const j of [...jumps].sort((a, b) => a - b)) {
+    if (!(j > t[0]! && j <= t[t.length - 1]!)) continue;
+    // Index of the first sample at or after the step.
+    let lo = 0;
+    let hi = t.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (t[mid]! >= j) hi = mid;
+      else lo = mid + 1;
+    }
+    if (lo === lastGap) continue;
+    lastGap = lo;
+    out.push(j);
+  }
+  return out;
+}
+
 /** Standard normal quantile (Acklam's rational approximation, ~1e-9). */
 function normalQuantile(p: number): number {
   const a = [
@@ -302,9 +331,7 @@ export function fitCoordinateSeries(
       : opts.seasonal;
   const design: Design = {
     refEpochMs: opts.refEpochMs ?? (t[0]! + t[t.length - 1]!) / 2,
-    jumps: [...(opts.jumps ?? [])]
-      .filter((j) => j > t[0]! && j <= t[t.length - 1]!)
-      .sort((a, b) => a - b),
+    jumps: identifiableJumps(opts.jumps ?? [], t),
     seasonal,
   };
   const detected = new Set<number>();

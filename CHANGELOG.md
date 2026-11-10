@@ -14,6 +14,10 @@
 
 Reads a RINEX observation header (2/3/4, including Hatanaka) from its leading text alone: marker, antenna and radome, antenna offsets, receiver and first epoch. This lets you review an occupation without parsing the observations.
 
+### Fixed — clustered known jumps made the fit fail (`analysis`)
+
+Known jumps with no sample between them, such as an earthquake sequence falling between two monthly days, are indistinguishable. Before, they made the fit singular and `fitCoordinateSeries` returned null. They now merge into one step, keeping the first.
+
 ### Fixed — outlier test rejected good days in short series (`analysis`)
 
 `fitCoordinateSeries` dropped good days far too often on short series. It recomputed the robust scale from the surviving days after each rejection, so the scale shrank and the rejections cascaded. On clean simulated 12-day series it dropped a day in 14% of them; 2% of all days were flagged where a 4σ test should flag about 0.02%. The scale now comes from every residual, corrected for the fitted parameters and floored at half the median formal σ. The threshold grows with the 3n component tests (at least `outlierK`), and series with under 6 degrees of freedom keep every day. Clean 12-day series now lose a day 1% of the time, and a 3 cm vertical blunder is still caught 90% of the time (95% before).
