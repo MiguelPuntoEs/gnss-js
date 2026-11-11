@@ -15,7 +15,7 @@ Everything is exposed through subpath exports (`gnss-js/rinex`, `gnss-js/positio
 ## What's inside
 
 - **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX; Android raw GNSS logs (GnssLogger).
-- **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression.
+- **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression; RTCM3 encoding (MSM1–7, station, ephemeris) to turn any supported receiver into a reference-station stream.
 - **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2 and B-CNAV1/2/3 (B1C/B2a/B2b), GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
 - **Authentication** — Galileo OSNMA: the full chain of trust from the Merkle root through ECDSA-signed TESLA keys to per-satellite MAC tags, flagging navigation data Galileo did not sign.
 - **Orbits** — satellite position/velocity, Doppler, DOP, azimuth/elevation, pass prediction and almanac propagation.
@@ -140,6 +140,28 @@ for (const frame of decoder) {
 }
 ```
 
+Encoding goes the other way: receiver epochs and ephemerides in, a reference-station stream out (what `str2str -out …#rtcm3` produces). `RtcmBaseEncoder` is stateful, so feed epochs in time order: it tracks lock arcs so rovers see every cycle slip, and sends station messages on a cadence and each satellite's current ephemeris when it changes.
+
+```ts
+import { RtcmBaseEncoder } from 'gnss-js/rtcm3';
+import { parseUbxRawx, parseUbxNav } from 'gnss-js/ubx';
+
+const enc = new RtcmBaseEncoder({
+  msm: 7, // 1–7; MSM1–3 are compact (ranges modulo 1 ms)
+  stationId: 1234,
+  arp: { position: [x, y, z], antennaHeight: 0 }, // → 1006
+  descriptors: { antennaType: 'TRM59800.00     SCIS' }, // → 1033
+});
+enc.addEphemerides(parseUbxNav(bytes).ephemerides);
+for (const epoch of parseUbxRawx(bytes).epochs) {
+  for (const frame of enc.encodeEpoch(epoch)) socket.write(frame); // framed RTCM3
+}
+```
+
+Any receiver decoder's epochs work (UBX, SBF, NovAtel, Trimble, BINEX); `receiverToRtcm3(epochs, ephemerides, opts)` converts a whole log at once. Lower-level pieces are exported too: `MsmEncoder`, `encodeEphemeris`, `encodeStationArp`, `encodeStationDescriptors`, `encodeGloBiases`.
+
+The encoder is checked three ways. Re-encoding a Trimble base's RTCM stream reproduces its MSM7, 1006, 1033, 1230 and ephemeris messages bit for bit. A NovAtel base log sent through MSM7 gives the same RTK fix as the raw log, within 0.5 mm. And RTKLIB decodes the stream to the same observations as its own NovAtel and u-blox readers.
+
 ```ts
 import { Rtcm2Decoder, rtcm2Observation, rtcm2Station } from 'gnss-js/rtcm2';
 
@@ -255,7 +277,7 @@ All functions use consistent units, with explicit `@param`/`@returns` JSDoc:
 ## Roadmap
 
 - **Class-based API** — ergonomic wrappers (`GnssTime.fromUtc(date).gps`, `Position.fromGeodetic(...).utm`) over the functional core.
-- **RTCM3 MSM1–3** and NavIC 1041 ephemeris decoding.
+- **`gnss str2str` command** — receiver (serial/TCP/NTRIP) → RTCM3 over a TCP server, on top of `RtcmBaseEncoder`. Design: [docs/str2str-cli.md](docs/str2str-cli.md).
 - **Real-time SSR/HAS application** — feeding decoded corrections into a live PPP solve.
 
 ## Development
