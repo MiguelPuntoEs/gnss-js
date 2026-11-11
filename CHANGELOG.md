@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.40.0
+
+### Fixed — PPP-AR no longer reports a stale fix
+
+- A static session whose final fix attempt failed used to report its last accepted fix as the session's ambiguity-fixed position, however early in the session it was. On 2–4 h sessions at 25 IGS stations that fix was often 10–46 cm from the truth, because the filter had moved on since.
+  - The fallback is now kept only while it lies within `ar.maxFloatGapM` (default 0.03 m) of the final float position. Otherwise `ar.rejected` is `'float-gap'` and `ar.position` is `null`.
+  - A fix from the final attempt is reported as before. On short sessions a correct fix can sit a few centimetres from the not-yet-converged float, so the distance test applies only to fallbacks.
+  - Against the IGS weekly solution the worst errors drop to those of float PPP (4 h: 30 → 3.7 cm horizontal; 2 h: 46 → 20 cm), and ambiguity fixing still improves the 2 h median horizontal error from 1.28 to 0.82 cm.
+
+### Added
+
+- `fixPppPosition()` returns `covariance`: the position covariance given the fixed integers (Q_xx − Q_xz·Q_zz⁻¹·Q_zx). `PppSolution.ar.covariance` carries it, so a fixed position no longer has to borrow the float covariance.
+- `PppSolution.ar.floatGapM`: the 3D distance between the fix and the final float position.
+
 ## 2.39.0
 
 ### Added — Switzerland: CH1903+ / LV95
