@@ -6,3 +6,4 @@ export * from './projections';
 export * from './transverse-mercator';
 export * from './national-grids';
 export * from './oblique-stereographic';
+export * from './lambert-conformal-conic';

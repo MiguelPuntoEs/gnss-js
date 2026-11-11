@@ -67,3 +67,4 @@
 !/test-fixtures/nsgi_nlgeo2018.bin
 !/test-fixtures/os_ostn15_testpoints.json
 !/test-fixtures/etrf97_proj.json
+!/test-fixtures/lambert_proj.json

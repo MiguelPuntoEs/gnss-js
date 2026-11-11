@@ -63,6 +63,7 @@ const itrf = transformFrame(
 // shift grid) and ETRS89-DNK; TM35FIN, NTM, DKTM, MGA and MTM grids are built in.
 // Netherlands: itrfToRdnap() — RDNAPTRANS2018 to RD x/y and NAP heights.
 // Great Britain: itrfToOsgb() — OSTN15/OSGM15 to the National Grid and ODN.
+// France: LAMBERT_93 / FRANCE_CC_ZONES with geodeticToLambertConformalConic().
 const sweref = itrfToSweref99(
   itrf,
   'ITRF2020',
