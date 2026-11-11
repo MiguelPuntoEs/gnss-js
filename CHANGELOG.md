@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.30.1
+## 2.32.1
 
 ### Fixed — SBAS left out of the multipath sky map (`analysis`)
 
