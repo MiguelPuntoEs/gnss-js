@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.27.0
+
+### Changed — PPP is 1.8× faster (`positioning`)
+
+`solvePpp`'s Kalman filter updated its full covariance for every observation, although each observation touches only position, clock, tropospheric delay and one ambiguity out of ~100 states. It now works from those entries and updates one triangle of the (symmetric) covariance: a 24-hour, 30-second multi-GNSS day goes from 1.06 to 0.59 s, with the same position to 0.01 mm. Campaign processing in gnsscalc spends most of its computing time here.
+
 ## 2.26.2
 
 ### Fixed — no multipath for GPS IIR satellites (`analysis`)
