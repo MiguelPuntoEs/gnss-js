@@ -357,3 +357,5 @@ export function dateToEpoch(date: Date): number {
   const end = Date.UTC(year + 1, 0, 1);
   return year + (date.getTime() - start) / (end - start);
 }
+
+export * from './plate-motion';

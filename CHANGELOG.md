@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### New — plate motion: move ITRF2020 coordinates between epochs (`frames`)
+
+`transformFrame` changes the frame at one epoch; points on the ground also move within ITRF with their plate, a few centimetres a year. Two new functions handle that:
+
+- `plateVelocity(xyz, plate)` — the horizontal ITRF2020 velocity of a point riding one of the 13 plates of the ITRF2020 plate motion model (Altamimi et al. 2023), including the origin rate bias. The model's vertical rates are discarded, as its authors advise. Poles and bias are exported as `ITRF2020_PMM` and `ITRF2020_PMM_ORB`.
+- `propagatePosition(xyz, velocity, fromEpoch, toEpoch)` — linear propagation with that velocity, or with a known one (a SINEX station velocity, a campaign estimate).
+
+Which plate a point is on is left to the caller; gnss-js ships no plate boundaries.
+
+Validation against 332 IGS20 station velocities, each assigned its plate from Bird's PB2002 boundaries: the 297 on the model's 13 plates fit with a median horizontal misfit of 0.71 mm/yr, and 77 % within 2 mm/yr. The misfits above that are deforming zones (Tibet, Chile, California, Japan, the Solomon Islands), where no rigid plate applies. The other 35 are on plates the model doesn't have (Sunda, Yangtze, Okhotsk, Philippine Sea, Anatolia, …).
+
 ## 2.16.0
 
 ### Fixed — RTK across receiver makes: Galileo dropped, BeiDou biased (`positioning`)
