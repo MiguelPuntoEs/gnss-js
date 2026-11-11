@@ -54,6 +54,38 @@ describe('ecef', () => {
     expect(h2).toBeCloseTo(h, 3);
   });
 
+  it('ecefToGeodetic keeps the height right a hair from the pole', () => {
+    // ECEF from the closed form in 40-digit arithmetic. The old height
+    // formula p / cosφ − N was 0.35 m off 1 cm from the axis, 28 m at 0.1 mm.
+    const cases: [number, number, [number, number, number]][] = [
+      [
+        89.9999999,
+        0,
+        [0.011136666207023395, 0.0008544685429499898, 6356752.314245179],
+      ],
+      [
+        89.9999999,
+        20200000,
+        [0.04628900095471759, 0.003551556135842901, 26556752.31424518],
+      ],
+      [
+        -89.999999999,
+        0,
+        [0.00011136666207023394, 8.544685429499898e-6, -6356752.314245179],
+      ],
+      [
+        89.99999,
+        75.825,
+        [1.1136798158794736, 0.08544786670423977, 6356828.139245082],
+      ],
+    ];
+    for (const [latDeg, h, xyz] of cases) {
+      const [lat, , h2] = ecefToGeodetic(...xyz);
+      expect(Math.abs(h2 - h)).toBeLessThan(1e-6);
+      expect(Math.abs(lat - deg2rad(latDeg))).toBeLessThan(1e-14);
+    }
+  });
+
   it('ecefToGeodetic handles north pole', () => {
     const [lat, ,] = ecefToGeodetic(0, 0, 6356752.314245);
     expect(lat).toBeCloseTo(Math.PI / 2, 5);

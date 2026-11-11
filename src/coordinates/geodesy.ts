@@ -1,18 +1,23 @@
 import {
   WGS84_SEMI_MAJOR_AXIS,
-  WGS84_SEMI_MINOR_AXIS,
   WGS84_FLATTENING,
   WGS84_ECCENTRICITY_SQUARED,
 } from '../constants/wgs84';
+import { geodesicDirect, geodesicInverse } from './karney';
+
+const R2D = 180 / Math.PI;
+const D2R = Math.PI / 180;
 
 /**
- * Vincenty's inverse formula — orthodromic (great-circle) distance,
- * initial bearing, and final bearing on the WGS84 ellipsoid.
- * All angles in radians.
+ * Geodesic (orthodromic) distance, initial bearing and final bearing on
+ * the WGS84 ellipsoid between two points. All angles in radians.
+ *
+ * Solved with Karney's algorithm (see ./karney), accurate to ~15 nm
+ * everywhere — nearly antipodal points included, where Vincenty's
+ * iteration (used up to 2.31) failed by up to tens of kilometres. The
+ * name is kept for compatibility.
  * @returns { distance (m), initialBearing (rad), finalBearing (rad),
- *   converged } — `converged` is false for near-antipodal pairs, where the
- *   iteration fails and a spherical approximation is returned instead
- *   (distance good to ~0.5 %, bearings unreliable).
+ *   converged } — `converged` is always true now; kept for compatibility.
  */
 export function vincenty(
   lat1: number,
@@ -25,129 +30,20 @@ export function vincenty(
   finalBearing: number;
   converged: boolean;
 } {
-  const U1 = Math.atan((1 - WGS84_FLATTENING) * Math.tan(lat1));
-  const U2 = Math.atan((1 - WGS84_FLATTENING) * Math.tan(lat2));
-  const sinU1 = Math.sin(U1),
-    cosU1 = Math.cos(U1);
-  const sinU2 = Math.sin(U2),
-    cosU2 = Math.cos(U2);
-
-  let lambda = lon2 - lon1;
-  let lambdaPrev: number;
-  let sinSigma: number, cosSigma: number, sigma: number;
-  let sinAlpha: number, cos2Alpha: number, cos2SigmaM: number;
-  let C: number;
-
-  let iter = 0;
-  do {
-    const sinLambda = Math.sin(lambda);
-    const cosLambda = Math.cos(lambda);
-
-    sinSigma = Math.sqrt(
-      (cosU2 * sinLambda) ** 2 +
-        (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda) ** 2
-    );
-
-    if (sinSigma === 0) {
-      return {
-        distance: 0,
-        initialBearing: 0,
-        finalBearing: 0,
-        converged: true,
-      };
-    }
-
-    cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda;
-    sigma = Math.atan2(sinSigma, cosSigma);
-
-    sinAlpha = (cosU1 * cosU2 * sinLambda) / sinSigma;
-    cos2Alpha = 1 - sinAlpha ** 2;
-
-    cos2SigmaM =
-      cos2Alpha !== 0 ? cosSigma - (2 * sinU1 * sinU2) / cos2Alpha : 0;
-
-    C =
-      (WGS84_FLATTENING / 16) *
-      cos2Alpha *
-      (4 + WGS84_FLATTENING * (4 - 3 * cos2Alpha));
-    lambdaPrev = lambda;
-    lambda =
-      lon2 -
-      lon1 +
-      (1 - C) *
-        WGS84_FLATTENING *
-        sinAlpha *
-        (sigma +
-          C *
-            sinSigma *
-            (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM ** 2)));
-  } while (Math.abs(lambda - lambdaPrev) > 1e-12 && ++iter < 200);
-
-  if (iter >= 200) {
-    // Antipodal or near-antipodal: Vincenty fails to converge.
-    // Fall back to spherical great-circle approximation.
-    const cosLat1 = Math.cos(lat1),
-      sinLat1 = Math.sin(lat1);
-    const cosLat2 = Math.cos(lat2),
-      sinLat2 = Math.sin(lat2);
-    const dLon = lon2 - lon1;
-    sigma = Math.acos(
-      Math.min(
-        1,
-        Math.max(-1, sinLat1 * sinLat2 + cosLat1 * cosLat2 * Math.cos(dLon))
-      )
-    );
-    // Use mean radius for distance when Vincenty won't converge
-    const distance = WGS84_SEMI_MAJOR_AXIS * sigma;
-    const ib = Math.atan2(
-      cosLat2 * Math.sin(dLon),
-      cosLat1 * sinLat2 - sinLat1 * cosLat2 * Math.cos(dLon)
-    );
-    const fb = Math.atan2(
-      cosLat1 * Math.sin(-dLon),
-      -sinLat1 * cosLat2 + cosLat1 * sinLat2 * Math.cos(-dLon)
-    );
-    return { distance, initialBearing: ib, finalBearing: fb, converged: false };
-  }
-
-  const uSq =
-    (cos2Alpha! * (WGS84_SEMI_MAJOR_AXIS ** 2 - WGS84_SEMI_MINOR_AXIS ** 2)) /
-    WGS84_SEMI_MINOR_AXIS ** 2;
-  const A = 1 + (uSq / 16384) * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)));
-  const B = (uSq / 1024) * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)));
-  const deltaSigma =
-    B *
-    sinSigma! *
-    (cos2SigmaM! +
-      (B / 4) *
-        (cosSigma! * (-1 + 2 * cos2SigmaM! ** 2) -
-          (B / 6) *
-            cos2SigmaM! *
-            (-3 + 4 * sinSigma! ** 2) *
-            (-3 + 4 * cos2SigmaM! ** 2)));
-
-  const distance = WGS84_SEMI_MINOR_AXIS * A * (sigma! - deltaSigma);
-
-  // Bearings
-  const sinLambda = Math.sin(lambda);
-  const cosLambda = Math.cos(lambda);
-
-  const initialBearing = Math.atan2(
-    cosU2 * sinLambda,
-    cosU1 * sinU2 - sinU1 * cosU2 * cosLambda
-  );
-  const finalBearing = Math.atan2(
-    cosU1 * sinLambda,
-    -sinU1 * cosU2 + cosU1 * sinU2 * cosLambda
-  );
-
-  return { distance, initialBearing, finalBearing, converged: true };
+  const g = geodesicInverse(lat1 * R2D, lon1 * R2D, lat2 * R2D, lon2 * R2D);
+  return {
+    distance: g.s12,
+    initialBearing: g.azi1 * D2R,
+    finalBearing: g.azi2 * D2R,
+    converged: true,
+  };
 }
 
 /**
- * Vincenty's direct formula — the point reached from (lat1, lon1) after
+ * Direct geodesic problem — the point reached from (lat1, lon1) after
  * `distance` metres along the geodesic leaving at `bearing` (radians,
- * clockwise from north) on the WGS84 ellipsoid.
+ * clockwise from north) on the WGS84 ellipsoid. Solved with Karney's
+ * algorithm (see ./karney); the name is kept for compatibility.
  * @returns [lat, lon] in radians, lon wrapped to (-π, π]
  */
 export function vincentyDirect(
@@ -156,65 +52,8 @@ export function vincentyDirect(
   bearing: number,
   distance: number
 ): [number, number] {
-  const a = WGS84_SEMI_MAJOR_AXIS,
-    b = WGS84_SEMI_MINOR_AXIS,
-    f = WGS84_FLATTENING;
-  const sinA1 = Math.sin(bearing),
-    cosA1 = Math.cos(bearing);
-  const tanU1 = (1 - f) * Math.tan(lat1);
-  const cosU1 = 1 / Math.sqrt(1 + tanU1 ** 2),
-    sinU1 = tanU1 * cosU1;
-  const sigma1 = Math.atan2(tanU1, cosA1);
-  const sinAlpha = cosU1 * sinA1;
-  const cos2Alpha = 1 - sinAlpha ** 2;
-  const uSq = (cos2Alpha * (a ** 2 - b ** 2)) / b ** 2;
-  const A = 1 + (uSq / 16384) * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)));
-  const B = (uSq / 1024) * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)));
-
-  let sigma = distance / (b * A);
-  let sigmaPrev: number;
-  let cos2SigmaM: number, sinSigma: number, cosSigma: number;
-  let iter = 0;
-  do {
-    cos2SigmaM = Math.cos(2 * sigma1 + sigma);
-    sinSigma = Math.sin(sigma);
-    cosSigma = Math.cos(sigma);
-    const deltaSigma =
-      B *
-      sinSigma *
-      (cos2SigmaM +
-        (B / 4) *
-          (cosSigma * (-1 + 2 * cos2SigmaM ** 2) -
-            (B / 6) *
-              cos2SigmaM *
-              (-3 + 4 * sinSigma ** 2) *
-              (-3 + 4 * cos2SigmaM ** 2)));
-    sigmaPrev = sigma;
-    sigma = distance / (b * A) + deltaSigma;
-  } while (Math.abs(sigma - sigmaPrev) > 1e-12 && ++iter < 200);
-
-  const tmp = sinU1 * sinSigma - cosU1 * cosSigma * cosA1;
-  const lat2 = Math.atan2(
-    sinU1 * cosSigma + cosU1 * sinSigma * cosA1,
-    (1 - f) * Math.sqrt(sinAlpha ** 2 + tmp ** 2)
-  );
-  const lambda = Math.atan2(
-    sinSigma * sinA1,
-    cosU1 * cosSigma - sinU1 * sinSigma * cosA1
-  );
-  const C = (f / 16) * cos2Alpha * (4 + f * (4 - 3 * cos2Alpha));
-  const L =
-    lambda -
-    (1 - C) *
-      f *
-      sinAlpha *
-      (sigma +
-        C *
-          sinSigma *
-          (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM ** 2)));
-  let lon2 = lon1 + L;
-  lon2 = Math.atan2(Math.sin(lon2), Math.cos(lon2));
-  return [lat2, lon2];
+  const d = geodesicDirect(lat1 * R2D, lon1 * R2D, bearing * R2D, distance);
+  return [d.lat2 * D2R, d.lon2 * D2R];
 }
 
 /**

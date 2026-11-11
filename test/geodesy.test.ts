@@ -9,6 +9,7 @@ import {
   horizonDistance,
 } from '../src/coordinates/geodesy';
 import { deg2rad } from '../src/coordinates/units';
+import { geodesicDirect, geodesicInverse } from '../src/coordinates/karney';
 
 describe('vincenty', () => {
   it('computes distance between London and Paris', () => {
@@ -54,13 +55,14 @@ describe('vincenty', () => {
     expect(initialBearing).toBeCloseTo(Math.PI / 2, 2);
   });
 
-  it('handles near-antipodal points without throwing', () => {
-    const { distance } = vincenty(
+  it('handles near-antipodal points', () => {
+    const { distance, converged } = vincenty(
       deg2rad(0),
       deg2rad(0),
       deg2rad(0.5),
       deg2rad(179.5)
     );
+    expect(converged).toBe(true);
     expect(distance).toBeGreaterThan(19_900_000);
     expect(distance).toBeLessThan(20_100_000);
   });
@@ -240,11 +242,96 @@ describe('greatCircleMidpoint is the geodesic midpoint', () => {
   });
 });
 
-describe('vincenty convergence flag', () => {
-  it('is true normally and false for the near-antipodal fallback', () => {
-    expect(
-      vincenty(deg2rad(52), deg2rad(4), deg2rad(48), deg2rad(2)).converged
-    ).toBe(true);
-    expect(vincenty(0, 0, 0, deg2rad(179.7)).converged).toBe(false);
+describe('geodesics against GeographicLib (Karney)', () => {
+  // Reference values from GeographicLib 2.x (Python) Geodesic.WGS84.Inverse.
+  // Vincenty's iteration (up to gnss-js 2.31) failed on the near-antipodal
+  // rows by up to 33 km and tens of degrees of azimuth.
+  const cases: [string, number[], number, number, number][] = [
+    [
+      'Delft–Kootwijk',
+      [51.98602042, 4.38746301, 52.1784, 5.8098],
+      99824.50255814902,
+      77.05741781880961,
+      78.17951336562423,
+    ],
+    [
+      'Sydney–London',
+      [-33.8568, 151.2153, 51.5074, -0.1278],
+      16988648.656495385,
+      -40.68804121996455,
+      -119.66370700931675,
+    ],
+    [
+      'Madrid–Wellington',
+      [40.4168, -3.7038, -41.2865, 174.7762],
+      19854610.375957005,
+      134.27522291982757,
+      46.50368614165229,
+    ],
+    [
+      'near-antipodal off the equator',
+      [0, 0, 0.5, 179.7],
+      19944127.420750458,
+      15.556882793490544,
+      164.44251389085494,
+    ],
+    [
+      'near-antipodal on the equator',
+      [0, 0, 0, 179.5],
+      19980861.908890963,
+      55.966495140158635,
+      124.03350485984137,
+    ],
+    ['antipodal', [10, 20, -10, -160], 20003931.458625447, 0, 180],
+    ['across the pole', [89.9, 0, 89.9, 180], 22338.795682520195, 0, 180],
+    [
+      'to the south pole',
+      [-77.85, 166.67, -90, 0],
+      1356878.0974356667,
+      180,
+      -13.33,
+    ],
+  ];
+  const angErr = (x: number, y: number) =>
+    Math.abs(((x - y + 540) % 360) - 180);
+
+  it.each(cases)('%s', (_name, [la1, lo1, la2, lo2], s12, azi1, azi2) => {
+    const g = geodesicInverse(la1!, lo1!, la2!, lo2!);
+    expect(Math.abs(g.s12 - s12)).toBeLessThan(1e-6);
+    expect(angErr(g.azi1, azi1)).toBeLessThan(1e-9);
+    // At a pole the arrival azimuth depends only on the meridian convention.
+    if (Math.abs(la2!) < 90) expect(angErr(g.azi2, azi2)).toBeLessThan(1e-9);
+
+    const v = vincenty(
+      deg2rad(la1!),
+      deg2rad(lo1!),
+      deg2rad(la2!),
+      deg2rad(lo2!)
+    );
+    expect(v.converged).toBe(true);
+    expect(Math.abs(v.distance - s12)).toBeLessThan(1e-6);
+  });
+
+  it('direct inverts inverse, nearly antipodal included', () => {
+    for (const [, [la1, lo1, la2, lo2]] of cases) {
+      if (Math.abs(la2!) === 90) continue;
+      const g = geodesicInverse(la1!, lo1!, la2!, lo2!);
+      const d = geodesicDirect(la1!, lo1!, g.azi1, g.s12);
+      expect(geodesicInverse(d.lat2, d.lon2, la2!, lo2!).s12).toBeLessThan(
+        1e-6
+      );
+    }
+  });
+
+  it('puts the midpoint of a nearly antipodal geodesic halfway', () => {
+    const [A, B] = [
+      [0, 0],
+      [deg2rad(0.5), deg2rad(179.7)],
+    ] as const;
+    const M = greatCircleMidpoint(A[0], A[1], B[0], B[1]);
+    const dAM = vincenty(A[0], A[1], M[0], M[1]).distance;
+    const dMB = vincenty(M[0], M[1], B[0], B[1]).distance;
+    expect(Math.abs(dAM - dMB)).toBeLessThan(1e-6);
+    expect(Math.abs(dAM - 19944127.420750458 / 2)).toBeLessThan(1e-6);
   });
 });

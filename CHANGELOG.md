@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.32.0
+
+Found by checking every computation on gnsscalc.com/coordinates against 40-digit arithmetic, GeographicLib and PROJ (`coordinates`). Geodetic ↔ ECEF, ENU/AER, rhumb lines, UTM and the frame transformations all agreed to well under a millimetre; two edge cases did not.
+
+### Fixed — geodesics between nearly antipodal points
+
+`vincenty()` and `vincentyDirect()` now solve the geodesic problems with Karney's algorithm (J. Geodesy 87, 2013), ported from GeographicLib (MIT) for WGS84. Vincenty's iteration fails within about 0.6° of the antipode. There it fell back to a spherical estimate:
+
+- Distances were wrong by up to 33 km, bearings by up to 90°.
+- `greatCircleMidpoint()` was off by up to 10,000 km.
+
+Now all three match GeographicLib to nanometres everywhere: 21,000 test pairs, 9,000 of them within 1° of the antipode. Real long-haul pairs (Madrid–Wellington, Seville–Auckland) were already right and are unchanged. The names stay for compatibility, and `converged` is now always `true`.
+
+### Added
+
+- `geodesicInverse(lat1, lon1, lat2, lon2)` and `geodesicDirect(lat1, lon1, azi1, s12)`, in degrees, for the WGS84 inverse and direct problems.
+
+### Fixed — ellipsoidal height near the poles
+
+`ecefToGeodetic()` computed the height as p / cos φ − N, which divides by cos φ → 0 at the poles. The height was 1 mm wrong 1 m from the polar axis, 0.35 m at 1 cm and 28 m at 0.1 mm (more at orbital heights). It now uses h = p·cos φ + z·sin φ − a·√(1 − e²·sin²φ), which is well conditioned at every latitude: under 0.2 µm everywhere. Latitude and longitude were already right.
+
 ## 2.31.0
 
 ### New — SWEREF 99 and the Swedish national grids (`coordinates`, `frames`)
