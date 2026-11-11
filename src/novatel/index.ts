@@ -25,6 +25,19 @@ export type { NovatelNavResult } from './nav';
 export { parseNovatelPvt } from './pvt';
 export type { NovatelPvtResult } from './pvt';
 export type { ReceiverPvt } from '../receiver-pvt';
+export { parseNovatelHealth, type NovatelHealthResult } from './health';
+export { summarizeReceiverHealth } from '../receiver-health';
+export type {
+  ReceiverHealth,
+  ReceiverHealthRecord,
+  AntennaHealth,
+  AntennaState,
+  RfBandHealth,
+  JammingState,
+  InterferenceReport,
+  HealthFlag,
+  HealthLevel,
+} from '../receiver-health';
 
 export interface NovatelMeasurement {
   /** RINEX PRN, e.g. "G04", "R11", "S23", "J01". */

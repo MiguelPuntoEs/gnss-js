@@ -176,3 +176,16 @@ export type { UbxRawNavOptions, UbxRawNavResult } from './rawnav';
 export { parseUbxPvt } from './pvt';
 export type { UbxPvtResult } from './pvt';
 export type { ReceiverPvt } from '../receiver-pvt';
+export { parseUbxHealth, type UbxHealthResult } from './health';
+export { summarizeReceiverHealth } from '../receiver-health';
+export type {
+  ReceiverHealth,
+  ReceiverHealthRecord,
+  AntennaHealth,
+  AntennaState,
+  RfBandHealth,
+  JammingState,
+  InterferenceReport,
+  HealthFlag,
+  HealthLevel,
+} from '../receiver-health';
