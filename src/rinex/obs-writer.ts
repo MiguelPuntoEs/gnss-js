@@ -26,6 +26,8 @@ import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
 export interface CompactEpoch {
   time: number; // unix ms
   sats: Map<string, Float64Array>; // PRN → values indexed by obsTypes order
+  /** PRN → loss-of-lock indicator per value (0 = blank), same order. */
+  lli?: Map<string, Uint8Array>;
 }
 
 /* ================================================================== */

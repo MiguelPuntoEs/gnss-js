@@ -9,6 +9,8 @@ export * from './clock-jumps';
 export * from './continuity';
 export * from './signal-profile';
 export * from './cn0-template';
+export * from './loss-of-lock';
+export * from './satellites';
 export * from './coordinate-series';
 export * from './network-alignment';
 export * from './baseline-network';

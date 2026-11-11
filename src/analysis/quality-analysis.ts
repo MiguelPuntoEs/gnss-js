@@ -20,6 +20,10 @@ import type { ClockJumpResult } from './clock-jumps';
 import { ContinuityAccumulator } from './continuity';
 import type { ContinuityResult } from './continuity';
 import { SignalProfileAccumulator } from './signal-profile';
+import { LossOfLockAccumulator } from './loss-of-lock';
+import type { LossOfLockResult } from './loss-of-lock';
+import { SatelliteAccumulator } from './satellites';
+import type { SatelliteRow } from './satellites';
 import type { SignalProfileResult } from './signal-profile';
 
 export interface QualityResult {
@@ -44,6 +48,10 @@ export interface QualityResult {
   signals?: SignalProfileResult;
   /** Code multipath by direction (needs orbits). */
   multipathSky?: MultipathSky | null;
+  /** Loss-of-lock (LLI) statistics above the mask. */
+  lossOfLock?: LossOfLockResult;
+  /** One row per satellite (SpiderQC/teqc per-satellite table). */
+  satellites?: SatelliteRow[];
 }
 
 /**
@@ -162,11 +170,17 @@ export class QualityAccumulator {
   private clock: ClockJumpDetector;
   private continuity: ContinuityAccumulator;
   private profile = new SignalProfileAccumulator();
+  private lock = new LossOfLockAccumulator();
+  private sats = new SatelliteAccumulator();
   /** Indices of pseudorange (C) observables, per code-list instance. */
   private codeIdx = new WeakMap<string[], number[]>();
   private epochTime: number | null = null;
-  private epoch: { prn: string; codes: string[]; values: (number | null)[] }[] =
-    [];
+  private epoch: {
+    prn: string;
+    codes: string[];
+    values: (number | null)[];
+    lli?: (number | null)[];
+  }[] = [];
 
   constructor(header: RinexHeader, opts: QualityOptions = {}) {
     this.mp = new MultipathAccumulator(header);
@@ -195,12 +209,13 @@ export class QualityAccumulator {
     time: number,
     prn: string,
     codes: string[],
-    values: (number | null)[]
+    values: (number | null)[],
+    lli?: (number | null)[]
   ) => {
     if (this.epochTime !== null && time !== this.epochTime) this.flush();
     this.epochTime = time;
-    // Callers may reuse their value buffer between calls: keep a copy.
-    this.epoch.push({ prn, codes, values: values.slice() });
+    // Callers may reuse their buffers between calls: keep copies.
+    this.epoch.push({ prn, codes, values: values.slice(), lli: lli?.slice() });
   };
 
   private codeIndices(codes: string[]): number[] {
@@ -230,12 +245,15 @@ export class QualityAccumulator {
         ? this.elevation.elevationDeg(o.prn, time)
         : null;
       this.profile.onObservation(o.prn, o.codes, o.values, el);
+      this.sats.onObservation(o.prn, el);
       this.tracking?.onObservation(time, o.prn, o.codes, o.values);
       if (this.maskDeg !== null && el !== null && el < this.maskDeg) {
         this.belowMask++;
         continue;
       }
       this.profile.onGradedObservation(o.prn, o.codes, o.values);
+      this.sats.onGradedObservation(o.prn, o.codes, o.values);
+      this.lock.onObservation(o.prn, o.codes, o.values, o.lli);
       this.cs.onObservation(time, o.prn, o.codes, o.values);
       this.mp.onObservation(time, o.prn, o.codes, o.values);
       this.iono.onObservation(time, o.prn, o.codes, o.values);
@@ -246,18 +264,46 @@ export class QualityAccumulator {
   finalize(): QualityResult {
     if (this.epoch.length > 0) this.flush();
     const mp = this.mp.finalize();
+    const cycleSlips = this.cs.finalize();
+    const tracking = this.tracking?.finalize() ?? null;
+    const lossOfLock = this.lock.finalize();
+    // Slipped epochs per satellite, each slip once (events repeat per
+    // combination that saw it).
+    const slipEpochs = new Map<string, Set<number>>();
+    for (const e of cycleSlips.events) {
+      let set = slipEpochs.get(e.prn);
+      if (!set) slipEpochs.set(e.prn, (set = new Set()));
+      set.add(e.time);
+    }
+    const satellites = this.sats.finalize({
+      prns: [
+        ...mp.series.map((x) => x.prn),
+        ...Object.keys(cycleSlips.satSlipCounts),
+        ...(tracking?.timeline.rows ?? [])
+          .filter((r) => r.tracked.some((x) => x > 0))
+          .map((r) => r.prn),
+      ],
+      timeline: tracking?.timeline.rows,
+      slips: Object.fromEntries(
+        [...slipEpochs].map(([p, set]) => [p, set.size])
+      ),
+      lossOfLock: lossOfLock.perSatellite,
+      multipath: mp.series,
+    });
     return {
-      cycleSlips: this.cs.finalize(),
+      cycleSlips,
       completeness: this.comp.finalize(),
       multipath: mp,
       iono: this.iono.finalize(),
       maskDeg: this.maskDeg,
       belowMask: this.belowMask,
-      tracking: this.tracking?.finalize() ?? null,
+      tracking,
       clockJumps: this.clock.finalize(),
       continuity: this.continuity.finalize(),
       signals: this.profile.finalize(),
       multipathSky: this.elevation ? multipathSky(mp, this.elevation) : null,
+      lossOfLock,
+      satellites,
     };
   }
 }

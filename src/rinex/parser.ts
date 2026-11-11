@@ -408,13 +408,26 @@ function parseEpochLine2(line: string): EpochLineInfo | null {
 /*  Streaming parser                                                   */
 /* ================================================================== */
 
-/** Callback invoked for each satellite observation line with all raw values. */
+/**
+ * Callback invoked for each satellite observation line with all raw values.
+ * `lli` holds each observation's loss-of-lock indicator digit (RINEX LLI,
+ * bit 0 = lost lock since the previous epoch), null where blank.
+ */
 export type SatObsCallback = (
   time: number,
   prn: string,
   codes: string[],
-  values: (number | null)[]
+  values: (number | null)[],
+  lli?: (number | null)[]
 ) => void;
+
+/** LLI digit after observation `index` of a data line, null if blank. */
+function readObsLli(line: string, index: number): number | null {
+  const c = line[index * 16 + 14];
+  if (c === undefined || c === ' ') return null;
+  const d = c.charCodeAt(0) - 48;
+  return d >= 0 && d <= 9 ? d : null;
+}
 
 export interface ParseOptions {
   onProgress?: (percent: number) => void;
@@ -467,6 +480,11 @@ export async function parseRinexStream(
   let crxPrevEpochLine = ''; // for text-differencing epoch lines
   // Per-satellite decompression state: PRN → array of DiffState per obs
   const crxDiffStates = new Map<string, (DiffState | null)[]>();
+  /** Per satellite, the CRX flag characters (LLI, SSI per observation). */
+  const crxFlagStates = new Map<string, string[]>();
+  const crxFlagSeen = new Map<string, number>();
+  let crxCurEpoch = NaN;
+  let crxPrevEpoch = NaN;
 
   /* -------- helpers -------- */
 
@@ -563,15 +581,18 @@ export async function parseRinexStream(
     if (onSatObs && epochInfo) {
       // Read all values once, use for both SNR and callback
       const values: (number | null)[] = new Array(codes.length);
-      for (let i = 0; i < codes.length; i++)
+      const lli: (number | null)[] = new Array(codes.length);
+      for (let i = 0; i < codes.length; i++) {
         values[i] = readObsValue(obsLine, i);
+        lli[i] = readObsLli(obsLine, i);
+      }
       if (!skipEpochs) {
         for (const { idx, band } of getSnrIndices(sys)) {
           const val = values[idx] ?? null;
           if (val !== null && val > 0) pushSnr(sys, prn, val, band);
         }
       }
-      onSatObs(epochInfo.time, prn, codes, values);
+      onSatObs(epochInfo.time, prn, codes, values, lli);
     } else if (!skipEpochs) {
       for (const { idx, band } of getSnrIndices(sys)) {
         const val = readObsValue(obsLine, idx);
@@ -584,6 +605,7 @@ export async function parseRinexStream(
 
   // v2: accumulate all obs values across continuation lines for onSatObs callback
   let v2ObsAccum: (number | null)[] = [];
+  let v2LliAccum: (number | null)[] = [];
 
   function processSatLineV2(line: string) {
     if (!header || v2SatIndex >= v2SatIds.length) return;
@@ -593,7 +615,10 @@ export async function parseRinexStream(
     // Only count satellite on first line
     if (v2CurrentSatLine === 0) {
       trackSat(sys, prn);
-      if (onSatObs) v2ObsAccum = [];
+      if (onSatObs) {
+        v2ObsAccum = [];
+        v2LliAccum = [];
+      }
     }
 
     const lineOffset = v2CurrentSatLine * 5;
@@ -607,6 +632,7 @@ export async function parseRinexStream(
       for (let i = 0; i < 5; i++) {
         if (lineOffset + i < (header.obsTypes['_v2'] ?? []).length) {
           v2ObsAccum.push(readObsValue(line, i));
+          v2LliAccum.push(readObsLli(line, i));
         }
       }
     }
@@ -614,7 +640,7 @@ export async function parseRinexStream(
     if (v2CurrentSatLine >= v2LinesPerSat) {
       if (onSatObs && epochInfo) {
         const codes = header.obsTypes['_v2'] ?? [];
-        onSatObs(epochInfo.time, prn, codes, v2ObsAccum);
+        onSatObs(epochInfo.time, prn, codes, v2ObsAccum, v2LliAccum);
       }
       v2CurrentSatLine = 0;
       v2SatIndex++;
@@ -634,7 +660,25 @@ export async function parseRinexStream(
         : (header.obsTypes['_v2'] ?? []).length;
     if (ntype === 0) return;
 
-    const { fields } = parseCrxDataLine(line, ntype);
+    const { fields, flagStr } = parseCrxDataLine(line, ntype);
+
+    // Flags (LLI, SSI per observation) are a diff against the satellite's
+    // previous flags: ' ' unchanged, '&' cleared, anything else replaces.
+    // A satellite missing from the previous epoch starts from blank flags.
+    const t = epochInfo?.time ?? 0;
+    if (t !== crxCurEpoch) {
+      crxPrevEpoch = crxCurEpoch;
+      crxCurEpoch = t;
+    }
+    let flags = crxFlagStates.get(prn);
+    if (!flags || crxFlagSeen.get(prn) !== crxPrevEpoch)
+      crxFlagStates.set(prn, (flags = []));
+    crxFlagSeen.set(prn, t);
+    for (let i = 0; i < flagStr.length; i++) {
+      const c = flagStr[i]!;
+      if (c === '&') flags[i] = ' ';
+      else if (c !== ' ') flags[i] = c;
+    }
 
     // Get or create diff state for this satellite (keyed by PRN)
     let states = crxDiffStates.get(prn);
@@ -661,7 +705,12 @@ export async function parseRinexStream(
 
     for (let j = 0; j < ntype; j++) {
       const field = fields[j]!;
-      if (field.empty) continue;
+      if (field.empty) {
+        // CRINEX 1 treats a blank data field's flags as blank — and carries
+        // that forward (crx2rnx.c); CRINEX 3 keeps flags independently.
+        if (header.crxVersion === 1) flags[2 * j] = flags[2 * j + 1] = ' ';
+        continue;
+      }
 
       const { state, result } = crxDecompress(states[j] ?? null, field);
       states[j] = state;
@@ -682,7 +731,13 @@ export async function parseRinexStream(
         header.version >= 3
           ? (header.obsTypes[sys] ?? [])
           : (header.obsTypes['_v2'] ?? []);
-      onSatObs(epochInfo.time, prn, codes, obsValues);
+      const lli: (number | null)[] = new Array(ntype);
+      for (let j = 0; j < ntype; j++) {
+        const c = flags[2 * j];
+        const d = c === undefined ? -1 : c.charCodeAt(0) - 48;
+        lli[j] = obsValues[j] !== null && d >= 0 && d <= 9 ? d : null;
+      }
+      onSatObs(epochInfo.time, prn, codes, obsValues, lli);
     }
   }
 
