@@ -157,6 +157,10 @@ describe.skipIf(!HAS_DATA)(
       expect(Object.keys(g.multipath)).toContain('1');
       expect(g.cn0['1']!).toBeGreaterThan(30);
       expect(q.lossOfLock!.available).toBe(true);
+      // GPS IIR satellites (no L2C) fall back to P(Y) on L2: every GPS
+      // satellite gets MP, not only those carrying the preferred C2L/L2L.
+      const gps = rows.filter((r) => r.prn[0] === 'G' && (r.tracked ?? 0) > 0);
+      for (const r of gps) expect(Object.keys(r.multipath)).toContain('2');
       // Longest first. ABMF loses GLONASS low in the north-west (R24, R06,
       // R13, R20 all at 10–23°, azimuth 313–340°): a low obstruction there
       // that only this list shows — the sky grid needs a wall ≥ 10° high.
