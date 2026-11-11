@@ -286,6 +286,9 @@ export interface FixedPositionResult {
   floatPosition: [number, number, number];
   /** Displacement fixed − float (m), ENU-agnostic ECEF. */
   shift: [number, number, number];
+  /** Position covariance (m², ECEF 3×3) given the fixed integers —
+   *  Q_xx − Q_xz·Q_zz⁻¹·Q_zx. Absent when not fixed. */
+  covariance?: number[][];
   /** Satellites whose ambiguities were fixed (excl. the SD reference). */
   nFixed: number;
   ratio: number;
@@ -401,8 +404,24 @@ export function fixPppPosition(
     for (let a = 0; a < m; a++) s += Qxz[r]![a]! * y[a]!;
     shift[r] = -s;
   }
+  // Q_xx|fixed = Q_xx − Q_xz · Q_zz⁻¹ · Q_zx.
+  const covariance: number[][] = [0, 1, 2].map((r) => [
+    P[r]![0]!,
+    P[r]![1]!,
+    P[r]![2]!,
+  ]);
+  for (let c = 0; c < 3; c++) {
+    const w = solveSpd(Qzz, Qxz[c]!);
+    if (!w) return { ...noFix, ratio: res.ratio, refPrn: res.refPrn };
+    for (let r = 0; r < 3; r++) {
+      let s = 0;
+      for (let a = 0; a < m; a++) s += Qxz[r]![a]! * w[a]!;
+      covariance[r]![c]! -= s;
+    }
+  }
   return {
     fixed: true,
+    covariance,
     position: [
       floatPos[0] + shift[0],
       floatPos[1] + shift[1],

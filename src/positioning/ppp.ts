@@ -148,6 +148,11 @@ export interface PppOptions {
         minFixed?: number;
         /** Max χ²/dof of the float ambiguities vs the integers. Default 20. */
         maxChi2?: number;
+        /** Static sessions whose final fix attempt failed fall back to the
+         *  last accepted fix only if it lies within this 3D distance (m) of
+         *  the final float position; otherwise `ar.rejected` is set and
+         *  `ar.position` is null. Default 0.03. */
+        maxFloatGapM?: number;
       };
 }
 
@@ -213,6 +218,14 @@ export interface PppSolution {
     position: [number, number, number] | null;
     /** Epoch of that fix (ms). */
     positionEpochMs: number | null;
+    /** Covariance of `position` given the fixed integers (m², ECEF 3×3). */
+    covariance: number[][] | null;
+    /** 3D distance (m) between the fix and the final float position. */
+    floatGapM: number | null;
+    /** Set when the final attempt failed and the earlier fallback fix lay
+     *  more than `maxFloatGapM` from the final float position (a stale fix
+     *  the filter later moved away from); `position` is then null. */
+    rejected: 'float-gap' | null;
     /** Share of epochs with at least one ambiguity fixed. */
     fixedEpochShare: number;
   };
@@ -642,10 +655,12 @@ export class PppEngine {
    *  the final attempt fails). */
   private lastAccepted: {
     position: [number, number, number];
+    covariance: number[][] | null;
     tMs: number;
   } | null = null;
   private lastFix!: {
     position: [number, number, number];
+    covariance: number[][] | null;
     nFixed: number;
     ratio: number;
   } | null;
@@ -1349,13 +1364,63 @@ export class PppEngine {
       }
     );
     if (!fx.fixed) return;
+    const covariance = fx.covariance ?? null;
     this.lastFix = {
       position: fx.position,
+      covariance,
       nFixed: fx.nFixed,
       ratio: fx.ratio,
     };
-    this.lastAccepted = { position: fx.position, tMs };
+    this.lastAccepted = { position: fx.position, covariance, tMs };
     this.firstFixMs ??= tMs;
+  }
+
+  /** The session's PPP-AR outcome. A fix from the final attempt is reported
+   *  as is. Static sessions whose final attempt failed fall back to the last
+   *  accepted fix (a 2-hour session fixed 80 % of the time used to report
+   *  float because its last attempt didn't pass), but only while that fix
+   *  still agrees with the final float position: an early fix the filter
+   *  later moved away from is stale, not "fixed" (2–4 h sessions showed
+   *  10–46 cm errors). The final float may sit a few cm from a correct
+   *  current fix on short sessions, so the gap test is for fallbacks only. */
+  private arSummary(
+    finalPos: [number, number, number]
+  ): NonNullable<PppSolution['ar']> {
+    const { series } = this;
+    const ar = this.opts.ar;
+    const maxGap =
+      (typeof ar === 'object' ? ar.maxFloatGapM : undefined) ?? 0.03;
+    const fallback = !this.lastFix;
+    const cand = this.lastFix
+      ? {
+          position: this.lastFix.position,
+          covariance: this.lastFix.covariance,
+          tMs: series[series.length - 1]?.timeMs ?? null,
+        }
+      : this.kinematic
+        ? null
+        : this.lastAccepted;
+    const floatGapM = cand
+      ? Math.hypot(
+          cand.position[0] - finalPos[0],
+          cand.position[1] - finalPos[1],
+          cand.position[2] - finalPos[2]
+        )
+      : null;
+    const ok = cand !== null && (!fallback || floatGapM! <= maxGap);
+    return {
+      firstFixSec:
+        this.firstFixMs === null || !series.length
+          ? null
+          : (this.firstFixMs - series[0]!.timeMs) / 1000,
+      nFixedEnd: this.lastFix?.nFixed ?? 0,
+      position: ok ? cand.position : null,
+      positionEpochMs: ok ? cand.tMs : null,
+      covariance: ok ? cand.covariance : null,
+      floatGapM,
+      rejected: cand !== null && !ok ? 'float-gap' : null,
+      fixedEpochShare: series.length ? this.fixedEpochs / series.length : 0,
+    };
   }
 
   /** Finalise the session: capture the AR state, flush open arcs, assemble. */
@@ -1424,29 +1489,7 @@ export class PppEngine {
       arcs,
       finalState,
       ...(opts.ar && this.source.phaseBias
-        ? {
-            ar: {
-              firstFixSec:
-                this.firstFixMs === null || !series.length
-                  ? null
-                  : (this.firstFixMs - series[0]!.timeMs) / 1000,
-              nFixedEnd: this.lastFix?.nFixed ?? 0,
-              // Static: the last accepted fix when the final attempt
-              // failed — a 2-hour session fixed 80% of the time used to
-              // report float because its last attempt didn't pass.
-              position:
-                this.lastFix?.position ??
-                (this.kinematic ? null : (this.lastAccepted?.position ?? null)),
-              positionEpochMs: this.lastFix
-                ? (series[series.length - 1]?.timeMs ?? null)
-                : this.kinematic
-                  ? null
-                  : (this.lastAccepted?.tMs ?? null),
-              fixedEpochShare: series.length
-                ? this.fixedEpochs / series.length
-                : 0,
-            },
-          }
+        ? { ar: this.arSummary(finalPos) }
         : {}),
     };
   }

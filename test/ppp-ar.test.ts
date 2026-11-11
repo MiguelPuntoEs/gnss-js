@@ -261,6 +261,19 @@ describe('fixPppPosition', () => {
     expect(r.position[1] - r.floatPosition[1]).toBeCloseTo(r.shift[1], 12);
   });
 
+  it('conditions the position covariance on the fixed integers', () => {
+    const st = state([0, 0.03, 0]);
+    const r = fixPppPosition(st, zeroFcb, { ratioThreshold: 2 });
+    expect(r.fixed).toBe(true);
+    const C = r.covariance!;
+    for (let i = 0; i < 3; i++) {
+      // Fixing removes variance, never adds it, and stays positive.
+      expect(C[i]![i]).toBeLessThan(st.covariance[i]![i]!);
+      expect(C[i]![i]).toBeGreaterThan(0);
+      for (let j = 0; j < 3; j++) expect(C[i]![j]).toBeCloseTo(C[j]![i]!, 15);
+    }
+  });
+
   it('returns the float position unchanged when it cannot fix', () => {
     // Put the single-difference ambiguity on a half-integer ⇒ ratio ≈ 1.
     const r = fixPppPosition(state([0, 0.5 * lamNl, 0]), zeroFcb, {

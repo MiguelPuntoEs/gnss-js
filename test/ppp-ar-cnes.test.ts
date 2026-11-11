@@ -146,6 +146,40 @@ describe.skipIf(!HAS)('PPP-AR with CNES integer-clock products', () => {
           });
           expect(sol.ar).toBeDefined();
           expect(sol.ar!.position).not.toBeNull();
+          expect(sol.ar!.rejected).toBeNull();
+          // The fixed covariance is tighter than the float one.
+          const cov = sol.ar!.covariance!;
+          const fl = sol.finalState?.covariance;
+          if (fl)
+            for (let i = 0; i < 3; i++)
+              expect(cov[i]![i]).toBeLessThan(fl[i]![i]!);
+          // End the session with 15 min on 4 satellites: the final attempts
+          // fail and the static session falls back to its last accepted fix,
+          // which is kept only while it agrees with the final float.
+          const tail = all
+            .filter((e) => e.timeMs >= t0 + 3600e3 && e.timeMs < t0 + 4500e3)
+            .map((e) => ({ ...e, obs: e.obs.slice(0, 4) }));
+          const opts = {
+            aprioriPos: header.approxPosition as [number, number, number],
+            elevationMaskDeg: 10,
+            corrections,
+            clk,
+            osb,
+          };
+          const fb = solvePpp([...epochs, ...tail], sp3, { ...opts, ar: true });
+          expect(fb.ar!.nFixedEnd).toBe(0);
+          if (fb.ar!.floatGapM! <= 0.03) {
+            expect(fb.ar!.position).not.toBeNull();
+            expect(fb.ar!.positionEpochMs).toBeLessThan(t0 + 3600e3);
+          } else {
+            expect(fb.ar!.rejected).toBe('float-gap');
+          }
+          const strict = solvePpp([...epochs, ...tail], sp3, {
+            ...opts,
+            ar: { maxFloatGapM: 1e-6 },
+          });
+          expect(strict.ar!.rejected).toBe('float-gap');
+          expect(strict.ar!.position).toBeNull();
           expect(sol.ar!.nFixedEnd).toBeGreaterThanOrEqual(5);
           // First fix within ~45 min (attempts start once arcs are 10 min old).
           expect(sol.ar!.firstFixSec).toBeLessThan(2700);
