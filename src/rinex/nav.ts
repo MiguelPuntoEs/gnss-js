@@ -83,8 +83,22 @@ export interface KeplerEphemeris {
   week: number;
   /** SV health flag. */
   svHealth: number;
-  /** Total group delay in seconds. */
+  /** Total group delay in seconds (GPS/QZSS TGD, Galileo BGD E5a/E1,
+   *  BeiDou TGD1 B1I/B3I). */
   tgd: number;
+  /** Second group delay (s): Galileo BGD E5b/E1, BeiDou TGD2 B2I/B3I.
+   *  RINEX 3 only. */
+  tgd2?: number;
+  /** Transmission time of the message, seconds of the record's week in
+   *  the system's time scale (may be negative: previous week). RINEX 3
+   *  only; absent when the file marks it unknown. */
+  ttm?: number;
+  /** Signal-in-space accuracy the message claims (m): GPS/QZSS URA,
+   *  Galileo SISA, BeiDou URA. RINEX 3 only. */
+  svAccuracy?: number;
+  /** Galileo data-sources bitfield (bit 0 I/NAV E1-B, 1 F/NAV E5a-I,
+   *  2 I/NAV E5b-I, 8 clock for E5a/E1, 9 clock for E5b/E1). */
+  dataSources?: number;
 }
 
 /** GLONASS / SBAS state-vector ephemeris. Positions in km, velocities in km/s, accelerations in km/s². */
@@ -359,7 +373,12 @@ function buildKeplerEphemeris(
     // d[20] = SV accuracy (URA index for GPS, SISA for GAL)
     svHealth: d[21] ?? 0,
     tgd: d[22] ?? 0,
-    // d[23] = BGD (GAL) or IODC (GPS)
+    // d[23] = IODC (GPS/QZSS), BGD E5b/E1 (GAL), TGD2 (BDS)
+    ...((sys === 'E' || sys === 'C') && { tgd2: d[23] ?? 0 }),
+    // d[24] = transmission time; 0.9999e9 marks it unknown
+    ...(data.length >= 7 && Math.abs(d[24] ?? 1e9) < 1e6 && { ttm: d[24] }),
+    ...(d[20] != null && d[20] > 0 && { svAccuracy: d[20] }),
+    ...(sys === 'E' && { dataSources: d[17] ?? 0 }),
   };
 }
 

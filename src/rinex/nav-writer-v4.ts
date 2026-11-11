@@ -121,9 +121,9 @@ function keplerRecord(eph: KeplerEphemeris): string {
     orbitLine4([eph.cuc, eph.e, eph.cus, eph.sqrtA]),
     orbitLine4([eph.toe, eph.cic, eph.omega0, eph.cis]),
     orbitLine4([eph.i0, eph.crc, eph.omega, eph.omegaDot]),
-    orbitLine4([eph.idot, 0, eph.week, 0]),
-    orbitLine4([0, eph.svHealth, eph.tgd, 0]),
-    orbitLine4([eph.toe, 0, 0, 0]),
+    orbitLine4([eph.idot, eph.dataSources ?? 0, eph.week, 0]),
+    orbitLine4([eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.tgd2 ?? 0]),
+    orbitLine4([eph.ttm ?? eph.toe, 0, 0, 0]),
   ].join('\n');
 }
 
