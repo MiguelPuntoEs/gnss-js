@@ -35,6 +35,14 @@ export interface ContinuityResult {
   pieceSec: number;
   /** Continuous pieces between gaps shorter than `pieceSec`. */
   shortPieces: number;
+  /**
+   * Shorter gaps: missing ≥ 2 epochs but under `gapSec` (SpiderQC lists
+   * gaps from 5 s). On 1 Hz data a 30 s dropout is a real event. At most
+   * 200 listed; `shortGapCount` and `shortGapSec` cover all.
+   */
+  shortGaps: DataGap[];
+  shortGapCount: number;
+  shortGapSec: number;
   /** Epochs with ≥ 4 satellites carrying dual-frequency code + phase. */
   usableEpochs: number;
   /** Most satellites with any observation in one epoch. */
@@ -52,6 +60,9 @@ export class ContinuityAccumulator {
   private gaps: DataGap[] = [];
   private pieceStart: number | null = null;
   private shortPieces = 0;
+  private shortGaps: DataGap[] = [];
+  private shortGapCount = 0;
+  private shortGapMs = 0;
   private usable = 0;
   private maxSats = 0;
 
@@ -98,6 +109,15 @@ export class ContinuityAccumulator {
     if (this.first === null) {
       this.first = time;
       this.pieceStart = time;
+    } else if (
+      this.last !== null &&
+      time - this.last > 2.5 * this.intervalMs &&
+      time - this.last <= GAP_SEC * 1000
+    ) {
+      this.shortGapCount++;
+      this.shortGapMs += time - this.last - this.intervalMs;
+      if (this.shortGaps.length < 200)
+        this.shortGaps.push({ from: this.last, to: time });
     } else if (this.last !== null && time - this.last > GAP_SEC * 1000) {
       this.gaps.push({ from: this.last, to: time });
       if (this.last - this.pieceStart! < PIECE_SEC * 1000) this.shortPieces++;
@@ -128,6 +148,9 @@ export class ContinuityAccumulator {
       gaps: this.gaps,
       pieceSec: PIECE_SEC,
       shortPieces: this.shortPieces + (lastShort ? 1 : 0),
+      shortGaps: this.shortGaps,
+      shortGapCount: this.shortGapCount,
+      shortGapSec: this.shortGapMs / 1000,
       usableEpochs: this.usable,
       maxSatellites: this.maxSats,
     };

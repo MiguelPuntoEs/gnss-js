@@ -249,9 +249,28 @@ export interface TrackingResult {
   sky: SkyGrid;
   /** Satellites above the mask at some point that were never tracked. */
   neverTracked: string[];
+  /**
+   * Stretches of ≥ 2 min where a satellite the receiver does track was above
+   * the mask but not tracked (SpiderQC "Non-tracked satellites"), with where
+   * in the sky — a run of them in one direction is an obstruction, many at
+   * once an outage or interference. Longest first, at most 200.
+   */
+  untracked: {
+    prn: string;
+    start: number;
+    end: number;
+    minutes: number;
+    elMin: number;
+    elMax: number;
+    azFrom: number;
+    azTo: number;
+  }[];
   /** Satellites the receiver tracked without any valid ephemeris. */
   withoutNav: string[];
 }
+
+/** Shortest untracked stretch worth listing (SpiderQC: 120 s). */
+const UNTRACKED_MIN_MINUTES = 2;
 
 /** Systems whose satellites are only receivable in a region. */
 const REGIONAL = new Set(['I', 'J', 'S']);
@@ -342,6 +361,38 @@ export class TrackingAccumulator {
       .filter((p) => !this.model.prns.includes(p))
       .sort();
     const n = Math.round((this.last - this.first) / this.stepMs);
+    // Open "expected but not tracked" stretch per counted satellite.
+    const open = new Map<
+      string,
+      { start: number; end: number; el: number[]; az: number[] }
+    >();
+    const untracked: TrackingResult['untracked'] = [];
+    const close = (prn: string) => {
+      const o = open.get(prn);
+      if (!o) return;
+      open.delete(prn);
+      const minutes = (o.end - o.start + this.stepMs) / 60_000;
+      if (minutes < UNTRACKED_MIN_MINUTES) return;
+      // Azimuth range the short way round (a pass can cross north).
+      const az = [...o.az].sort((a, b) => a - b);
+      let gapAt = 0;
+      let gap = 360 - az[az.length - 1]! + az[0]!;
+      for (let i = 1; i < az.length; i++)
+        if (az[i]! - az[i - 1]! > gap) {
+          gap = az[i]! - az[i - 1]!;
+          gapAt = i;
+        }
+      untracked.push({
+        prn,
+        start: o.start,
+        end: o.end + this.stepMs,
+        minutes,
+        elMin: Math.min(...o.el),
+        elMax: Math.max(...o.el),
+        azFrom: az[gapAt]!,
+        azTo: az[(gapAt - 1 + az.length) % az.length]!,
+      });
+    };
     const binSteps = Math.max(1, Math.ceil((n + 1) / MAX_BINS));
     const nBins = Math.ceil((n + 1) / binSteps);
     const nAz = 360 / AZ_BIN;
@@ -383,12 +434,21 @@ export class TrackingAccumulator {
         }
         if (el === null || el < this.maskDeg || !this.model.isHealthy(prn, t)) {
           if (nb >= 1) rowFor(prn).other[b]!++;
+          close(prn);
           continue;
         }
         const r = rowFor(prn);
         r.expected[b]!++;
         if (nb >= 1) r.tracked[b]!++;
         if (!counted) continue;
+        if (nb >= 1) close(prn);
+        else {
+          const o = open.get(prn) ?? { start: t, end: t, el: [], az: [] };
+          o.end = t;
+          o.el.push(ae!.el);
+          o.az.push(ae!.az);
+          open.set(prn, o);
+        }
         const sys = prn[0]!;
         let a = agg.get(sys);
         if (!a) agg.set(sys, (a = { expected: 0, tracked: 0, dual: 0 }));
@@ -397,6 +457,8 @@ export class TrackingAccumulator {
         if (nb >= 2) a.dual++;
       }
     }
+    for (const prn of [...open.keys()]) close(prn);
+    untracked.sort((a, b) => b.minutes - a.minutes);
     const order = 'GRECIJS';
     const rank = (s: string) =>
       order.includes(s) ? order.indexOf(s) : order.length;
@@ -444,6 +506,7 @@ export class TrackingAccumulator {
         ),
       },
       sky: skyGrid(skyExp, skyTrk),
+      untracked: untracked.slice(0, 200),
       neverTracked: [...rows.values()]
         .filter(
           (r) =>

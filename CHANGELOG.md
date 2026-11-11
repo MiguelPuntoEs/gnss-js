@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.24.0
+
+### New — loss-of-lock indicators from RINEX and Hatanaka (`rinex`)
+
+- **LLI per observation.** `parseRinexStream`'s per-satellite callback gets a fifth argument, the loss-of-lock indicator of each value (`null` when blank), for RINEX 2, RINEX 3 and CRINEX 1/3. In Hatanaka files the flags are a per-satellite diff string. A satellite missing from the previous epoch starts again from blank, and in CRINEX 1 a blank data field also clears its flags, as `crx2rnx.c` does.
+- **Checked against CRX2RNX.** On two full days the flags match CRX2RNX 4.2.0 exactly: SUR4 2026/308 (CRINEX 3) has 35 460 and INAB 2025/178 (CRINEX 1) has 6 614, with 0 differences. Slices of both are pinned in the tests.
+- **`CompactEpoch.lli`** (optional) keeps the flags in memory alongside the values.
+
+### New — QC diagnostics (`analysis`)
+
+- **`LossOfLockAccumulator`.** Per band, it counts phase observations with LLI bit 0 (lock lost) and bit 1 (half-cycle). Bit 2 is ignored: it marks anti-spoofing in RINEX 2 and BOC tracking in RINEX 3, both routine. Each band is counted once per epoch, so L2L + L2W is one carrier. The result reports `available: false` when the source carried no LLI. `QualityResult.lossOfLock` holds the result.
+- **Per-satellite table (`QualityResult.satellites`).** One row per satellite with:
+  - its elevation range;
+  - grid samples expected above the mask and how many were tracked;
+  - slipped epochs and lost locks;
+  - code multipath RMS per band (all arcs pooled);
+  - mean C/N0 per band.
+- **Untracked stretches (`TrackingResult.untracked`).** Every stretch of at least 2 minutes that a tracked satellite spent above the mask without being tracked, with its elevation and azimuth range, longest first. On ABMF this list shows GLONASS lost low in the north-west, an obstruction lower than the sky grid can detect.
+- **Short gaps (`ContinuityResult.shortGaps`, `shortGapCount`, `shortGapSec`).** Gaps of two or more missing epochs that are shorter than the 10-minute long-gap limit.
+
 ## 2.23.1
 
 ### Fixed — SBAS satellites from RTCM named S120 instead of S20 (`rtcm3`)
