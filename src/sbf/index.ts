@@ -43,6 +43,19 @@ export { parseSbfIonoUtc, type SbfIonoUtcResult } from './iono';
 export { parseSbfReceiverSetup, type SbfReceiverSetup } from './setup';
 export { parseSbfPvt, type SbfPvt, type SbfPvtResult } from './pvt';
 export type { ReceiverPvt } from '../receiver-pvt';
+export { parseSbfHealth, type SbfHealthResult } from './health';
+export { summarizeReceiverHealth } from '../receiver-health';
+export type {
+  ReceiverHealth,
+  ReceiverHealthRecord,
+  AntennaHealth,
+  AntennaState,
+  RfBandHealth,
+  JammingState,
+  InterferenceReport,
+  HealthFlag,
+  HealthLevel,
+} from '../receiver-health';
 
 export { parseSbfGpsNav, type SbfGpsNavResult } from './rawnav-gps';
 export {
