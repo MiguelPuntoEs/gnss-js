@@ -61,3 +61,7 @@
 !/test-fixtures/national_grids_proj.json
 !/test-fixtures/nkg_rf17vel_nordic.i16
 !/test-fixtures/no_kv_shift_x4.i16
+!/test-fixtures/nsgi_z001_etrs89_rdnap.txt
+!/test-fixtures/rd_sterea_proj.json
+!/test-fixtures/nsgi_rdtrans2018.bin
+!/test-fixtures/nsgi_nlgeo2018.bin

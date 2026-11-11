@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.34.0
+
+### Added — the Netherlands: RD and NAP (RDNAPTRANS™2018)
+
+- `etrs89ToRdnap()` and `rdnapToEtrs89()` implement the official NSGI transformation between ETRS89 (ETRF2000) and the Dutch RD grid plus NAP heights, as variant 2 in PROJ/EPSG:
+  - The rdtrans2018 offset grid takes ETRS89 to Amersfoort (Bessel), and is iterated because its offsets are defined at Amersfoort positions.
+  - The oblique stereographic projection gives RD x, y.
+  - NAP = h − NLGEO2018.
+- `itrfToRdnap()` and `rdnapToItrf()` go through ETRF2000 from any frame `transformFrame` knows.
+- Checked against NSGI's 100 certified reference points (Z001): 0.18 mm in RD and 0.05 mm in NAP in the worst case, against a 1 mm certification tolerance. The inverse matches to 2e-9°.
+- Grids are supplied by the caller (PROJ CDN: `nl_nsgi_rdtrans2018.tif`, `nl_nsgi_nlgeo2018.tif`). `latLonGridModel()` interpolates any number of planes over nested grids, finer grids first.
+- `geodeticToObliqueStereographic()` and `obliqueStereographicToGeodetic()` implement EPSG method 9809. `RD_NEW` (EPSG:28992) and `BESSEL_1841` are included. Matches PROJ's `sterea` to 0.1 mm.
+
 ## 2.33.1
 
 ### Fixed — BeiDou orbits used the wrong Earth rotation rate
