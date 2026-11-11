@@ -41,7 +41,7 @@ export interface NovatelMeasurement {
   cn0: number;
   /** Continuous lock time (s). */
   lockTimeS: number;
-  /** GLONASS frequency channel k (freqId − 8), null for CDMA systems. */
+  /** GLONASS frequency channel k (RANGE glofreq − 7), null for CDMA systems. */
   gloChannel: number | null;
 }
 
@@ -243,6 +243,8 @@ export function parseNovatelRange(data: Uint8Array): NovatelParseResult {
             prnNum -= 182;
           } else if (sysL === 'S') {
             prnNum -= 100;
+          } else if (sysL === 'J' && prnNum >= 193) {
+            prnNum -= 192; // QZSS PRN 193+ → J01+
           }
           if (prnNum < 1 || prnNum > 99) continue;
           if (sysL === 'R' && !parity) continue;
@@ -310,6 +312,8 @@ export function parseNovatelRange(data: Uint8Array): NovatelParseResult {
             prnNum -= 182;
           } else if (sysL === 'S') {
             prnNum -= 100; // RINEX SBAS numbering
+          } else if (sysL === 'J' && prnNum >= 193) {
+            prnNum -= 192; // QZSS PRN 193+ → J01+ (was dropped by the guard below)
           }
           if (prnNum < 1 || prnNum > 99) continue;
           if (sysL === 'R' && !parity) continue; // half-cycle unresolved
@@ -330,7 +334,7 @@ export function parseNovatelRange(data: Uint8Array): NovatelParseResult {
             doppler: plock ? dop : null,
             cn0: snr,
             lockTimeS: lockt,
-            gloChannel: sysL === 'R' ? gfrq - 8 : null,
+            gloChannel: sysL === 'R' ? gfrq - 7 : null, // glofreq = k + 7 (RTKLIB novatel.c)
           });
           const codes = (obsCodes[sysL] ??= []);
           if (!codes.includes(code)) codes.push(code);

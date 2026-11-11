@@ -41,6 +41,8 @@ export interface UbxMeasurement {
   halfCycleAmbiguous: boolean;
   /** Continuous-lock time (ms, saturates at 64500). */
   lockTimeMs: number;
+  /** GLONASS frequency channel k (RAWX freqId − 7), null for CDMA systems. */
+  gloChannel: number | null;
 }
 
 export interface UbxRawxEpoch {
@@ -151,6 +153,7 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
           cn0: data[off + 26]!,
           halfCycleAmbiguous: (trkStat & 0x04) !== 0,
           lockTimeMs: view.getUint16(off + 24, true),
+          gloChannel: sig[0] === 'R' ? data[off + 23]! - 7 : null,
         });
         const sys = sig[0];
         const codes = (obsCodes[sys] ??= []);

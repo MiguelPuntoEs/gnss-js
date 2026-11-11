@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### New — RTCM3 encoding: any receiver as a reference station (`rtcm3`)
+
+The other direction from the decoders: receiver epochs and ephemerides in, an RTCM3 stream out, as `str2str -out …#rtcm3` does.
+
+- **`RtcmBaseEncoder` / `receiverToRtcm3`.** Takes epochs from any receiver decoder (UBX, SBF, NovAtel, Trimble, BINEX) and their ephemerides, and returns framed messages in stream order. Station messages go out on a cadence, and each satellite's ephemeris whenever the one nearest in time changes.
+- **MSM1–7** (`MsmEncoder`) for GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC and SBAS. It splits a system across messages at 64 cells and tracks lock arcs: a receiver-reported slip, lock time that grows less than the time elapsed, or a missed epoch restarts the arc, and the lock indicator always drops so rovers see the slip.
+- **Station and ephemeris messages:** 1005/1006, 1033 and 1230 (with a new 1230 decoder), plus all eight ephemeris types. `ephemerisToInfo` converts a receiver-decoded `Ephemeris` for them.
+- **Checked against real data.** Re-encoding the DLF100 (Trimble) capture reproduces all 430 MSM7 messages and every 1006, 1033, 1230 and ephemeris message bit for bit. The WHU OEM719 base sent through MSM7 gives the same RTK fix as the raw log, within 0.5 mm (MSM3 within 5 mm). RTKLIB `convbin` decodes the stream to the same observations as its own NovAtel and u-blox readers.
+
+### New — u-blox GLONASS frequency channel (`ubx`)
+
+`UbxMeasurement.gloChannel` is RAWX `freqId − 7`, so GLONASS phase has a wavelength without an ephemeris.
+
+### Fixed — GLONASS 1020 τc, N4 and τGPS were misread (`rtcm3`)
+
+The decoder skipped the 11-bit N^A field, so these three were read from the wrong bits whenever the additional-data flag was set: DLF100 read τc as −15.6 ms instead of 6 ns, and N4 as 0 instead of 8. The 1020 flag bits (P1–P3, P, ln, almanac health, N^A) are now returned too.
+
+### Fixed — GLONASS channel −7 lost phase in MSM5/7 (`rtcm3`)
+
+DF419 = 0 is channel k = −7, not "unknown", so those satellites lost phase and Doppler. Values 14/15 (unknown) no longer set the channel to 7 or 8.
+
+### Fixed — NovAtel RANGE: GLONASS channel off by one, QZSS dropped (`novatel`)
+
+- **GLONASS.** RANGE reports channel + 7, but the decoder subtracted 8, so every GLONASS channel was one low. That gave GLONASS the wrong wavelength for anything using `gloChannel`, such as RTK on NovAtel logs.
+- **QZSS.** QZSS PRNs arrive as 193+ (RANGE and RANGECMP) and were discarded; they now map to J01+.
+
 ## 2.21.0
 
 Both changes come from a field check of 13 Baltic and Russian reference stations over a week.

@@ -64,3 +64,32 @@ describe.skipIf(!existsSync(FILE))('parseNovatelRange (OEMV RANGECMP)', () => {
     }
   });
 });
+
+describe('parseNovatelRange — GLONASS channels and QZSS (OEM719, WHU)', () => {
+  const file = join(__dirname, '..', 'test-fixtures', 'oem719_rtk_base.gps');
+  it.skipIf(!existsSync(file))(
+    'reports k = glofreq − 7 and keeps QZSS 193+',
+    () => {
+      const ep = parseNovatelRange(new Uint8Array(readFileSync(file)))
+        .epochs[0]!;
+      const k = Object.fromEntries(
+        ep.meas
+          .filter((m) => m.prn[0] === 'R')
+          .map((m) => [m.prn, m.gloChannel])
+      );
+      // Published FDMA channels (also what phase ≈ range / λ requires).
+      expect(k).toMatchObject({
+        R13: -2,
+        R14: -7,
+        R15: 0,
+        R17: 4,
+        R18: -3,
+        R24: 2,
+      });
+      const qzss = [
+        ...new Set(ep.meas.filter((m) => m.prn[0] === 'J').map((m) => m.prn)),
+      ];
+      expect(qzss.sort()).toEqual(['J02', 'J03', 'J07']);
+    }
+  );
+});
