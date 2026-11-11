@@ -39,6 +39,13 @@ const READING_NAME: Record<number, string> = {
   0x19: 'Secondary antenna voltage',
 };
 
+/** A HWMONITOR reading with its unit (currents in mA). */
+function reading(type: number, value: number): string {
+  if (type === 0x01 || type === 0x16) return `${value.toFixed(1)} °C`;
+  if (type === 0x02 || type === 0x18) return `${(value * 1000).toFixed(0)} mA`;
+  return `${value.toFixed(2)} V`;
+}
+
 /** RXSTATUS receiver-error word bits → description. */
 const RX_ERROR: [number, string][] = [
   [0, 'DRAM failure'],
@@ -122,7 +129,7 @@ export function parseNovatelHealth(data: Uint8Array): NovatelHealthResult {
             code: `hw-${type.toString(16)}`,
             text: `${name} ${under ? 'below' : 'above'} its ${
               bound === 2 || bound === 4 ? 'error' : 'warning'
-            } limit (${value.toPrecision(4)})`,
+            } limit (${reading(type, value)})`,
           });
         }
       }

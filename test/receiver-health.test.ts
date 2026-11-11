@@ -332,7 +332,9 @@ describe('parseNovatelHealth', () => {
     const r = parseNovatelHealth(oem4Frame(963, 2209, 0, body)).records[0]!;
     expect(r.flags).toHaveLength(1);
     expect(r.flags![0]).toMatchObject({ level: 'error', code: 'hw-2' });
-    expect(r.flags![0]!.text).toMatch(/^Antenna current above its error limit/);
+    expect(r.flags![0]!.text).toBe(
+      'Antenna current above its error limit (210 mA)'
+    );
   });
 
   const rxstatus = (error: number, words: number[]) => {
