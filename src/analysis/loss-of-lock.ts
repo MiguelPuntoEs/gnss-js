@@ -40,6 +40,8 @@ export class LossOfLockAccumulator {
   private bands = new Map<string, LockBandStats>();
   private perSat: Record<string, number> = {};
   private any = false;
+  private bandBuf: string[] = [];
+  private flagBuf: number[] = [];
 
   onObservation(
     prn: string,
@@ -50,18 +52,29 @@ export class LossOfLockAccumulator {
     if (lli) this.any = true;
     const sys = prn[0]!;
     // Once per band and epoch: a band with several tracking codes (L2L and
-    // L2W) is one carrier; lock is lost if any of its codes says so.
-    const perBand = new Map<string, number>();
+    // L2W) is one carrier; lock is lost if any of its codes says so. Bands
+    // in first-seen order, as small parallel arrays (no Map per call).
+    const bandsSeen = this.bandBuf;
+    const flags = this.flagBuf;
+    bandsSeen.length = 0;
+    flags.length = 0;
     for (let i = 0; i < codes.length; i++) {
       const code = codes[i]!;
       if (code[0] !== 'L') continue;
       const v = values[i];
       if (v == null || v === 0) continue;
       const band = code[1]!;
-      perBand.set(band, (perBand.get(band) ?? 0) | (lli?.[i] ?? 0));
+      const k = bandsSeen.indexOf(band);
+      const f = lli?.[i] ?? 0;
+      if (k < 0) {
+        bandsSeen.push(band);
+        flags.push(f);
+      } else flags[k]! |= f;
     }
-    for (const [band, f] of perBand) {
-      const key = `${sys}:${band}`;
+    for (let k = 0; k < bandsSeen.length; k++) {
+      const band = bandsSeen[k]!;
+      const f = flags[k]!;
+      const key = sys + ':' + band;
       let b = this.bands.get(key);
       if (!b)
         this.bands.set(

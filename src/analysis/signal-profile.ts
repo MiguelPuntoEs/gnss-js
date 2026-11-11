@@ -61,6 +61,24 @@ const label = (sys: string, code: string) =>
 
 export class SignalProfileAccumulator {
   private counts = new Map<string, { above: number[]; none: number }>();
+  /** "sys:code" per code list (callers reuse one array per system). */
+  private keyCache = new Map<
+    string[],
+    Map<string, { codes: string[]; keys: string[] }>
+  >();
+
+  private keysFor(sys: string, codes: string[]): string[] {
+    let bySys = this.keyCache.get(codes);
+    if (!bySys) this.keyCache.set(codes, (bySys = new Map()));
+    let e = bySys.get(sys);
+    // A caller may refill one array with other codes: check the copy.
+    if (!e || !sameCodes(e.codes, codes))
+      bySys.set(
+        sys,
+        (e = { codes: codes.slice(), keys: codes.map((c) => `${sys}:${c}`) })
+      );
+    return e.keys;
+  }
   private cn0 = new Map<string, { n: number; sum: number; sum2: number }>();
   private cn0El = new Map<string, { sum: number[]; n: number[] }>();
 
@@ -72,13 +90,14 @@ export class SignalProfileAccumulator {
     elevationDeg: number | null
   ) {
     const sys = prn[0]!;
+    const keys = this.keysFor(sys, codes);
     for (let i = 0; i < codes.length; i++) {
       const code = codes[i]!;
       const v = values[i];
       if (v == null || v === 0) continue;
       if (code[0] === 'S') {
         if (elevationDeg === null || elevationDeg < 0 || v <= 0) continue;
-        const key = `${sys}:${code}`;
+        const key = keys[i]!;
         let r = this.cn0El.get(key);
         if (!r)
           this.cn0El.set(
@@ -97,7 +116,7 @@ export class SignalProfileAccumulator {
         continue;
       }
       if (code[0] !== 'L' && code[0] !== 'C') continue;
-      const key = `${sys}:${code}`;
+      const key = keys[i]!;
       let c = this.counts.get(key);
       if (!c)
         this.counts.set(
@@ -116,12 +135,13 @@ export class SignalProfileAccumulator {
   /** Observations QC grades (above the mask): C/N0 statistics. */
   onGradedObservation(prn: string, codes: string[], values: (number | null)[]) {
     const sys = prn[0]!;
+    const keys = this.keysFor(sys, codes);
     for (let i = 0; i < codes.length; i++) {
       const code = codes[i]!;
       if (code[0] !== 'S') continue;
       const v = values[i];
       if (v == null || v <= 0) continue;
-      const key = `${sys}:${code}`;
+      const key = keys[i]!;
       let c = this.cn0.get(key);
       if (!c) this.cn0.set(key, (c = { n: 0, sum: 0, sum2: 0 }));
       c.n++;
@@ -174,4 +194,10 @@ export class SignalProfileAccumulator {
       cn0ByElevation: cn0ByElevation.sort(sortKey),
     };
   }
+}
+
+function sameCodes(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

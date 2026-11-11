@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.26.1
+
+### Changed — QC accumulators about 20 % faster (`analysis`)
+
+The masked QC pass over a 1 Hz day (WTZR 2026/314, 3.55 M satellite-epochs) went from 20.0 s to 15.9 s, with results identical to the bit on that day and on a 30 s day.
+
+- **Multipath:** the step test took the median of the last five MP values by copying and sorting them with a comparator for every MP point. It now uses a small in-place insertion sort.
+- **Cycle slips:** each satellite's state is two reusable buffers swapped every epoch, instead of seven new Maps per observation. The Melbourne-Wübbena window shifts in place, with its sums in the same order as before. Signal labels and keys are built once per system.
+- **Signal profile, loss of lock and clock jumps:** keys are cached per code list, there is no Map per observation, and the jump median uses a typed-array sort.
+
 ## 2.26.0
 
 ### New — `EpochSats`: one block per epoch, half the memory (`rinex`)

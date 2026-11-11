@@ -95,7 +95,7 @@ export class ClockJumpDetector {
     }
     if (deltas.length >= 3) {
       this.checked++;
-      const sorted = [...deltas].sort((a, b) => a - b);
+      const sorted = Float64Array.from(deltas).sort();
       const med = sorted[Math.floor(sorted.length / 2)]!;
       if (Math.abs(med) > MIN_JUMP_M) {
         const agree = deltas.filter((x) => Math.abs(x - med) < AGREE_M).length;
