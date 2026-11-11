@@ -15,3 +15,4 @@ export * from './coordinate-series';
 export * from './network-alignment';
 export * from './baseline-network';
 export * from './quantiles';
+export * from './multipath-reference';

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### New — multipath as Anubis and teqc average it (`analysis`)
+
+`QualityResult.referenceMultipath` reports the code multipath combinations the way Anubis and teqc average them, so the figures can be compared with those tools' reports. This is for reference only; the graded multipath is unchanged. `ReferenceMultipathAccumulator` is also available on its own. The option `referenceMultipath: false` turns it off; it adds about 2 s on a 1 Hz day.
+
+- **Anubis method:**
+  - every code signal separately (`GPS M1C`, `M2W`, `M2L`, …), each with one phase pair per satellite;
+  - the standard deviation of each 20-epoch window, averaged per satellite, then over satellites;
+  - a per-band summary like Anubis's `mp1`–`mp8`.
+- **teqc method:**
+  - MP12, MP21 (and MP15, MP51) for GPS and GLONASS;
+  - each value minus the mean of its last 50 values, as an RMS per satellite above the mask, then averaged over satellites;
+  - a summary that pools GPS and GLONASS, like teqc's "Moving average MP12".
+- **Fitted against the tools' own output, not just their summaries.**
+  - Anubis 3.11 on seven IGS/EUREF stations (2026/313, 153 signals): median ratio 0.98, and 80 % of signals within 0.91–1.10.
+  - teqc 2019Feb25 on the same seven: MP12 within 0.87–1.06 and MP21 within 0.98–1.21.
+  - On ABMF, a station not used for fitting: GLONASS, BeiDou and SBAS within 10 % of Anubis, GPS about 20 % low and Galileo about 20 % high. teqc MP12 is 0.82× and MP21 0.96×.
+  - Clean satellites match to the centimetre. The spread comes from how each tool handles a few satellites' slips and outliers, which isn't documented for either.
+
 ## 2.27.0
 
 ### Changed — PPP is 1.8× faster (`positioning`)

@@ -23,6 +23,10 @@ import { SignalProfileAccumulator } from './signal-profile';
 import { LossOfLockAccumulator } from './loss-of-lock';
 import type { LossOfLockResult } from './loss-of-lock';
 import { SatelliteAccumulator } from './satellites';
+import {
+  ReferenceMultipathAccumulator,
+  type ReferenceMultipath,
+} from './multipath-reference';
 import type { SatelliteRow } from './satellites';
 import type { SignalProfileResult } from './signal-profile';
 
@@ -52,6 +56,8 @@ export interface QualityResult {
   lossOfLock?: LossOfLockResult;
   /** One row per satellite (SpiderQC/teqc per-satellite table). */
   satellites?: SatelliteRow[];
+  /** Multipath averaged as Anubis and teqc do — for comparison, not graded. */
+  referenceMultipath?: ReferenceMultipath;
 }
 
 /**
@@ -146,6 +152,11 @@ export interface QualityOptions {
    * elevation is not low elevation).
    */
   maskDeg?: number;
+  /**
+   * Also average multipath the way Anubis and teqc do, for comparison with
+   * their reports (default true; costs a few seconds on a 1 Hz day).
+   */
+  referenceMultipath?: boolean;
 }
 
 /**
@@ -172,6 +183,7 @@ export class QualityAccumulator {
   private profile = new SignalProfileAccumulator();
   private lock = new LossOfLockAccumulator();
   private sats = new SatelliteAccumulator();
+  private ref: ReferenceMultipathAccumulator | null;
   /** Indices of pseudorange (C) observables, per code-list instance. */
   private codeIdx = new WeakMap<string[], number[]>();
   private epochTime: number | null = null;
@@ -197,6 +209,10 @@ export class QualityAccumulator {
       this.elevation && opts.maskDeg != null && opts.maskDeg > 0
         ? opts.maskDeg
         : null;
+    this.ref =
+      opts.referenceMultipath === false
+        ? null
+        : new ReferenceMultipathAccumulator(header, this.maskDeg ?? 10);
     if (this.elevation)
       this.tracking = new TrackingAccumulator(
         this.elevation,
@@ -247,6 +263,7 @@ export class QualityAccumulator {
       this.profile.onObservation(o.prn, o.codes, o.values, el);
       this.sats.onObservation(o.prn, el);
       this.tracking?.onObservation(time, o.prn, o.codes, o.values);
+      this.ref?.onObservation(time, o.prn, o.codes, o.values, el);
       if (this.maskDeg !== null && el !== null && el < this.maskDeg) {
         this.belowMask++;
         continue;
@@ -304,6 +321,7 @@ export class QualityAccumulator {
       multipathSky: this.elevation ? multipathSky(mp, this.elevation) : null,
       lossOfLock,
       satellites,
+      referenceMultipath: this.ref?.finalize(),
     };
   }
 }
