@@ -397,8 +397,17 @@ describe('MSM lock arcs', () => {
     expect(sigAt(enc, 2, { lockTime: 0.5 }).lockTime).toBeLessThanOrEqual(0.5);
     expect(sigAt(enc, 3, { lockTime: 1.5 }).lockTime).toBeGreaterThan(1);
     expect(sigAt(enc, 4, { lockTime: 2.5, slip: true }).lockTime).toBe(0);
-    // With receiver lock time, a skipped epoch is not a slip.
+    // With receiver lock time, a skipped epoch is not a slip …
     expect(sigAt(enc, 7, { lockTime: 5.5 }).lockTime).toBeGreaterThan(2);
+    // … but lock that grew less than the gap was lost in it (NovAtel E21):
+    // the indicator must drop below the last one sent, or rovers miss it.
+    const before = sigAt(enc, 8, { lockTime: 6.5 }).lockTime!;
+    expect(sigAt(enc, 12, { lockTime: 6.8 }).lockTime).toBeLessThan(before);
+    expect(sigAt(enc, 13, { lockTime: 7.8 }).lockTime).toBeLessThan(before);
+    // A saturated counter (UBX 64.5 s) repeating is not a slip.
+    const sat = new MsmEncoder({ msm: 7 });
+    sigAt(sat, 0, { lockTime: 64.5 });
+    expect(sigAt(sat, 5, { lockTime: 64.5 }).lockTime).toBeGreaterThan(65);
   });
 
   it('re-anchors a phase whose ambiguity is out of range, once per arc', () => {

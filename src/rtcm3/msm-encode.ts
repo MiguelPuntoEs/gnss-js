@@ -44,6 +44,8 @@ export interface MsmEncodeSignal extends Omit<ObsSignal, 'wavelength'> {
   wavelength?: number;
   /** Loss of lock / cycle slip flagged by the source (RINEX LLI bit 0). */
   slip?: boolean;
+  /** Rolling cycle-slip counter (e.g. Trimble): any change is a slip. */
+  slipCount?: number;
 }
 
 /** One satellite to encode. PRN in RINEX form (`G05`, `R12`, `J01`, `S23`). */
@@ -195,11 +197,15 @@ interface ArcState {
   lockStartMs: number;
   /** Receiver-reported lock time at the previous epoch, seconds. */
   inputLock?: number;
+  /** Receiver slip counter at the previous epoch. */
+  slipCount?: number;
   lastSeenMs: number;
   /** Whole cycles added to the input phase for this arc. */
   cycles: number;
   /** Receiver lock time still describes this arc (not slip-flagged or re-anchored). */
   trustInput: boolean;
+  /** Lock-time indicator last sent for this signal. */
+  lastLti?: number;
 }
 
 /* ================================================================== */
@@ -213,7 +219,7 @@ export class MsmEncoder {
   private readonly clockSteering: number;
   private readonly externalClock: number;
   private readonly systems: Set<string>;
-  private readonly gloChannels: ReadonlyMap<number, number>;
+  private readonly gloChannels: Map<number, number>;
   private readonly arcs = new Map<string, ArcState>();
   private readonly lastEpoch = new Map<string, number>();
 
@@ -230,7 +236,13 @@ export class MsmEncoder {
     this.clockSteering = opts.clockSteering ?? 0;
     this.externalClock = opts.externalClock ?? 0;
     this.systems = new Set(opts.systems ?? SYSTEM_ORDER);
-    this.gloChannels = opts.gloChannels ?? new Map();
+    this.gloChannels = new Map(opts.gloChannels);
+  }
+
+  /** Learn a GLONASS slot's frequency channel (e.g. from its ephemeris). */
+  setGloChannel(slot: number, k: number): void {
+    if (slot >= 1 && slot <= 64 && k >= -7 && k <= 13)
+      this.gloChannels.set(slot, k);
   }
 
   /** Forget all lock arcs (e.g. when the source restarts). */
@@ -435,7 +447,7 @@ export class MsmEncoder {
           psr,
           phase,
           dop,
-          lti: hiRes ? lockTimeIndicator10(lockS) : lockTimeIndicator4(lockS),
+          lti: (arc.lastLti = this.lti(lockS)),
           halfCycle: s.halfCycle === true,
           cnr: hiRes
             ? Math.min(1023, Math.max(0, Math.round(cn0 * 16)))
@@ -454,15 +466,36 @@ export class MsmEncoder {
     return sats;
   }
 
+  /** Lock-time indicator (DF402 or DF407) for this encoder's level. */
+  private lti(seconds: number): number {
+    return this.level >= 6
+      ? lockTimeIndicator10(seconds)
+      : lockTimeIndicator4(seconds);
+  }
+
   /** Advance (or restart) the lock arc of one satellite × signal. */
   private updateArc(key: string, timeMs: number, s: MsmEncodeSignal): ArcState {
     const prev = this.arcs.get(key);
     const sysLast = this.lastEpoch.get(key[0]!);
     let restart = !prev || s.slip === true || timeMs < prev.lastSeenMs;
-    if (!restart && prev) {
+    if (
+      !restart &&
+      prev?.slipCount !== undefined &&
+      s.slipCount !== undefined &&
+      s.slipCount !== prev.slipCount
+    ) {
+      restart = true;
+    } else if (!restart && prev) {
       if (s.lockTime !== undefined && prev.inputLock !== undefined) {
-        // The receiver knows best: lock time only drops on a real loss.
-        restart = s.lockTime < prev.inputLock;
+        // The receiver knows best: lock time drops, or grows by less than
+        // the time elapsed, only after a loss of lock (RTKLIB's test).
+        // 1 s of slack for whole-second lock times (SBF); an unchanged
+        // value is a saturated counter (UBX caps at 64.5 s), not a slip.
+        const elapsed = (timeMs - prev.lastSeenMs) / 1000;
+        restart =
+          s.lockTime < prev.inputLock ||
+          (s.lockTime !== prev.inputLock &&
+            s.lockTime + 1 < prev.inputLock + elapsed);
       } else {
         // No lock time: continuity means present in every epoch of its
         // system (epochs without the system at all don't count, so systems
@@ -471,17 +504,28 @@ export class MsmEncoder {
       }
     }
     if (restart || !prev) {
+      // Rovers see a slip only when the indicator drops (RTKLIB
+      // lossoflock), so a restarted arc must go out below the last one
+      // sent: at the receiver's new lock time if that is lower, else at 0.
+      let lock = s.slip === true ? 0 : (s.lockTime ?? 0);
+      let trustInput = s.slip !== true;
+      if (prev?.lastLti !== undefined && this.lti(lock) >= prev.lastLti) {
+        lock = 0;
+        trustInput = false;
+      }
       const arc: ArcState = {
-        lockStartMs: timeMs - (s.slip === true ? 0 : (s.lockTime ?? 0) * 1000),
+        lockStartMs: timeMs - lock * 1000,
         inputLock: s.lockTime,
+        slipCount: s.slipCount,
         lastSeenMs: timeMs,
         cycles: 0,
-        trustInput: s.slip !== true,
+        trustInput,
       };
       this.arcs.set(key, arc);
       return arc;
     }
     prev.inputLock = s.lockTime;
+    prev.slipCount = s.slipCount;
     prev.lastSeenMs = timeMs;
     return prev;
   }
