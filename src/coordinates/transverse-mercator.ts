@@ -24,6 +24,8 @@ export interface TransverseMercatorParams {
   falseNorthing: number;
   /** False easting (m). */
   falseEasting: number;
+  /** Latitude of origin (degrees; default 0, the equator). */
+  lat0?: number;
 }
 
 export const GRS80_SEMI_MAJOR_AXIS = 6378137.0;
@@ -35,6 +37,38 @@ function series(p: TransverseMercatorParams) {
   const n = f / (2 - f);
   const aHat = (a / (1 + n)) * (1 + n ** 2 / 4 + n ** 4 / 64);
   return { e2, n, aHat };
+}
+
+/** Conformal latitude of `lat` (radians): Krüger's A–D series. */
+function conformalLatitude(lat: number, e2: number): number {
+  const A = e2;
+  const B = (5 * e2 ** 2 - e2 ** 3) / 6;
+  const C = (104 * e2 ** 3 - 45 * e2 ** 4) / 120;
+  const D = (1237 * e2 ** 4) / 1260;
+  const s2 = Math.sin(lat) ** 2;
+  return (
+    lat -
+    Math.sin(lat) * Math.cos(lat) * (A + B * s2 + C * s2 ** 2 + D * s2 ** 3)
+  );
+}
+
+function forwardCoefficients(n: number): number[] {
+  return [
+    n / 2 - (2 * n ** 2) / 3 + (5 * n ** 3) / 16 + (41 * n ** 4) / 180,
+    (13 * n ** 2) / 48 - (3 * n ** 3) / 5 + (557 * n ** 4) / 1440,
+    (61 * n ** 3) / 240 - (103 * n ** 4) / 140,
+    (49561 * n ** 4) / 161280,
+  ];
+}
+
+/** The latitude of origin on the central meridian, in units of k0·â. */
+function originXi(p: TransverseMercatorParams, e2: number, n: number): number {
+  if (!p.lat0) return 0;
+  const xi = conformalLatitude((p.lat0 * Math.PI) / 180, e2);
+  const b = forwardCoefficients(n);
+  let x = xi;
+  for (let j = 1; j <= 4; j++) x += b[j - 1]! * Math.sin(2 * j * xi);
+  return x;
 }
 
 /**
@@ -49,21 +83,8 @@ export function geodeticToTransverseMercator(
   p: TransverseMercatorParams
 ): { northing: number; easting: number } {
   const { e2, n, aHat } = series(p);
-  const A = e2;
-  const B = (5 * e2 ** 2 - e2 ** 3) / 6;
-  const C = (104 * e2 ** 3 - 45 * e2 ** 4) / 120;
-  const D = (1237 * e2 ** 4) / 1260;
-  const b = [
-    n / 2 - (2 * n ** 2) / 3 + (5 * n ** 3) / 16 + (41 * n ** 4) / 180,
-    (13 * n ** 2) / 48 - (3 * n ** 3) / 5 + (557 * n ** 4) / 1440,
-    (61 * n ** 3) / 240 - (103 * n ** 4) / 140,
-    (49561 * n ** 4) / 161280,
-  ];
-
-  const s2 = Math.sin(lat) ** 2;
-  const latC =
-    lat -
-    Math.sin(lat) * Math.cos(lat) * (A + B * s2 + C * s2 ** 2 + D * s2 ** 3);
+  const b = forwardCoefficients(n);
+  const latC = conformalLatitude(lat, e2);
   const dLon = lon - (p.lon0 * Math.PI) / 180;
   const xi = Math.atan2(Math.tan(latC), Math.cos(dLon));
   const eta = Math.atanh(Math.cos(latC) * Math.sin(dLon));
@@ -76,7 +97,7 @@ export function geodeticToTransverseMercator(
     y += bj * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
   }
   return {
-    northing: p.k0 * aHat * x + p.falseNorthing,
+    northing: p.k0 * aHat * (x - originXi(p, e2, n)) + p.falseNorthing,
     easting: p.k0 * aHat * y + p.falseEasting,
   };
 }
@@ -102,7 +123,7 @@ export function transverseMercatorToGeodetic(
     (4397 * n ** 4) / 161280,
   ];
 
-  const xi = (northing - p.falseNorthing) / (p.k0 * aHat);
+  const xi = (northing - p.falseNorthing) / (p.k0 * aHat) + originXi(p, e2, n);
   const eta = (easting - p.falseEasting) / (p.k0 * aHat);
   let xiP = xi;
   let etaP = eta;
@@ -122,12 +143,15 @@ export function transverseMercatorToGeodetic(
   return { lat, lon: (p.lon0 * Math.PI) / 180 + dLon };
 }
 
-/** A named SWEREF 99 projection (EPSG:3006–3018). */
-export interface Sweref99Projection extends TransverseMercatorParams {
-  /** Lantmäteriet name, e.g. "SWEREF 99 TM", "SWEREF 99 18 00". */
+/** A named, EPSG-registered transverse Mercator grid. */
+export interface GridProjection extends TransverseMercatorParams {
+  /** Official name, e.g. "SWEREF 99 TM", "TM35FIN", "NTM zone 10". */
   name: string;
   epsg: number;
 }
+
+/** A named SWEREF 99 projection (EPSG:3006–3018). */
+export type Sweref99Projection = GridProjection;
 
 const swerefZone = (
   name: string,
@@ -169,10 +193,18 @@ export const SWEREF99_LOCAL_ZONES: readonly Sweref99Projection[] = [
   swerefZone('SWEREF 99 23 15', 3018, 23.25, 1, 150000),
 ];
 
-/** The local zone whose central meridian is nearest to `lonDeg`. */
-export function nearestSweref99LocalZone(lonDeg: number): Sweref99Projection {
-  let best = SWEREF99_LOCAL_ZONES[0]!;
-  for (const z of SWEREF99_LOCAL_ZONES)
+/** The zone whose central meridian is nearest to `lonDeg`. */
+export function nearestZone<P extends TransverseMercatorParams>(
+  zones: readonly P[],
+  lonDeg: number
+): P {
+  let best = zones[0]!;
+  for (const z of zones)
     if (Math.abs(z.lon0 - lonDeg) < Math.abs(best.lon0 - lonDeg)) best = z;
   return best;
+}
+
+/** The local zone whose central meridian is nearest to `lonDeg`. */
+export function nearestSweref99LocalZone(lonDeg: number): Sweref99Projection {
+  return nearestZone(SWEREF99_LOCAL_ZONES, lonDeg);
 }

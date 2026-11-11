@@ -2,8 +2,8 @@
  * Terrestrial reference frame transformations.
  *
  * Time-dependent 14-parameter Helmert transformations between ITRF
- * realizations, the ETRS89 realizations (ETRF2000/2014/2020), and
- * NAD83(2011). All parameters are taken verbatim from authoritative
+ * realizations, the ETRS89 realizations (ETRF2000/2014/2020),
+ * NAD83(2011), NAD83(CSRS) (Canada) and GDA2020/GDA94 (Australia). All parameters are taken verbatim from authoritative
  * sources — IERS/IGN for ITRF↔ITRF, EPSG registry entries for the
  * rest — never re-derived. Each parameter set cites its source.
  *
@@ -42,6 +42,9 @@ export type ReferenceFrame =
   | 'ETRF2014'
   | 'ETRF2000'
   | 'NAD83(2011)'
+  | 'NAD83(CSRS)'
+  | 'GDA2020'
+  | 'GDA94'
   | 'WGS84';
 
 /**
@@ -198,6 +201,46 @@ const ITRF2014_TO_NAD83_2011 = H(
   2010.0
 );
 
+/**
+ * ITRF2020 → NAD83(CSRS)v8, EPSG:10415 (Position Vector; translations
+ * given in metres, stored as mm). Numerically the same as ITRF2020 →
+ * NAD83(2011): Canada and the US share the NAD83 plate-fixed definition.
+ */
+const ITRF2020_TO_NAD83_CSRS = H(
+  [1003.9, -1909.61, -541.17],
+  -0.05109,
+  [-26.78138, 0.42027, -10.93206],
+  [0.79, -0.7, -1.24],
+  -0.07201,
+  [-0.06667, 0.75744, 0.05133],
+  2010.0
+);
+
+/**
+ * ITRF2014 → GDA2020, EPSG:8049: the Australian plate's rotation only, zero
+ * at 2020.0. Coordinate Frame convention — rotations negated here.
+ */
+const ITRF2014_TO_GDA2020 = H(
+  Z,
+  0,
+  Z,
+  Z,
+  0,
+  [-1.50379, -1.18346, -1.20716],
+  2020.0
+);
+
+/** ITRF2014 → GDA94, EPSG:9682 (Coordinate Frame — rotations negated). */
+const ITRF2014_TO_GDA94 = H(
+  [-61.55, 10.87, 40.19],
+  9.994,
+  [-39.4924, -32.7221, -32.8979],
+  Z,
+  0,
+  [-1.50379, -1.18346, -1.20716],
+  2020.0
+);
+
 /* ================================================================== */
 /*  Helmert application                                                */
 /* ================================================================== */
@@ -252,6 +295,9 @@ const EDGES: Edge[] = [
   { from: 'ITRF2014', to: 'ETRF2014', p: ITRF2014_TO_ETRF2014 },
   { from: 'ITRF2014', to: 'ETRF2000', p: ITRF2014_TO_ETRF2000 },
   { from: 'ITRF2014', to: 'NAD83(2011)', p: ITRF2014_TO_NAD83_2011 },
+  { from: 'ITRF2020', to: 'NAD83(CSRS)', p: ITRF2020_TO_NAD83_CSRS },
+  { from: 'ITRF2014', to: 'GDA2020', p: ITRF2014_TO_GDA2020 },
+  { from: 'ITRF2014', to: 'GDA94', p: ITRF2014_TO_GDA94 },
 ];
 
 /** Frames supported by transformFrame (WGS84 is an ITRF2020 alias). */
@@ -275,6 +321,9 @@ export const REFERENCE_FRAMES: ReferenceFrame[] = [
   'ETRF2014',
   'ETRF2000',
   'NAD83(2011)',
+  'NAD83(CSRS)',
+  'GDA2020',
+  'GDA94',
 ];
 
 function resolveAlias(f: ReferenceFrame): ReferenceFrame {
