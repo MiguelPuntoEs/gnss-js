@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.17.0
 
 ### New — plate motion: move ITRF2020 coordinates between epochs (`frames`)
 
