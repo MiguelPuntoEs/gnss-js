@@ -30,13 +30,28 @@ export interface Cn0Row {
   sd: number;
 }
 
+/** C/N0 against elevation for one signal: mean per 5° bin (all obs). */
+export interface Cn0ElevationRow {
+  system: string;
+  code: string;
+  label: string;
+  /** Mean C/N0 per bin, bin k = [5k, 5k+5)°; null when empty. */
+  mean: (number | null)[];
+  n: number[];
+}
+
 export interface SignalProfileResult {
   ladder: readonly number[];
   /** Carrier-phase (L) and code (C) signals. */
   signals: SignalProfileRow[];
   /** C/N0 per S signal, over the observations QC graded (above the mask). */
   cn0: Cn0Row[];
+  /** C/N0 per S signal against elevation (all elevations; needs orbits). */
+  cn0ByElevation: Cn0ElevationRow[];
 }
+
+const CN0_EL_BIN = 5;
+const CN0_EL_BINS = 90 / CN0_EL_BIN;
 
 const ORDER = 'GRECJIS';
 const rank = (s: string) =>
@@ -47,6 +62,7 @@ const label = (sys: string, code: string) =>
 export class SignalProfileAccumulator {
   private counts = new Map<string, { above: number[]; none: number }>();
   private cn0 = new Map<string, { n: number; sum: number; sum2: number }>();
+  private cn0El = new Map<string, { sum: number[]; n: number[] }>();
 
   /** Every observation, with its elevation (null if unknown). */
   onObservation(
@@ -58,9 +74,29 @@ export class SignalProfileAccumulator {
     const sys = prn[0]!;
     for (let i = 0; i < codes.length; i++) {
       const code = codes[i]!;
-      if (code[0] !== 'L' && code[0] !== 'C') continue;
       const v = values[i];
       if (v == null || v === 0) continue;
+      if (code[0] === 'S') {
+        if (elevationDeg === null || elevationDeg < 0 || v <= 0) continue;
+        const key = `${sys}:${code}`;
+        let r = this.cn0El.get(key);
+        if (!r)
+          this.cn0El.set(
+            key,
+            (r = {
+              sum: new Array<number>(CN0_EL_BINS).fill(0),
+              n: new Array<number>(CN0_EL_BINS).fill(0),
+            })
+          );
+        const b = Math.min(
+          CN0_EL_BINS - 1,
+          Math.floor(elevationDeg / CN0_EL_BIN)
+        );
+        r.sum[b]! += v;
+        r.n[b]!++;
+        continue;
+      }
+      if (code[0] !== 'L' && code[0] !== 'C') continue;
       const key = `${sys}:${code}`;
       let c = this.counts.get(key);
       if (!c)
@@ -119,10 +155,23 @@ export class SignalProfileAccumulator {
         sd: c.n > 1 ? Math.sqrt(Math.max(0, c.sum2 / c.n - mean * mean)) : 0,
       };
     });
+    const cn0ByElevation: Cn0ElevationRow[] = [...this.cn0El].map(
+      ([key, r]) => {
+        const [system, code] = key.split(':') as [string, string];
+        return {
+          system,
+          code,
+          label: label(system, code),
+          mean: r.sum.map((x, k) => (r.n[k]! > 0 ? x / r.n[k]! : null)),
+          n: r.n,
+        };
+      }
+    );
     return {
       ladder: ELEVATION_LADDER,
       signals: signals.sort(sortKey),
       cn0: cn0.sort(sortKey),
+      cn0ByElevation: cn0ByElevation.sort(sortKey),
     };
   }
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.19.0
+
+### New — site diagnostics: horizon, multipath by direction, antenna C/N0 (`analysis`)
+
+Beyond pass/fail, _why_ a site behaves as it does:
+
+- **`tracking.sky`.** Expected vs tracked samples per 10° azimuth × 5° elevation cell. From it, the **horizon** per azimuth (where tracking starts), the receiver's own cut-off (the median, the same all round) and **obstructions** (sectors ≥ 10° above it). On ABMF it finds the low eastern sector (80–90°, up to 30°).
+- **`multipathSky`.** Code-multipath RMS of every signal pooled per 30° × 10° cell, with the site's median and the worst cell above 15°. Multipath comes from reflectors, so a bad sector points at the wall, roof or mast.
+- **C/N0 by elevation** per signal (`signals.cn0ByElevation`, 5° bins), and **`compareCn0WithTemplate`** against `CN0_TEMPLATE`. The template is built from eight healthy geodetic stations (Septentrio and Leica), which sit within ±3 dB of it above 30°. A failing antenna, LNA or cable costs ≥ 6–10 dB on every signal: a 9 dB loss injected into ABMF reads −9 dB.
+- `ElevationModel.azElDeg` returns azimuth too, interpolated the short way round north.
+
 ## 2.18.0
 
 ### New — elevation-masked QC and above-mask tracking (`analysis`)
