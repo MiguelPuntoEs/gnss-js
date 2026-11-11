@@ -170,3 +170,28 @@ export const POLAND_CS92 = tm('PL-1992', 2180, 19, 0.9993, 500000, -5300000);
 export const POLAND_CS2000_ZONES: readonly GridProjection[] = [5, 6, 7, 8].map(
   (z) => tm(`PL-2000 zone ${z}`, 2171 + z, z * 3, 0.999923, z * 1e6 + 500000)
 );
+
+/* Ireland — ETRS89 (ETRF2000 @ 2009.756) */
+
+/** Irish Transverse Mercator (EPSG:2157), the Republic's national grid. */
+export const IRISH_TM = tm('ITM', 2157, -8, 0.99982, 600000, 750000, 53.5);
+
+/* Portugal — ETRS89 (ETRF97 @ 1995.4) */
+
+/** PT-TM06 (EPSG:3763), mainland Portugal; origin at the Melriça vertex. */
+export const PORTUGAL_TM06 = tm(
+  'PT-TM06',
+  3763,
+  -(8 + 7 / 60 + 59.19 / 3600),
+  1,
+  0,
+  0,
+  39 + 40 / 60 + 5.73 / 3600
+);
+
+/* Spain — ETRS89 (ERGNSS: ETRF2000 @ 2017.0) */
+
+/** ETRS89 UTM zones 29–31 (EPSG:25829–25831), mainland Spain and the Balearics. */
+export const SPAIN_UTM_ZONES: readonly GridProjection[] = [29, 30, 31].map(
+  (z) => utm(`ETRS89 UTM zone ${z}N`, 25800 + z, z)
+);

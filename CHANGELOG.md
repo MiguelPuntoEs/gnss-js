@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.41.0
+
+### Added — Ireland, Portugal and Spain grids
+
+- `IRISH_TM`: Irish Transverse Mercator (EPSG:2157), on ETRS89 as ETRF2000 at 2009.756.
+- `PORTUGAL_TM06`: PT-TM06 (EPSG:3763), on ETRS89 as ETRF97 at 1995.4.
+- `SPAIN_UTM_ZONES`: ETRS89 UTM zones 29–31 (EPSG:25829–25831), on ERGNSS, which is ETRF2000 at 2017.0.
+- Realisations as EPSG lists them (Lott, EUREF 2025).
+- Matches PROJ 9.8.1 to 0.1 mm at 75 points; the inverse matches to 1e-9°.
+
 ## 2.40.0
 
 ### Fixed — PPP-AR no longer reports a stale fix
