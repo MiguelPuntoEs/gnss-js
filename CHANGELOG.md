@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.37.0
+
+### Added — what RINEX 3 nav records say about themselves
+
+`parseNavFile()` now keeps four fields of GPS, Galileo, BeiDou, QZSS and NavIC records that it used to drop. All are optional on `KeplerEphemeris`, and both nav writers write them back.
+
+- `ttm`: when the message was transmitted, in seconds of the record's week (it can be negative, meaning the previous week). Absent when the file marks it unknown. This is what tells you which ephemeris a receiver actually had at a given moment.
+- `svAccuracy`: the accuracy the message claims, in metres (GPS/QZSS URA, Galileo SISA, BeiDou URA).
+- `dataSources`: Galileo only. Tells I/NAV records apart from F/NAV ones, and which signal pair the clock refers to.
+- `tgd2`: the second group delay. Galileo BGD E5b/E1 and BeiDou TGD2 (B2I/B3I). `tgd` stays the first one.
+
 ## 2.36.0
 
 ### Added — France: Lambert-93 and the CC zones

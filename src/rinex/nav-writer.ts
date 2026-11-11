@@ -159,9 +159,11 @@ function writeKeplerRecord(eph: KeplerEphemeris): string {
   lines.push(orbitLine([eph.cuc, eph.e, eph.cus, eph.sqrtA]));
   lines.push(orbitLine([eph.toe, eph.cic, eph.omega0, eph.cis]));
   lines.push(orbitLine([eph.i0, eph.crc, eph.omega, eph.omegaDot]));
-  lines.push(orbitLine([eph.idot, 0, eph.week, 0]));
-  lines.push(orbitLine([0, eph.svHealth, eph.tgd, 0]));
-  lines.push(orbitLine([eph.toe, 0, 0, 0]));
+  lines.push(orbitLine([eph.idot, eph.dataSources ?? 0, eph.week, 0]));
+  lines.push(
+    orbitLine([eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.tgd2 ?? 0])
+  );
+  lines.push(orbitLine([eph.ttm ?? eph.toe, 0, 0, 0]));
 
   return lines.join('\n');
 }
