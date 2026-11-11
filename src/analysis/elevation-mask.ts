@@ -195,6 +195,13 @@ export interface TrackingTimeline {
   start: number;
   binSec: number;
   bins: number;
+  /**
+   * Per bin: tracked share of the expected samples across all satellites
+   * (%), null without expected samples. Satellites move, so a deep dip here
+   * is lost *time* (an outage, interference) — unlike an obstruction, which
+   * shows in the sky grid.
+   */
+  percent: (number | null)[];
   rows: {
     prn: string;
     /** Per bin: samples above the mask (healthy, valid ephemeris). */
@@ -421,6 +428,16 @@ export class TrackingAccumulator {
         start: this.first,
         binSec: (binSteps * this.stepMs) / 1000,
         bins: nBins,
+        percent: Array.from({ length: nBins }, (_, b) => {
+          let e = 0;
+          let t = 0;
+          for (const r of rows.values()) {
+            if (!this.observed.has(r.prn)) continue;
+            e += r.expected[b]!;
+            t += r.tracked[b]!;
+          }
+          return e > 0 ? (t / e) * 100 : null;
+        }),
         rows: [...rows.values()].sort(
           (a, b) =>
             rank(a.prn[0]!) - rank(b.prn[0]!) || a.prn.localeCompare(b.prn)

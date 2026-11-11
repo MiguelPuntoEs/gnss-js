@@ -92,6 +92,12 @@ describe.skipIf(!HAS_DATA)('site diagnostics on a real day (ABMF)', () => {
       expect.arrayContaining(['C41', 'C42', 'C43', 'C44', 'C45', 'C46'])
     );
     expect(q.tracking!.percent).toBeGreaterThan(99);
+    // Lost time shows per timeline bin: a healthy day never dips.
+    const perBin = q.tracking!.timeline.percent.filter(
+      (x): x is number => x !== null
+    );
+    expect(perBin.length).toBeGreaterThan(90);
+    expect(Math.min(...perBin)).toBeGreaterThan(90);
     const mp = q.multipathSky!;
     expect(mp.medianRms!).toBeGreaterThan(0.15);
     expect(mp.medianRms!).toBeLessThan(0.5);
