@@ -181,6 +181,14 @@ export interface TrackingSystemStats {
   percent: number;
   /** dualFreq / expected × 100. */
   dualPercent: number;
+  /**
+   * The receiver recorded at most this many of the system's satellites at
+   * once, at that count most of the day while more were above the mask: a
+   * channel allocation in its configuration (a Leica GR25 set to 4 Galileo
+   * satellites tracks 49 % of Galileo). Its missing satellite-epochs are the
+   * receiver's settings, not the site. Absent when no such cap shows.
+   */
+  channelLimit?: number;
 }
 
 /**
@@ -283,6 +291,45 @@ const EL_BIN = 5;
 const SKY_MIN_SAMPLES = 4;
 /** Below this tracked share a cell counts as not tracked. */
 const SKY_TRACKED_SHARE = 0.5;
+
+/**
+ * Share of recording epochs a capped system must sit exactly at its cap.
+ * ARA2 (a GR25 set to 6 Galileo) sits there 86 % of the time: it drops
+ * below whenever one is lost.
+ */
+const CAP_SHARE = 0.8;
+
+/**
+ * A receiver-side cap on a system's satellites: the epochs with any of its
+ * satellites recorded sit at one maximum count (≥ 80 % of them) while, in
+ * most of those, more satellites were above the mask. Satellites in view
+ * change through the day, so a natural count never holds that flat; a
+ * regional system whose few satellites are all in view never has more
+ * above the mask than it records, so it isn't mistaken for one.
+ */
+function channelLimitOf(
+  c: { rec: number[]; above: number[] } | undefined
+): { channelLimit: number } | Record<string, never> {
+  if (!c) return {};
+  let cap = 0;
+  for (const r of c.rec) if (r > cap) cap = r;
+  if (cap === 0) return {};
+  let recording = 0;
+  let atCap = 0;
+  let moreInView = 0;
+  for (let k = 0; k < c.rec.length; k++) {
+    if (c.rec[k]! === 0) continue;
+    recording++;
+    if (c.rec[k]! !== cap) continue;
+    atCap++;
+    if (c.above[k]! > cap) moreInView++;
+  }
+  return recording >= 20 &&
+    atCap >= CAP_SHARE * recording &&
+    moreInView >= 0.5 * atCap
+    ? { channelLimit: cap }
+    : {};
+}
 
 /**
  * Compares the satellite-epochs the orbits put above the mask with the ones
@@ -416,10 +463,28 @@ export class TrackingAccumulator {
         );
       return r;
     };
+    // Per system and grid epoch: satellites recorded (any elevation) and
+    // satellites above the mask, for the channel-limit test.
+    const perEpoch = new Map<string, { rec: number[]; above: number[] }>();
+    const countsFor = (sys: string) => {
+      let c = perEpoch.get(sys);
+      if (!c)
+        perEpoch.set(
+          sys,
+          (c = {
+            rec: new Array<number>(n + 1).fill(0),
+            above: new Array<number>(n + 1).fill(0),
+          })
+        );
+      return c;
+    };
     for (let k = 0; k <= n; k++) {
       const t = this.first + k * this.stepMs;
       const row = this.seen.get(k);
       const b = Math.floor(k / binSteps);
+      if (row)
+        for (const prn of row.keys())
+          if (this.systems.has(prn[0]!)) countsFor(prn[0]!).rec[k]!++;
       for (const prn of withoutNav) if (row?.has(prn)) rowFor(prn).other[b]!++;
       for (const prn of prns) {
         const ae = this.model.azElDeg(prn, t);
@@ -450,6 +515,7 @@ export class TrackingAccumulator {
           open.set(prn, o);
         }
         const sys = prn[0]!;
+        countsFor(sys).above[k]!++;
         let a = agg.get(sys);
         if (!a) agg.set(sys, (a = { expected: 0, tracked: 0, dual: 0 }));
         a.expected++;
@@ -473,6 +539,7 @@ export class TrackingAccumulator {
         dualFreq: a.dual,
         percent: pct(a.tracked, a.expected),
         dualPercent: pct(a.dual, a.expected),
+        ...channelLimitOf(perEpoch.get(system)),
       }));
     const expected = perSystem.reduce((s, x) => s + x.expected, 0);
     const tracked = perSystem.reduce((s, x) => s + x.tracked, 0);

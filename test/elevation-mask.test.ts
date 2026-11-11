@@ -7,6 +7,7 @@ import {
   analyzeQuality,
   ElevationModel,
   QualityAccumulator,
+  TrackingAccumulator,
 } from '../src/analysis';
 import type { RinexHeader } from '../src/rinex/parser';
 
@@ -114,4 +115,53 @@ describe.skipIf(!HAS_DATA)('elevation-masked QC (ABMF + BRDC)', () => {
     expect(seen).toBeGreaterThan(30);
     expect(model.elevationDeg('G99', t0)).toBeNull();
   });
+});
+
+describe.skipIf(!HAS_DATA)('receiver channel limit (ABMF + BRDC)', () => {
+  const buf = HAS_DATA ? readFileSync(join(DIR, 'ABMF.crx')) : null!;
+  const nav = HAS_DATA
+    ? parseNavFile(readFileSync(join(DIR, 'BRDC.nav'), 'utf-8'))
+    : null!;
+
+  /** Tracking over ABMF, keeping at most `galileo` Galileo satellites per
+   *  epoch (the lowest PRNs), as a receiver set to that many channels. */
+  const track = async (galileo: number) => {
+    const file = fileFrom(buf, 'ABMF.crx');
+    const { header } = await parseRinexStream(file);
+    const model = ElevationModel.create(
+      nav.ephemerides,
+      header.approxPosition
+    )!;
+    const acc = new TrackingAccumulator(model, 10, header.interval);
+    const kept = new Map<number, number>();
+    await parseRinexStream(
+      file,
+      undefined,
+      undefined,
+      (time, prn, codes, values) => {
+        if (prn[0] === 'E') {
+          const n = kept.get(time) ?? 0;
+          if (n >= galileo) return;
+          kept.set(time, n + 1);
+        }
+        acc.onObservation(time, prn, codes, values);
+      },
+      true
+    );
+    return acc.finalize()!;
+  };
+
+  it('finds no limit on a healthy IGS receiver', async () => {
+    const t = await track(Infinity);
+    for (const s of t.perSystem) expect(s.channelLimit).toBeUndefined();
+  }, 120_000);
+
+  it('reports a system held at a fixed satellite count', async () => {
+    const t = await track(4);
+    const gal = t.perSystem.find((s) => s.system === 'E')!;
+    expect(gal.channelLimit).toBe(4);
+    expect(gal.percent).toBeLessThan(70);
+    for (const s of t.perSystem)
+      if (s.system !== 'E') expect(s.channelLimit).toBeUndefined();
+  }, 120_000);
 });

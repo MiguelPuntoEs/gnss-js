@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### New — receiver channel limits in tracking (`analysis`)
+
+`TrackingResult.perSystem[].channelLimit` is set when the receiver recorded at most a fixed number of a system's satellites at once, sat at that count for most of the day (≥ 80 % of its epochs), and more satellites were above the mask during most of that time. This is a channel allocation in the receiver's configuration, not a site problem. Leica GR10/GR25 stations set to 4 or 6 Galileo satellites tracked only 49–76 % of the Galileo satellites in view and were graded as poor sites.
+
+- On 25 IGS/EUREF stations (2026/314) it flags Galileo on 8 Leica GR10/GR25 receivers (capped at 4 or 6) and nothing on the other 17 (Septentrio, Trimble, Javad, other Leicas).
+- The tracking figures themselves are unchanged. Callers decide what to do with a capped system.
+
 ## 2.28.0
 
 ### New — multipath as Anubis and teqc average it (`analysis`)
