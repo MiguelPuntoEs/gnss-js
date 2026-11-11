@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.39.0
+
+### Added — Switzerland: CH1903+ / LV95
+
+- `etrs89ToLv95()` and `lv95ToEtrs89()` convert between ETRS89 (CHTRF95) and CH1903+ / LV95 (EPSG:2056), as EPSG and swisstopo define it: the EPSG:1647 geocentric translation onto Bessel 1841, then the Swiss oblique Mercator.
+  - As in PROJ, the point keeps its height through the shift. Unlike PROJ, the inverse iterates the Bessel height, so it exactly undoes the forward conversion; PROJ's inverse is about 1 mm off.
+- `geodeticToSwissObliqueMercator()` and `swissObliqueMercatorToGeodetic()` implement EPSG method 9814 (PROJ's `somerc`). `LV95` is the grid.
+- `transformFrame()` knows `'ETRF89'`, via ITRF89 (EPSG:7932). CHTRF95 is ETRF89 at epoch 1993.0.
+- All of these match PROJ 9.8.1: 0.1 mm for the projection and 1 mm for the full chain, at 37 points from 200 to 4,000 m.
+
 ## 2.38.0
 
 ### Added — US State Plane, Belgium and Poland grids; one projection type

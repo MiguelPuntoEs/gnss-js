@@ -9,3 +9,4 @@ export * from './oblique-stereographic';
 export * from './lambert-conformal-conic';
 export * from './map-projection';
 export * from './us-state-plane';
+export * from './swiss';
