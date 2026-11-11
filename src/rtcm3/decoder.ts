@@ -92,7 +92,7 @@ export class BitReader {
 /* ================================================================== */
 
 /** Compute CRC-24Q over `length` bytes of `data`. Polynomial: 0x1864CFB. */
-function crc24q(data: Uint8Array, length: number): number {
+export function crc24q(data: Uint8Array, length: number): number {
   let crc = 0;
   for (let i = 0; i < length; i++) {
     crc ^= data[i]! << 16;

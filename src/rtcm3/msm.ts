@@ -285,6 +285,28 @@ function signalTable(sys: string): SignalDef[] {
   }
 }
 
+const MSM_SYSTEMS = ['G', 'R', 'E', 'C', 'J', 'I', 'S'];
+
+/**
+ * MSM signal-mask position (RTCM signal ID − 1) of a RINEX observation code,
+ * or −1 when the system's MSM signal table has no such signal.
+ */
+export function msmSignalIndex(sys: string, rinexCode: string): number {
+  if (!MSM_SYSTEMS.includes(sys)) return -1;
+  return signalTable(sys).findIndex((d) => d.code === rinexCode);
+}
+
+/**
+ * Nominal carrier frequency (Hz) of MSM signal position `idx`, or 0 when it
+ * is per-satellite (GLONASS FDMA L1/L2) or unassigned.
+ */
+export function msmSignalFrequency(sys: string, idx: number): number {
+  const def = signalTable(sys)[idx];
+  if (!def?.code) return 0;
+  if (sys === 'R' && def.freq <= 1) return 0; // FDMA marker, not a frequency
+  return def.freq;
+}
+
 /* ================================================================== */
 /*  Public types                                                       */
 /* ================================================================== */
@@ -515,14 +537,12 @@ export function decodeMsmFull(
       for (let j = 0; j < numSat; j++) rdop[j] = bits.readS(14) * 1.0;
     }
 
-    // Update GLONASS frequency numbers (MSM5/7 only — extsat stays 0
-    // for MSM4/6, which is treated as "unknown")
-    if (sys === 'R') {
+    // Update GLONASS frequency numbers from DF419 (MSM5/7 only: MSM4/6
+    // carry no such field). DF419 is k+7 for 0..13 — 0 is k = −7, a real
+    // channel — and 14/15 mean unknown.
+    if (sys === 'R' && (variant === 5 || variant === 7)) {
       for (let j = 0; j < numSat; j++) {
-        const slot = satIndices[j]!;
-        if (extsat[j] !== 0) {
-          gloFreqNum[slot - 1] = extsat[j]! - 7; // extsat encodes k+7
-        }
+        if (extsat[j]! <= 13) gloFreqNum[satIndices[j]! - 1] = extsat[j]! - 7;
       }
     }
 
