@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.25.0
 
 ### New — receiver health (`sbf`, `ubx`, `novatel`)
 
