@@ -31,8 +31,16 @@ export const SYS_SHORT: Record<string, string> = {
 /** Speed of light in m/s. */
 export const C_LIGHT = 299792458;
 
-/** Earth rotation rate in rad/s (WGS84/PZ-90 value). */
+/** Earth rotation rate in rad/s (WGS84 value; GPS, Galileo, QZSS, NavIC). */
 export const OMEGA_E = 7.2921151467e-5;
+
+/**
+ * Earth rotation rate in rad/s that BeiDou broadcast orbits are defined
+ * with (CGCS2000, BDS-SIS-ICD; RTKLIB OMGE_CMP). The WGS84 value differs by
+ * 1.467e-12 rad/s, which through the Ωe·toe term rotates a BeiDou orbit by
+ * up to ~30 m late in the week.
+ */
+export const OMEGA_E_BDS = 7.292115e-5;
 
 /* ── Signal frequencies ───────────────────────────────────────── */
 
