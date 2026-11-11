@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.30.1
+
+### Fixed — SBAS left out of the multipath sky map (`analysis`)
+
+`QualityResult.multipathSky` no longer includes SBAS satellites. A geostationary satellite sits in one sky cell all day, so it doesn't show where a reflector is. An anomalous SBAS signal also put the "worst sector" on that satellite at every station that saw it: S28 on 2026/313 had 19 m of code multipath at BIK0 and DJIG, 4,000 km apart.
+
 ## 2.32.0
 
 Found by checking every computation on gnsscalc.com/coordinates against 40-digit arithmetic, GeographicLib and PROJ (`coordinates`). Geodetic ↔ ECEF, ENU/AER, rhumb lines, UTM and the frame transformations all agreed to well under a millimetre; two edge cases did not.
