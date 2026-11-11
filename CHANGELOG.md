@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.26.0
+
+### New — `EpochSats`: one block per epoch, half the memory (`rinex`)
+
+`CompactEpoch.sats` was a `Map<string, Float64Array>`, so every satellite in every epoch had its own typed array. On a 1 Hz day (WTZR 2026/314, 3.55 M satellite-epochs) those small arrays cost about 1 GB on top of 0.5 GB of values.
+
+- **`EpochSats`** stores an epoch's PRNs and slot offsets in two small arrays, and all of its values in one `Float64Array`. It has the Map interface the readers and writers use: `get`, `has`, `set`, `delete`, `keys`, `values`, `entries`, iteration and `size`.
+  - `set` copies the values in, and `get` returns a view into the block.
+  - `compact()` trims a finished epoch; `compactEpochSats(sats)` does it only for an `EpochSats`.
+- **On the WTZR day:** 1 537 → 799 MB, peak 1 616 → 892 MB. Parse and QC times are unchanged, and the QC results are identical.
+- **`CompactEpoch.sats` is now typed as `SatValues`,** the Map subset above. A `Map` still satisfies it, so existing code that builds epochs from Maps is unaffected. Code that read `sats` and called a Map-only method, such as `forEach`, needs `[...sats]` or a loop.
+
 ## 2.25.1
 
 ### Fixed — u-blox receiver fix time was UTC (`ubx`)
