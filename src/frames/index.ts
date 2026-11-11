@@ -409,3 +409,4 @@ export function dateToEpoch(date: Date): number {
 
 export * from './plate-motion';
 export * from './nkg';
+export * from './rdnap';

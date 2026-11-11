@@ -5,3 +5,4 @@ export { geodesicInverse, geodesicDirect } from './karney';
 export * from './projections';
 export * from './transverse-mercator';
 export * from './national-grids';
+export * from './oblique-stereographic';
