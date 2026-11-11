@@ -266,6 +266,10 @@ describe('CycleSlipAccumulator', () => {
       expect(r.events).toHaveLength(1);
       expect(r.events[0]!.time).toBe(10 * 30_000);
       expect(r.slipEpochs).toBe(1);
+      expect(r.perSystem.G).toEqual({
+        slipEpochs: 1,
+        testedEpochs: r.testedEpochs,
+      });
     });
   });
 

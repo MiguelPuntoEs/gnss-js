@@ -77,6 +77,8 @@ export interface CycleSlipResult {
   slipEpochs: number;
   /** Distinct satellite-epochs any detector tested. */
   testedEpochs: number;
+  /** slipEpochs / testedEpochs split by system letter. */
+  perSystem: Record<string, { slipEpochs: number; testedEpochs: number }>;
   /** Per-satellite slip counts. Key = PRN, value = total slips. */
   satSlipCounts: Record<string, number>;
 }
@@ -167,6 +169,7 @@ export class CycleSlipAccumulator {
   private signalSats = new Map<string, Set<string>>();
   private slipEpochs = 0;
   private testedEpochs = 0;
+  private perSystem: CycleSlipResult['perSystem'] = {};
   /** Per-call flags folded into slipEpochs / testedEpochs. */
   private tested = false;
   private slipped = false;
@@ -404,8 +407,17 @@ export class CycleSlipAccumulator {
       }
     }
 
-    if (this.tested) this.testedEpochs++;
-    if (this.slipped) this.slipEpochs++;
+    if (this.tested || this.slipped) {
+      const ps = (this.perSystem[sys] ??= { slipEpochs: 0, testedEpochs: 0 });
+      if (this.tested) {
+        this.testedEpochs++;
+        ps.testedEpochs++;
+      }
+      if (this.slipped) {
+        this.slipEpochs++;
+        ps.slipEpochs++;
+      }
+    }
 
     this.prev.set(prn, {
       time,
@@ -459,6 +471,7 @@ export class CycleSlipAccumulator {
       satSlipCounts,
       slipEpochs: this.slipEpochs,
       testedEpochs: this.testedEpochs,
+      perSystem: this.perSystem,
     };
   }
 }
