@@ -42,6 +42,91 @@ export interface QualityResult {
   continuity?: ContinuityResult;
   /** Observations by elevation per signal; C/N0 per signal above the mask. */
   signals?: SignalProfileResult;
+  /** Code multipath by direction (needs orbits). */
+  multipathSky?: MultipathSky | null;
+}
+
+/**
+ * Code multipath by direction: RMS of every signal's MP values pooled per
+ * 30° azimuth × 10° elevation cell. Multipath comes from reflectors around
+ * the antenna, so it is a property of directions — a bad sector points at the
+ * wall, roof or mast causing it.
+ */
+export interface MultipathSky {
+  azBinDeg: number;
+  elBinDeg: number;
+  /** [azBin][elBin] RMS (m), null with fewer than `minSamples`. */
+  rms: (number | null)[][];
+  n: number[][];
+  minSamples: number;
+  /** Median RMS over the cells above 15° — what "normal" is at this site. */
+  medianRms: number | null;
+  /** Highest-RMS cell above 15° elevation, if any qualifies. */
+  worst: {
+    fromAz: number;
+    toAz: number;
+    fromEl: number;
+    toEl: number;
+    rms: number;
+  } | null;
+}
+
+const MP_AZ_BIN = 30;
+const MP_EL_BIN = 10;
+const MP_MIN_SAMPLES = 50;
+
+function multipathSky(
+  mp: MultipathResult,
+  model: ElevationModel
+): MultipathSky {
+  const nAz = 360 / MP_AZ_BIN;
+  const nEl = 90 / MP_EL_BIN;
+  const sum2 = Array.from({ length: nAz }, () =>
+    new Array<number>(nEl).fill(0)
+  );
+  const n = Array.from({ length: nAz }, () => new Array<number>(nEl).fill(0));
+  for (const s of mp.series)
+    for (const p of s.points) {
+      const ae = model.azElDeg(s.prn, p.time);
+      if (!ae || ae.el < 0) continue;
+      const ia = Math.min(nAz - 1, Math.floor(ae.az / MP_AZ_BIN));
+      const ie = Math.min(nEl - 1, Math.floor(ae.el / MP_EL_BIN));
+      sum2[ia]![ie]! += p.mp * p.mp;
+      n[ia]![ie]!++;
+    }
+  let worst: MultipathSky['worst'] = null;
+  const rms = sum2.map((col, ia) =>
+    col.map((x, ie) => {
+      const k = n[ia]![ie]!;
+      if (k < MP_MIN_SAMPLES) return null;
+      const r = Math.sqrt(x / k);
+      if (ie * MP_EL_BIN >= 15 && (!worst || r > worst.rms))
+        worst = {
+          fromAz: ia * MP_AZ_BIN,
+          toAz: (ia + 1) * MP_AZ_BIN,
+          fromEl: ie * MP_EL_BIN,
+          toEl: (ie + 1) * MP_EL_BIN,
+          rms: r,
+        };
+      return r;
+    })
+  );
+  const above: number[] = [];
+  rms.forEach((col) =>
+    col.forEach((r, ie) => {
+      if (r !== null && ie * MP_EL_BIN >= 15) above.push(r);
+    })
+  );
+  above.sort((a, b) => a - b);
+  return {
+    azBinDeg: MP_AZ_BIN,
+    elBinDeg: MP_EL_BIN,
+    medianRms: above.length ? above[Math.floor(above.length / 2)]! : null,
+    rms,
+    n,
+    minSamples: MP_MIN_SAMPLES,
+    worst,
+  };
 }
 
 export interface QualityOptions {
@@ -160,10 +245,11 @@ export class QualityAccumulator {
 
   finalize(): QualityResult {
     if (this.epoch.length > 0) this.flush();
+    const mp = this.mp.finalize();
     return {
       cycleSlips: this.cs.finalize(),
       completeness: this.comp.finalize(),
-      multipath: this.mp.finalize(),
+      multipath: mp,
       iono: this.iono.finalize(),
       maskDeg: this.maskDeg,
       belowMask: this.belowMask,
@@ -171,6 +257,7 @@ export class QualityAccumulator {
       clockJumps: this.clock.finalize(),
       continuity: this.continuity.finalize(),
       signals: this.profile.finalize(),
+      multipathSky: this.elevation ? multipathSky(mp, this.elevation) : null,
     };
   }
 }

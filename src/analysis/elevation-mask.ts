@@ -29,6 +29,12 @@ const SAMPLE_MS = 300_000;
 /*  Elevation model                                                    */
 /* ================================================================== */
 
+/** Direction to a satellite, degrees. */
+export interface AzEl {
+  az: number;
+  el: number;
+}
+
 /** Satellite elevations seen from one receiver, from broadcast orbits. */
 export class ElevationModel {
   /** Every PRN with at least one ephemeris, sorted. */
@@ -39,8 +45,8 @@ export class ElevationModel {
   private cosLat: number;
   private sinLon: number;
   private cosLon: number;
-  /** prn → sample index → elevation at that sample (null: no ephemeris). */
-  private samples = new Map<string, Map<number, number | null>>();
+  /** prn → sample index → az/el at that sample (null: no ephemeris). */
+  private samples = new Map<string, Map<number, AzEl | null>>();
   /** prn → sample index → healthy flag at that sample. */
   private health = new Map<string, Map<number, boolean>>();
 
@@ -77,12 +83,29 @@ export class ElevationModel {
    * valid then (unknown — callers keep such observations).
    */
   elevationDeg(prn: string, timeMs: number): number | null {
+    return this.azElDeg(prn, timeMs)?.el ?? null;
+  }
+
+  /**
+   * Azimuth (0–360°, clockwise from north) and elevation in degrees at a
+   * GPS-scale epoch, or null without a valid ephemeris.
+   */
+  azElDeg(prn: string, timeMs: number): AzEl | null {
     const k = Math.floor(timeMs / SAMPLE_MS);
     const frac = timeMs / SAMPLE_MS - k;
     const a = this.sample(prn, k);
     if (frac === 0) return a;
     const b = this.sample(prn, k + 1);
-    if (a !== null && b !== null) return a + (b - a) * frac;
+    if (a !== null && b !== null) {
+      // Azimuth wraps at north: interpolate along the short way round.
+      let d = b.az - a.az;
+      if (d > 180) d -= 360;
+      else if (d < -180) d += 360;
+      return {
+        az: (a.az + d * frac + 360) % 360,
+        el: a.el + (b.el - a.el) * frac,
+      };
+    }
     // An ephemeris boundary inside the interval: evaluate exactly.
     return this.exact(prn, timeMs);
   }
@@ -106,7 +129,7 @@ export class ElevationModel {
     return h;
   }
 
-  private sample(prn: string, k: number): number | null {
+  private sample(prn: string, k: number): AzEl | null {
     let m = this.samples.get(prn);
     if (!m) this.samples.set(prn, (m = new Map()));
     let el = m.get(k);
@@ -117,7 +140,7 @@ export class ElevationModel {
     return el;
   }
 
-  private exact(prn: string, timeMs: number): number | null {
+  private exact(prn: string, timeMs: number): AzEl | null {
     const ephs = this.ephByPrn.get(prn);
     const eph = ephs ? nearestValidEphemeris(ephs, timeMs) : null;
     if (!eph) return null;
@@ -134,7 +157,10 @@ export class ElevationModel {
       this.cosLat * this.cosLon * dx +
       this.cosLat * this.sinLon * dy +
       this.sinLat * dz;
-    return Math.atan2(up, Math.hypot(east, north)) * RAD;
+    return {
+      az: (Math.atan2(east, north) * RAD + 360) % 360,
+      el: Math.atan2(up, Math.hypot(east, north)) * RAD,
+    };
   }
 }
 
@@ -180,6 +206,28 @@ export interface TrackingTimeline {
   }[];
 }
 
+/**
+ * Where in the sky the receiver tracks: expected (healthy, above 0°) vs
+ * tracked grid samples per 10° azimuth × 5° elevation cell, and the horizon
+ * that follows from it — per azimuth, the elevation below which it mostly
+ * doesn't track. A receiver's own cut-off is the same all round (`cutoffDeg`,
+ * the median); sectors well above it are obstructions (trees, buildings,
+ * the mast itself).
+ */
+export interface SkyGrid {
+  azBinDeg: number;
+  elBinDeg: number;
+  /** [azBin][elBin] sample counts. */
+  expected: number[][];
+  tracked: number[][];
+  /** Per azimuth bin: elevation (deg) tracking starts at. */
+  horizon: number[];
+  /** Median horizon: the receiver's own cut-off, as tracked. */
+  cutoffDeg: number;
+  /** Contiguous azimuth sectors whose horizon is ≥ 10° above the cut-off. */
+  obstructions: { fromAz: number; toAz: number; maxEl: number }[];
+}
+
 export interface TrackingResult {
   maskDeg: number;
   /** Grid step the expected count was sampled on (s). */
@@ -191,6 +239,7 @@ export interface TrackingResult {
   dualPercent: number;
   perSystem: TrackingSystemStats[];
   timeline: TrackingTimeline;
+  sky: SkyGrid;
   /** Satellites above the mask at some point that were never tracked. */
   neverTracked: string[];
   /** Satellites the receiver tracked without any valid ephemeris. */
@@ -199,6 +248,12 @@ export interface TrackingResult {
 
 /** At most this many timeline bins, whatever the file length. */
 const MAX_BINS = 96;
+const AZ_BIN = 10;
+const EL_BIN = 5;
+/** A sky cell needs this many expected samples to say anything. */
+const SKY_MIN_SAMPLES = 4;
+/** Below this tracked share a cell counts as not tracked. */
+const SKY_TRACKED_SHARE = 0.5;
 
 /**
  * Compares the satellite-epochs the orbits put above the mask with the ones
@@ -267,6 +322,12 @@ export class TrackingAccumulator {
     const n = Math.round((this.last - this.first) / this.stepMs);
     const binSteps = Math.max(1, Math.ceil((n + 1) / MAX_BINS));
     const nBins = Math.ceil((n + 1) / binSteps);
+    const nAz = 360 / AZ_BIN;
+    const nEl = 90 / EL_BIN;
+    const grid = () =>
+      Array.from({ length: nAz }, () => new Array<number>(nEl).fill(0));
+    const skyExp = grid();
+    const skyTrk = grid();
     const rows = new Map<string, TrackingTimeline['rows'][number]>();
     const rowFor = (prn: string) => {
       let r = rows.get(prn);
@@ -288,8 +349,15 @@ export class TrackingAccumulator {
       const b = Math.floor(k / binSteps);
       for (const prn of withoutNav) if (row?.has(prn)) rowFor(prn).other[b]!++;
       for (const prn of prns) {
-        const el = this.model.elevationDeg(prn, t);
+        const ae = this.model.azElDeg(prn, t);
+        const el = ae?.el ?? null;
         const nb = row?.get(prn) ?? 0;
+        if (ae && ae.el >= 0 && this.model.isHealthy(prn, t)) {
+          const ia = Math.min(nAz - 1, Math.floor(ae.az / AZ_BIN));
+          const ie = Math.min(nEl - 1, Math.floor(ae.el / EL_BIN));
+          skyExp[ia]![ie]!++;
+          if (nb >= 1) skyTrk[ia]![ie]!++;
+        }
         if (el === null || el < this.maskDeg || !this.model.isHealthy(prn, t)) {
           if (nb >= 1) rowFor(prn).other[b]!++;
           continue;
@@ -341,6 +409,7 @@ export class TrackingAccumulator {
             rank(a.prn[0]!) - rank(b.prn[0]!) || a.prn.localeCompare(b.prn)
         ),
       },
+      sky: skyGrid(skyExp, skyTrk),
       neverTracked: [...rows.values()]
         .filter(
           (r) =>
@@ -352,4 +421,60 @@ export class TrackingAccumulator {
       withoutNav,
     };
   }
+}
+
+/** Horizon and obstructions from the expected/tracked sky grid. */
+function skyGrid(expected: number[][], tracked: number[][]): SkyGrid {
+  // Per azimuth: the horizon is the top of the highest cell below 60° that
+  // was mostly not tracked (cells without enough samples don't count).
+  const horizon = expected.map((col, ia) => {
+    let h = 0;
+    for (let ie = 0; ie < col.length && ie * EL_BIN < 60; ie++) {
+      const e = col[ie]!;
+      if (e < SKY_MIN_SAMPLES) continue;
+      if (tracked[ia]![ie]! / e < SKY_TRACKED_SHARE) h = (ie + 1) * EL_BIN;
+    }
+    return h;
+  });
+  const sorted = [...horizon].sort((a, b) => a - b);
+  const cutoffDeg = sorted[Math.floor(sorted.length / 2)]!;
+  const obstructions: SkyGrid['obstructions'] = [];
+  const n = horizon.length;
+  // +10°: low-elevation tracking is ragged everywhere; one 5° bin isn't a wall.
+  const high = horizon.map((h) => h >= cutoffDeg + 10);
+  // Walk sectors, joining across north (bin n-1 → 0).
+  const start = high.every(Boolean)
+    ? 0
+    : high.findIndex((x, i) => x && !high[(i - 1 + n) % n]);
+  if (start >= 0)
+    for (let k = 0, i = start; k < n;) {
+      if (!high[i]) {
+        i = (i + 1) % n;
+        k++;
+        continue;
+      }
+      const from = i;
+      let maxEl = 0;
+      let len = 0;
+      while (high[i] && len < n) {
+        maxEl = Math.max(maxEl, horizon[i]!);
+        i = (i + 1) % n;
+        len++;
+      }
+      k += len;
+      obstructions.push({
+        fromAz: from * AZ_BIN,
+        toAz: ((from + len) * AZ_BIN) % 360 || 360,
+        maxEl,
+      });
+    }
+  return {
+    azBinDeg: AZ_BIN,
+    elBinDeg: EL_BIN,
+    expected,
+    tracked,
+    horizon,
+    cutoffDeg,
+    obstructions,
+  };
 }
