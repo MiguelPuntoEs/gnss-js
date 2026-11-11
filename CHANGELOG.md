@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.30.0
+
+Two false-slip sources, found by running QC over the 562 IGS/EUREF stations of 2026/314 (`analysis`).
+
+### Fixed — the phase-only fallback no longer overrides a complete pair
+
+The geometry-free test is the fallback for satellites without code on two bands. It also ran on pairs with a phase-only band when the satellite was already covered by Melbourne-Wübbena on a complete pair. BeiDou GEO C03 at POL2 (Javad) records L7I without C7I, and that L7I jitters by 10–25 cm between epochs. Geometry-free on B1I–B2I flagged 75 % of its epochs, while Melbourne-Wübbena on B1I–B3I was clean.
+
+- The geometry-free test now runs only when Melbourne-Wübbena covered no pair for that satellite at that epoch.
+- POL2: 3,836 BeiDou slip epochs before, 4 after.
+- The teqc-pinned slip tests and clean stations are unchanged (WTZR, ABMF, ONSA identical).
+
+### Changed — satellites the broadcast navigation doesn't carry are not graded
+
+With an elevation mask, observations of a satellite are left out of the graded statistics when its system's navigation carries other satellites but never that one. Such a satellite isn't in service, and its elevation can't be checked against the mask. NavIC I06 at KUNZ was tracked but never broadcast, and accounted for all 1,439 of that day's slips (MAUR: 4,452 → 557).
+
+- A system missing from the navigation entirely is still graded (unknown elevation is not low elevation).
+- The satellites left out are listed in the new `QualityResult.notBroadcast`.
+
 ## 2.29.1
 
 ### Fixed — BeiDou B1I in RINEX 3.00–3.02 files (`rinex`)

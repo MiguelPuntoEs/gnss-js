@@ -458,6 +458,12 @@ export class CycleSlipAccumulator {
 
     if (!isArcBreak && prev) {
       const dualChecked = new Set<string>(); // bands covered by MW or GF
+      // GF is the fallback for a satellite without code on two bands. When
+      // MW already covers it, a phase-only band adds noise, not coverage:
+      // BeiDou GEO C03 at POL2 (Javad) carries L7I without C7I, its L7I
+      // jitters by 10–25 cm, and GF on B1I–B2I flagged 75 % of its epochs
+      // while MW on B1I–B3I was clean.
+      const mwCovered = pairs.some((pi) => mwSmooth.has(pi.key));
 
       for (const pi of pairs) {
         const { b1, b2 } = pi;
@@ -471,6 +477,7 @@ export class CycleSlipAccumulator {
         }
 
         // --- 2. Geometry-Free (fallback) ---
+        if (mwCovered) continue;
         const curGf = gfMap.get(pairKey);
         const prevGf = prev.gf.get(pairKey);
         if (curGf !== undefined && prevGf !== undefined) {
