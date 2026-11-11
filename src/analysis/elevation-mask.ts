@@ -318,10 +318,14 @@ export class TrackingAccumulator {
       string,
       { expected: number; tracked: number; dual: number }
     >();
-    // Regional systems (NavIC, QZSS, SBAS) are only expected for satellites
-    // the receiver tracked at all: their satellites rise over much of the
-    // world without being receivable there (NavIC from Europe: ~44 % of
-    // the satellites above 10° — a healthy WTZR read 94.9 % overall).
+    // Tracking (and the sky grid) count only satellites the receiver
+    // tracked at some point: a satellite it never locks all day is beyond
+    // it — firmware without the newest BeiDou-3 PRNs (PULK, a Trimble BD990:
+    // 53 % "tracking" and phantom obstructions), a regional system out of
+    // range (NavIC from Europe). Those are listed in `neverTracked`, not
+    // counted; obstructions, outages and interference still show, because
+    // satellites move through them. Regional systems' untracked satellites
+    // aren't even listed.
     const prns = this.model.prns.filter(
       (p) =>
         this.systems.has(p[0]!) &&
@@ -363,7 +367,8 @@ export class TrackingAccumulator {
         const ae = this.model.azElDeg(prn, t);
         const el = ae?.el ?? null;
         const nb = row?.get(prn) ?? 0;
-        if (ae && ae.el >= 0 && this.model.isHealthy(prn, t)) {
+        const counted = this.observed.has(prn);
+        if (counted && ae && ae.el >= 0 && this.model.isHealthy(prn, t)) {
           const ia = Math.min(nAz - 1, Math.floor(ae.az / AZ_BIN));
           const ie = Math.min(nEl - 1, Math.floor(ae.el / EL_BIN));
           skyExp[ia]![ie]!++;
@@ -376,6 +381,7 @@ export class TrackingAccumulator {
         const r = rowFor(prn);
         r.expected[b]!++;
         if (nb >= 1) r.tracked[b]!++;
+        if (!counted) continue;
         const sys = prn[0]!;
         let a = agg.get(sys);
         if (!a) agg.set(sys, (a = { expected: 0, tracked: 0, dual: 0 }));
