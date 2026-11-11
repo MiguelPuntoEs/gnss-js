@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.31.0
+
+### New — SWEREF 99 and the Swedish national grids (`coordinates`, `frames`)
+
+- **Projections.** `geodeticToTransverseMercator` / `transverseMercatorToGeodetic` use Krüger's formulas to n⁴ (Lantmäteriet), which stay accurate far from the central meridian. `SWEREF99_TM` (EPSG:3006) and the 12 local zones `SWEREF99_LOCAL_ZONES` (EPSG:3007–3018) are included, plus `nearestSweref99LocalZone`. Matches PROJ to 0.01 mm at 48 points across Sweden in all 13 projections.
+- **Frame.** `itrfToSweref99` / `sweref99ToItrf` follow the NKG2020 chain as PROJ does: ITRF → ETRF2014 → NKG_ETRF14 @ 2000.0 → SWEREF 99, with the NKG_RF17vel intraplate velocity model for the land uplift. A plain ITRF → ETRF Helmert misses that motion. The caller supplies the grid (`velocityGridModel` wraps any regular E/N/U grid). Matches PROJ 9.8 to 0.08 mm for ITRF2020 and ITRF2014 at epochs 2000–2026.9.
+
 ## 2.30.0
 
 Two false-slip sources, found by running QC over the 562 IGS/EUREF stations of 2026/314 (`analysis`).
