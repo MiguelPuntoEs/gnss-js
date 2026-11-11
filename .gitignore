@@ -57,3 +57,7 @@
 !/test-fixtures/sweref99_tm_proj.json
 !/test-fixtures/sweref99_nkg_proj.json
 !/test-fixtures/nkg_rf17vel_sweden.i16
+!/test-fixtures/national_frames_proj.json
+!/test-fixtures/national_grids_proj.json
+!/test-fixtures/nkg_rf17vel_nordic.i16
+!/test-fixtures/no_kv_shift_x4.i16

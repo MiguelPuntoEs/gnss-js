@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.33.0
+
+### Added — national frames and grids for Finland, Norway, Denmark, Australia and Canada
+
+Every transformation and grid below matches PROJ 9.8.1 in tests: 582 frame cases and 1,606 grid cases.
+
+- `itrfToNkg()` and `nkgToItrf()` run the NKG2020 transformation (EPSG/PROJ) for the Nordic national ETRS89 realisations: SWEREF 99, EUREF-FIN (fixed at 1997.0), EUREF89 (Norway, 1995.0) and ETRS89-DNK (2015.829). The chain goes from ITRF through ETRF2014 and NKG_ETRF14 at 2000.0, then a national step, with the NKG_RF17vel land-uplift model applied at each end. Matches PROJ to 0.08 mm.
+  - Norway's national step is not a Helmert transform. It is Kartverket's geocentric shift grid (EPSG:10811). Pass it as `models.norway` via the new `geocentricShiftGridModel()`. Even with the grid thinned 4× (100 KB gzipped), the result stays within 0.3 mm of PROJ on the full grid.
+  - `NKG_FRAMES` gives each frame's epoch and parameters.
+  - `itrfToSweref99()` and `sweref99ToItrf()` now call these functions and give the same results as before.
+- `transformFrame()` knows three more frames:
+  - `'GDA2020'` (EPSG:8049) and `'GDA94'` (EPSG:9682), both from ITRF2014.
+  - `'NAD83(CSRS)'` (v8, EPSG:10415) from ITRF2020. Its parameters are the same as NAD83(2011)'s.
+- `TransverseMercatorParams.lat0`: a latitude of origin other than the equator, which Norway's NTM needs (58°N).
+- National grids as `GridProjection`s, with names and EPSG codes:
+  - Finland: `TM35FIN`, `FINLAND_GK_ZONES` (ETRS-GK19–31).
+  - Norway: `NORWAY_UTM_ZONES` (32/33/35), `NORWAY_NTM_ZONES` (5–30).
+  - Denmark: `DENMARK_UTM_ZONES`, `DENMARK_DKTM_ZONES`.
+  - Australia: `MGA2020_ZONES`, `MGA94_ZONES`.
+  - Canada: `CANADA_UTM_ZONES`, `CANADA_MTM_ZONES`.
+- `nearestZone(zones, lon)` returns the zone whose central meridian is closest to `lon`.
+
+Not included:
+
+- NAD83(CSRS) propagation to epoch 2010 with NRCan's velocity grid. `transformFrame` gives NAD83(CSRS) coordinates at the epoch you pass, as it does for NAD83(2011).
+- National height systems.
+
 ## 2.32.1
 
 ### Fixed — SBAS left out of the multipath sky map (`analysis`)

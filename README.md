@@ -48,7 +48,8 @@ const gpsTime = getGpsTime(new Date()); // ms since GPS epoch
 const [x, y, z] = geodeticToEcef(deg2rad(48.8566), deg2rad(2.3522), 35);
 
 // Time-dependent 14-parameter Helmert (IERS/EPSG): ITRF88–ITRF2020,
-// ETRF2000/2014/2020, NAD83(2011). 'WGS84' aliases ITRF2020.
+// ETRF2000/2014/2020, NAD83(2011), NAD83(CSRS), GDA2020, GDA94.
+// 'WGS84' aliases ITRF2020.
 const itrf = transformFrame(
   [3924687.7, 301132.8, 5001910.8],
   'ETRF2000',
@@ -58,6 +59,8 @@ const itrf = transformFrame(
 
 // Sweden: ITRF → SWEREF 99 with the NKG2020 land-uplift model (bring the
 // NKG_RF17vel grid, e.g. PROJ's eur_nkg_nkgrf17vel.tif), then the national grid.
+// itrfToNkg() does the same for EUREF-FIN, EUREF89 (Norway, plus Kartverket's
+// shift grid) and ETRS89-DNK; TM35FIN, NTM, DKTM, MGA and MTM grids are built in.
 const sweref = itrfToSweref99(
   itrf,
   'ITRF2020',
