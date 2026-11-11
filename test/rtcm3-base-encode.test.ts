@@ -18,7 +18,7 @@ import { ephInfoToEphemeris } from '../src/orbit';
 import { parseNovatelNav, parseNovatelRange } from '../src/novatel';
 import { parseTrimble } from '../src/trimble';
 import { parseUbxRawx } from '../src/ubx';
-import { postProcessRtk } from '../src/positioning';
+import { postProcessRtk, resolveMsmRanges } from '../src/positioning';
 import type { RtkObsEpoch } from '../src/positioning';
 import type { Ephemeris } from '../src/rinex/nav';
 
@@ -26,7 +26,11 @@ const FIX = join(__dirname, '..', 'test-fixtures');
 const C = 299792458;
 
 /** Decode an RTCM3 stream back into what postProcessRtk takes. */
-function decodeStream(bytes: Uint8Array, refMs: number) {
+function decodeStream(
+  bytes: Uint8Array,
+  refMs: number,
+  compact?: { ephs: readonly Ephemeris[]; rxEcef: [number, number, number] }
+) {
   resetGloFreqCache();
   const frames = new Rtcm3Decoder().decode(bytes);
   const meta = createStationMeta();
@@ -42,9 +46,17 @@ function decodeStream(bytes: Uint8Array, refMs: number) {
       if (eph) ephs.push(eph);
       continue;
     }
-    const ep = decodeMsmFull(f);
+    let ep = decodeMsmFull(f, { compactMsm: true });
     if (!ep) continue;
     const t = obsEpochToDate(ep.system, ep.epochMs, new Date(refMs)).getTime();
+    if (ep.rangeModulo1ms) {
+      if (!compact) continue;
+      ep = resolveMsmRanges(ep, {
+        timeMs: t,
+        rxEcef: compact.rxEcef,
+        ephFor: (prn) => compact.ephs.find((e) => e.prn === prn) ?? null,
+      });
+    }
     let list = byTime.get(t);
     if (!list) byTime.set(t, (list = []));
     for (const o of ep.observations) {
@@ -133,6 +145,27 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
         expect(Math.hypot(...d)).toBeLessThan(msm === 7 ? 5e-4 : 5e-3);
       }
     );
+
+    it('MSM3 (compact) resolves back to the same fixed baseline', () => {
+      const rtcm = receiverToRtcm3(base.epochs, baseEphs, {
+        msm: 3,
+        arp: { position: WHU_BASE },
+      });
+      // The rover knows roughly where the base is: the 1005 ARP.
+      const dec = decodeStream(rtcm, refMs, { ephs, rxEcef: WHU_BASE });
+      const viaRtcm = postProcessRtk(
+        dec,
+        rover,
+        ephs,
+        dec.meta.position!,
+        opts
+      );
+      expect(viaRtcm.final!.status).toBe(direct.final!.status);
+      const d = viaRtcm.final!.baseline.map(
+        (v, i) => v - direct.final!.baseline[i]!
+      );
+      expect(Math.hypot(...d)).toBeLessThan(5e-3); // MSM4 resolution
+    });
 
     it('emits the stream in station → ephemeris → MSM order and paces messages', () => {
       const enc = new RtcmBaseEncoder({

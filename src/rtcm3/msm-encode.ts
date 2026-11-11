@@ -36,8 +36,13 @@ import { BitWriter, frameRtcm3 } from './writer';
 /*  Public types                                                       */
 /* ================================================================== */
 
-/** MSM level: 4/6 carry range, phase, lock and C/N0; 5/7 add Doppler. 6/7 are high resolution. */
-export type MsmLevel = 4 | 5 | 6 | 7;
+/**
+ * MSM level. 4/6 carry range, phase, lock and C/N0; 5/7 add Doppler; 6/7
+ * are high resolution. 1–3 are compact (code / phase / both, no C/N0) and
+ * drop each satellite's whole light-milliseconds: a rover must restore them
+ * from its position and ephemeris (`resolveMsmRanges`).
+ */
+export type MsmLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /** One signal to encode. `wavelength` may be omitted except for GLONASS FDMA without a known channel. */
 export interface MsmEncodeSignal extends Omit<ObsSignal, 'wavelength'> {
@@ -304,6 +309,8 @@ export class MsmEncoder {
 
     const hiRes = this.level >= 6;
     const withDoppler = this.level === 5 || this.level === 7;
+    const withCode = this.level !== 2;
+    const withPhase = this.level !== 1;
     const sats: Sat[] = [];
 
     list.sort((a, b) => a[0] - b[0]);
@@ -394,7 +401,7 @@ export class MsmEncoder {
 
         // Pseudorange: DF400 (2^-24 ms, 15 bit) / DF405 (2^-29 ms, 20 bit).
         let psr: number | null = null;
-        if (s.pseudorange !== undefined && s.pseudorange > 0) {
+        if (withCode && s.pseudorange !== undefined && s.pseudorange > 0) {
           const scale = hiRes ? 2 ** 29 : 2 ** 24;
           const lim = hiRes ? 2 ** 19 : 2 ** 14;
           const v = Math.round(((s.pseudorange - roughM) / RANGE_MS) * scale);
@@ -403,7 +410,7 @@ export class MsmEncoder {
 
         // Phase range: DF401 (2^-29 ms, 22 bit) / DF406 (2^-31 ms, 24 bit).
         let phase: number | null = null;
-        if (s.phase !== undefined && lambda > 0) {
+        if (withPhase && s.phase !== undefined && lambda > 0) {
           const scale = hiRes ? 2 ** 31 : 2 ** 29;
           const lim = hiRes ? 2 ** 23 : 2 ** 21;
           const toField = (cycles: number) =>
@@ -567,22 +574,27 @@ export class MsmEncoder {
       }
     }
 
-    // Satellite data.
+    // Satellite data. Compact MSM1–3 carry only the rough range modulo 1 ms.
+    const compact = level <= 3;
     const ext = level === 5 || level === 7;
-    for (const s of sats) w.writeU(s.roughInt, 8); // DF397
+    if (!compact) for (const s of sats) w.writeU(s.roughInt, 8); // DF397
     if (ext) for (const s of sats) w.writeU(s.ext, 4); // DF419
     for (const s of sats) w.writeU(s.roughMod, 10); // DF398
     if (ext) for (const s of sats) w.writeS(s.rate ?? -8192, 14); // DF399
 
-    // Signal data.
+    // Signal data: MSM1 code; MSM2 phase + lock; MSM3 both; 4+ add C/N0.
     const hiRes = level >= 6;
     const psrBits = hiRes ? 20 : 15;
     const phBits = hiRes ? 24 : 22;
-    for (const c of cells) w.writeS(c.psr ?? -(2 ** (psrBits - 1)), psrBits);
-    for (const c of cells) w.writeS(c.phase ?? -(2 ** (phBits - 1)), phBits);
-    for (const c of cells) w.writeU(c.lti, hiRes ? 10 : 4);
-    for (const c of cells) w.writeU(c.halfCycle ? 1 : 0, 1);
-    for (const c of cells) w.writeU(c.cnr, hiRes ? 10 : 6);
+    if (level !== 2) {
+      for (const c of cells) w.writeS(c.psr ?? -(2 ** (psrBits - 1)), psrBits);
+    }
+    if (level !== 1) {
+      for (const c of cells) w.writeS(c.phase ?? -(2 ** (phBits - 1)), phBits);
+      for (const c of cells) w.writeU(c.lti, hiRes ? 10 : 4);
+      for (const c of cells) w.writeU(c.halfCycle ? 1 : 0, 1);
+    }
+    if (!compact) for (const c of cells) w.writeU(c.cnr, hiRes ? 10 : 6);
     if (ext) for (const c of cells) w.writeS(c.dop ?? -16384, 15); // DF404
     return w.toBytes();
   }

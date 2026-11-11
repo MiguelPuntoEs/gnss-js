@@ -353,6 +353,64 @@ describe('MSM encode → decode', () => {
   });
 });
 
+describe('compact MSM1–3', () => {
+  const LIGHT_MS = C / 1000;
+  it.each([1, 2, 3] as MsmLevel[])(
+    'MSM%d carries its fields, ranges exact modulo 1 ms',
+    (level) => {
+      setGloFreqNumber(7, -4); // no DF419 in MSM1–3 either: from a 1020
+      const frames = decodeFrames(
+        encodeMsm({ timeMs: T0, observations: SYNTH }, { msm: level })
+      );
+      expect(frames.map((f) => f.messageType % 10)).toEqual(
+        frames.map(() => level)
+      );
+      expect(frames.every((f) => decodeMsmFull(f) === null)).toBe(true); // opt-in only
+      for (const f of frames) {
+        const ep = decodeMsmFull(f, { compactMsm: true })!;
+        expect(ep.rangeModulo1ms).toBe(true);
+        for (const o of ep.observations) {
+          const want = SYNTH.find((x) => x.prn === o.prn)!;
+          const ks = new Set<number>();
+          for (const sig of o.signals) {
+            const w = want.signals.find((x) => x.rinexCode === sig.rinexCode)!;
+            expect(sig.cn0).toBeUndefined();
+            expect(sig.doppler).toBeUndefined();
+            if (level === 2) expect(sig.pseudorange).toBeUndefined();
+            else {
+              const k = (w.pseudorange! - sig.pseudorange!) / LIGHT_MS;
+              expect(Math.abs(k - Math.round(k)) * LIGHT_MS).toBeLessThan(0.01);
+              ks.add(Math.round(k));
+            }
+            if (level === 1) expect(sig.phase).toBeUndefined();
+            else {
+              const lambda = w.wavelength!;
+              const k = ((w.phase! - sig.phase!) * lambda) / LIGHT_MS;
+              expect(Math.abs(k - Math.round(k)) * LIGHT_MS).toBeLessThan(
+                0.001
+              );
+              ks.add(Math.round(k));
+              expect(sig.halfCycle).toBe(w.halfCycle);
+            }
+          }
+          expect(ks.size).toBe(1); // one whole-ms count per satellite
+        }
+      }
+    }
+  );
+
+  it('shrinks the stream: MSM1 < MSM3 < MSM4 < MSM7', () => {
+    const size = (level: MsmLevel) =>
+      encodeMsm({ timeMs: T0, observations: SYNTH }, { msm: level }).reduce(
+        (n, f) => n + f.length,
+        0
+      );
+    expect(size(1)).toBeLessThan(size(3));
+    expect(size(3)).toBeLessThan(size(4));
+    expect(size(4)).toBeLessThan(size(7));
+  });
+});
+
 describe('MSM lock arcs', () => {
   type Extra = Partial<MsmEncodeSat['signals'][number]>;
   const sat = (t: number, extra: Extra = {}): MsmEncodeSat => ({
