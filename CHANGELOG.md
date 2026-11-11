@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.17.0
+
+### New — elevation-masked QC and above-mask tracking (`analysis`)
+
+- `QualityAccumulator` runs the four QC accumulators (cycle slips, multipath, completeness, ionosphere) behind one observation callback, with an optional elevation mask in front. Run two side by side for masked and unmasked results from one parse; `analyzeQuality` takes the same options as a fifth argument.
+- `ElevationModel.create(ephemerides, rxPos)` gives satellite elevations from broadcast orbits. It samples every 5 min and interpolates, about 10× cheaper than an orbit per observation, and agrees with exact elevations to the 0.01° level. It returns null without a usable receiver position.
+- `TrackingAccumulator` / `QualityResult.tracking` compare the satellite-epochs the orbits put above the mask (healthy, valid ephemeris) with those tracked on carrier phase, per system and dual-frequency. Only systems the receiver recorded are expected. This is the teqc/Anubis "% of expected observations above the mask" metric.
+- `QualityResult` gains `maskDeg`, `belowMask` and `tracking`.
+
+### Changed — cycle slips must persist to count (`analysis`)
+
+A Melbourne-Wübbena or single-frequency jump is now a candidate until the next epoch shows the new level persists. A one-epoch code outlier returns to the old level and is dropped. Unconfirmed 0.5–1 wide-lane-cycle spikes and low-elevation GLONASS C/A noise made up most of the "slips" on clean stations (BRUX 2026/313: 425 → 92 a day). Slips are reported at the jump epoch, but the `onSlip` callback fires one epoch later, so a slip on an arc's very last epoch can't be confirmed.
+
+`CycleSlipResult` gains `slipEpochs` / `testedEpochs`: distinct satellite-epochs, so one slip seen by two MW pairs counts once (teqc's obs-per-slip sense). It also gains `perSystem` with the same counts by constellation.
+
+### Validation — against G-Nut/Anubis 3.11
+
+Seven IGS/EUREF daily files (ALIC BRUX KOUR MAS1 ONSA WTZR ZIM2, 2026/313) plus the ABMF fixture, with the day's BRDC:
+
+- **Tracking above 10°** is within ~1 point of Anubis "%Rt>10" wherever both count the same systems.
+- **Multipath** is within ±20 % of Anubis mpX for GPS, Galileo and BeiDou. Anubis averages every code on a band with a moving RMS; ours sigma-edits each arc.
+- **Slips:** the constellation ranking matches. Counts are in the same order of magnitude once Anubis's per-signal counting is accounted for.
+
+`test/qc-anubis.test.ts` pins the ABMF numbers.
+
 ## 2.16.0
 
 ### Fixed — RTK across receiver makes: Galileo dropped, BeiDou biased (`positioning`)
