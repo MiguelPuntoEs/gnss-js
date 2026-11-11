@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.23.1
+
+### Fixed — SBAS satellites from RTCM named S120 instead of S20 (`rtcm3`)
+
+The MSM (1101–1107) and 1043 decoders named SBAS PRN 120 `S120`. Everything else, including the other decoders, the SBAS engine and the RINEX parser, uses the RINEX form `S20`, as QZSS PRN 193 is `J01`. The four-character ID shifted every column of a RINEX observation line written from such a stream, and RTCM SBAS satellites didn't match the same satellites from other sources.
+
 ## 2.23.0
 
 ### Fixed — the jump search found steps in plain flicker noise (`analysis`)
