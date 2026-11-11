@@ -246,6 +246,9 @@ export interface TrackingResult {
   withoutNav: string[];
 }
 
+/** Systems whose satellites are only receivable in a region. */
+const REGIONAL = new Set(['I', 'J', 'S']);
+
 /** At most this many timeline bins, whatever the file length. */
 const MAX_BINS = 96;
 const AZ_BIN = 10;
@@ -315,7 +318,15 @@ export class TrackingAccumulator {
       string,
       { expected: number; tracked: number; dual: number }
     >();
-    const prns = this.model.prns.filter((p) => this.systems.has(p[0]!));
+    // Regional systems (NavIC, QZSS, SBAS) are only expected for satellites
+    // the receiver tracked at all: their satellites rise over much of the
+    // world without being receivable there (NavIC from Europe: ~44 % of
+    // the satellites above 10° — a healthy WTZR read 94.9 % overall).
+    const prns = this.model.prns.filter(
+      (p) =>
+        this.systems.has(p[0]!) &&
+        (!REGIONAL.has(p[0]!) || this.observed.has(p))
+    );
     const withoutNav = [...this.observed]
       .filter((p) => !this.model.prns.includes(p))
       .sort();
