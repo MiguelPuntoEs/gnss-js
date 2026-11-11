@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.25.1
+
+### Fixed — u-blox receiver fix time was UTC (`ubx`)
+
+`parseUbxPvt` built `timeMs` from NAV-PVT's UTC date fields, but `ReceiverPvt` times are GPS-scale everywhere else (SBF PVTGeodetic, NovAtel BESTPOS). A u-blox receiver's own fix sat 18 s early next to its measurements. The time now comes from the GPS iTOW, with the week taken from the date, including at a week boundary.
+
 ## 2.25.0
 
 ### New — receiver health (`sbf`, `ubx`, `novatel`)
