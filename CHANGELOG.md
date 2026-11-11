@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.26.2
+
+### Fixed — no multipath for GPS IIR satellites (`analysis`)
+
+Multipath took one code per band for each constellation, chosen from the header's declared types: L2C (`C2L`/`L2L`, or `C2` in RINEX 2) where a file declared it. The seven GPS IIR satellites (G02, G13, G16, G19, G20, G21 and G22) don't transmit L2C, so they had no L2 code and got no multipath at all. That's about a fifth of GPS on every station.
+
+Each band now has a ranked list of codes (`buildObsCandidates`), and every satellite uses the best one it carries; IIR satellites fall back to P(Y) (`C2W`/`P2`). Satellites that carry the preferred code keep identical values.
+
+- ABMF: GPS MP1 now uses 24 898 points instead of 19 469 (25.65 → 25.27 cm).
+- INAB: 24 856 points instead of 19 414 (5.86 → 5.91 cm).
+
+Cycle slips and the ionosphere still take one code per band. Their per-satellite fallback is a separate change.
+
 ## 2.26.1
 
 ### Changed — QC accumulators about 20 % faster (`analysis`)

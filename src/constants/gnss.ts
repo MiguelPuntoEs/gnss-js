@@ -330,6 +330,43 @@ export function buildObsIndices(
   return result;
 }
 
+/**
+ * Every phase and code column per system and band, best first — the first
+ * of each list is {@link buildObsIndices}'s choice. For per-satellite
+ * fallback: a GPS IIR satellite has no L2C, so a file declaring both C2
+ * and P2 (C2 chosen) leaves it without an L2 code unless P2 is tried next.
+ */
+export function buildObsCandidates(
+  header: RinexHeader
+): Map<string, Map<string, { L: number[]; C: number[] }>> {
+  const result = new Map<string, Map<string, { L: number[]; C: number[] }>>();
+  for (const [sys, codes] of Object.entries(header.obsTypes)) {
+    const v2 = sys === '_v2';
+    const bandMap = new Map<string, { L: number[]; C: number[] }>();
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i]!;
+      const type = code[0];
+      const band = code[1];
+      if (!band || (type !== 'L' && type !== 'C' && type !== 'P')) continue;
+      let b = bandMap.get(band);
+      if (!b) bandMap.set(band, (b = { L: [], C: [] }));
+      (type === 'L' ? b.L : b.C).push(i);
+    }
+    // RINEX 3: highest tracking attribute first, ties in header order (a
+    // stable sort); RINEX 2: header order, as buildObsIndices takes them.
+    if (!v2)
+      for (const b of bandMap.values()) {
+        const byRank = (x: number, y: number) =>
+          attrRank(codes[y]!) - attrRank(codes[x]!);
+        b.L.sort(byRank);
+        b.C.sort(byRank);
+      }
+    for (const [band, b] of bandMap) if (b.L.length === 0) bandMap.delete(band);
+    if (bandMap.size > 0) result.set(sys, bandMap);
+  }
+  return result;
+}
+
 /* ── Processing parameters ────────────────────────────────────── */
 
 export const ARC_GAP_FACTOR = 5;

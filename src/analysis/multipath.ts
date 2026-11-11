@@ -18,7 +18,7 @@ import {
   ARC_GAP_FACTOR,
   buildGloChannelMap,
   getFreq,
-  buildObsIndices,
+  buildObsCandidates,
 } from '../constants/gnss';
 
 /* ================================================================== */
@@ -94,6 +94,15 @@ interface SatBandState {
  * Steps beyond this close the arc and start a new one.
  */
 const MP_JUMP_M = 1.25;
+/** The first present (non-null, non-zero) value among `idx`, or null. */
+function firstValue(values: (number | null)[], idx: number[]): number | null {
+  for (const i of idx) {
+    const v = values[i];
+    if (v != null && v !== 0) return v;
+  }
+  return null;
+}
+
 const tailBuf = new Float64Array(16);
 
 /**
@@ -130,12 +139,12 @@ export class MultipathAccumulator {
   private state = new Map<string, Map<string, SatBandState>>();
   private results: MultipathSeries[] = [];
   private interval: number;
-  private obsIndices: Map<string, Map<string, { L: number; C: number | null }>>;
+  private obsIndices: Map<string, Map<string, { L: number[]; C: number[] }>>;
   private gloChannels: Record<string, number>;
 
   constructor(header: RinexHeader) {
     this.interval = header.interval ?? 30;
-    this.obsIndices = buildObsIndices(header);
+    this.obsIndices = buildObsCandidates(header);
     this.gloChannels = buildGloChannelMap(header.glonassSlots);
   }
 
@@ -150,16 +159,15 @@ export class MultipathAccumulator {
     const bandMap = this.obsIndices.get(sys) ?? this.obsIndices.get('_v2');
     if (!bandMap) return;
 
-    // Collect available band data
+    // Collect available band data: per band the best phase and code this
+    // satellite carries (a GPS IIR has P2 but no C2; it used to get no MP).
     const bandData = new Map<string, { C: number; L: number; f: number }>();
     for (const [band, { C, L }] of bandMap) {
-      if (C === null) continue;
-      const cVal = values[C];
-      const lVal = values[L];
+      const cVal = firstValue(values, C);
+      const lVal = firstValue(values, L);
+      if (cVal === null || lVal === null) continue;
       const freq = getFreq(this.gloChannels, prn, band);
-      if (cVal != null && cVal !== 0 && lVal != null && lVal !== 0 && freq) {
-        bandData.set(band, { C: cVal, L: lVal, f: freq });
-      }
+      if (freq) bandData.set(band, { C: cVal, L: lVal, f: freq });
     }
 
     if (bandData.size < 2) return;
