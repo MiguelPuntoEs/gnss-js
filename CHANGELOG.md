@@ -9,7 +9,21 @@ The other direction from the decoders: receiver epochs and ephemerides in, an RT
 - **`RtcmBaseEncoder` / `receiverToRtcm3`.** Takes epochs from any receiver decoder (UBX, SBF, NovAtel, Trimble, BINEX) and their ephemerides, and returns framed messages in stream order. Station messages go out on a cadence, and each satellite's ephemeris whenever the one nearest in time changes.
 - **MSM1–7** (`MsmEncoder`) for GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC and SBAS. It splits a system across messages at 64 cells and tracks lock arcs: a receiver-reported slip, lock time that grows less than the time elapsed, or a missed epoch restarts the arc, and the lock indicator always drops so rovers see the slip.
 - **Station and ephemeris messages:** 1005/1006, 1033 and 1230 (with a new 1230 decoder), plus all eight ephemeris types. `ephemerisToInfo` converts a receiver-decoded `Ephemeris` for them.
-- **Checked against real data.** Re-encoding the DLF100 (Trimble) capture reproduces all 430 MSM7 messages and every 1006, 1033, 1230 and ephemeris message bit for bit. The WHU OEM719 base sent through MSM7 gives the same RTK fix as the raw log, within 0.5 mm (MSM3 within 5 mm). RTKLIB `convbin` decodes the stream to the same observations as its own NovAtel and u-blox readers.
+- **Checked against real data.** Re-encoding the DLF100 (Trimble) capture reproduces all 430 MSM7 messages and every 1006, 1033, 1230 and ephemeris message bit for bit. The WHU OEM719 base sent through MSM7 gives the same static RTK baseline as the raw log, within 0.5 mm (MSM3 within 5 mm). RTKLIB `convbin` decodes the stream to the same observations as its own NovAtel and u-blox readers.
+
+### New — legacy observations 1001–1012 and antenna descriptor 1007/1008 (`rtcm3`)
+
+For rovers, radios and machine-control systems that predate MSM.
+
+- **`LegacyObsEncoder`.** Encodes all eight legacy types: GPS 1001–1004 and GLONASS 1009–1012, L1 or L1+L2, basic or extended. Lock-arc handling is shared with the MSM encoder, so slips reach rovers the same way. `RtcmBaseEncoder` gains `obs: 'legacy'`, which sends 1004 + 1012 (variant via `legacy`) and adds 1007/1008 to the station messages.
+- **`encodeAntennaDescriptor`.** Sends 1007, or 1008 when a serial number is given. Older rovers read the antenna name from these rather than 1033.
+- **Checked against RTKLIB.** The WHU OEM719 base as 1004/1012 decodes in RTKLIB `convbin` to the same GPS and GLONASS L1/L2 observations as its own NovAtel reader: code to the format's 2 cm step, phase within 0.002 cycles, and every slip flag after the first epoch.
+
+### Changed — legacy obs decoding (`rtcm3`)
+
+- **L2 code.** DF016 now maps 0/1/2/3 to 2X/2P/2D/2W, as RTKLIB does, instead of 1–3 all becoming 2W.
+- **No phantom L2.** An L2 with both pseudorange and phase flagged invalid is no longer emitted as an empty signal.
+- **GLONASS day.** 1009–1012 carry only the time of day. The day is now the one nearest `ObsDecodeOptions.refTimeMs` (default now), which also fixes epochs a day off for a few seconds around Moscow midnight in live streams; set it when replaying old captures.
 
 ### New — u-blox GLONASS frequency channel (`ubx`)
 

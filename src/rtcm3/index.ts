@@ -12,3 +12,4 @@ export * from './writer';
 export * from './ephemeris-encode';
 export * from './station-encode';
 export * from './base-encode';
+export * from './legacy-encode';

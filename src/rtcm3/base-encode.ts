@@ -17,7 +17,12 @@ import type {
   MsmEncoderOptions,
   MsmEncodeSignal,
 } from './msm-encode';
-import { encodeStationArp, encodeStationDescriptors } from './station-encode';
+import { LegacyObsEncoder } from './legacy-encode';
+import {
+  encodeAntennaDescriptor,
+  encodeStationArp,
+  encodeStationDescriptors,
+} from './station-encode';
 import type { StationArp, StationDescriptors } from './station-encode';
 import {
   C_LIGHT,
@@ -110,8 +115,19 @@ export interface RtcmBaseOptions extends MsmEncoderOptions {
    * else 1005. Without it no position goes out — rovers need one for RTK.
    */
   arp?: Omit<StationArp, 'stationId'>;
-  /** Receiver/antenna descriptors for 1033 (antenna name matters for PCV). */
+  /**
+   * Receiver/antenna descriptors for 1033 (antenna name matters for PCV);
+   * in legacy mode also sent as 1007/1008, which older rovers read instead.
+   */
   descriptors?: Omit<StationDescriptors, 'stationId'>;
+  /**
+   * Observation messages: MSM (default, every system, level from `msm`) or
+   * legacy 1001–1012 (GPS and GLONASS L1/L2 only) for equipment that
+   * predates MSM.
+   */
+  obs?: 'msm' | 'legacy';
+  /** Legacy variant (default L1+L2 extended: 1004 + 1012). */
+  legacy?: { dual?: boolean; extended?: boolean };
   /** Seconds between station messages (default 10; first epoch always). */
   stationIntervalS?: number;
   /**
@@ -139,6 +155,8 @@ const EPH_KEEP_MS = 6 * 3600_000;
  */
 export class RtcmBaseEncoder {
   readonly msm: MsmEncoder;
+  /** Set in legacy mode (`obs: 'legacy'`). */
+  readonly legacy: LegacyObsEncoder | null;
   private readonly opts: RtcmBaseOptions;
   private lastStationMs = -Infinity;
   private lastEphResendMs = -Infinity;
@@ -150,6 +168,14 @@ export class RtcmBaseEncoder {
   constructor(opts: RtcmBaseOptions = {}) {
     this.opts = opts;
     this.msm = new MsmEncoder(opts);
+    this.legacy =
+      opts.obs === 'legacy'
+        ? new LegacyObsEncoder({
+            ...opts.legacy,
+            stationId: opts.stationId,
+            gloChannels: opts.gloChannels,
+          })
+        : null;
   }
 
   /**
@@ -162,6 +188,7 @@ export class RtcmBaseEncoder {
     for (const eph of ephs) {
       if (eph.system === 'R') {
         this.msm.setGloChannel(Number(eph.prn.slice(1)), eph.freqNum);
+        this.legacy?.setGloChannel(Number(eph.prn.slice(1)), eph.freqNum);
       }
       const info = ephemerisToInfo(eph, this.opts.ephemerisExtras);
       const tocMs = eph.tocDate.getTime();
@@ -188,6 +215,11 @@ export class RtcmBaseEncoder {
       if (this.opts.descriptors) {
         out.push(
           encodeStationDescriptors({ ...this.opts.descriptors, stationId })
+        );
+      }
+      if (this.legacy && this.opts.descriptors) {
+        out.push(
+          encodeAntennaDescriptor({ ...this.opts.descriptors, stationId })
         );
       }
       this.lastStationMs = t;
@@ -218,7 +250,7 @@ export class RtcmBaseEncoder {
     }
 
     const msmEpoch = 'meas' in epoch ? rawEpochToMsm(epoch) : epoch;
-    out.push(...this.msm.encode(msmEpoch));
+    out.push(...(this.legacy ?? this.msm).encode(msmEpoch));
     return out;
   }
 }

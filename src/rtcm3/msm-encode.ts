@@ -30,6 +30,8 @@ import {
 import { getGpsLeap } from '../time/utc';
 import { msmSignalFrequency, msmSignalIndex } from './msm';
 import type { ObsSignal } from './msm';
+import { LockArcs } from './lock-arcs';
+import type { LockInput } from './lock-arcs';
 import { BitWriter, frameRtcm3 } from './writer';
 
 /* ================================================================== */
@@ -45,12 +47,9 @@ import { BitWriter, frameRtcm3 } from './writer';
 export type MsmLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /** One signal to encode. `wavelength` may be omitted except for GLONASS FDMA without a known channel. */
-export interface MsmEncodeSignal extends Omit<ObsSignal, 'wavelength'> {
+export interface MsmEncodeSignal
+  extends Omit<ObsSignal, 'wavelength'>, LockInput {
   wavelength?: number;
-  /** Loss of lock / cycle slip flagged by the source (RINEX LLI bit 0). */
-  slip?: boolean;
-  /** Rolling cycle-slip counter (e.g. Trimble): any change is a slip. */
-  slipCount?: number;
 }
 
 /** One satellite to encode. PRN in RINEX form (`G05`, `R12`, `J01`, `S23`). */
@@ -198,21 +197,6 @@ interface Sat {
   cells: Cell[]; // sorted by sigIdx
 }
 
-interface ArcState {
-  lockStartMs: number;
-  /** Receiver-reported lock time at the previous epoch, seconds. */
-  inputLock?: number;
-  /** Receiver slip counter at the previous epoch. */
-  slipCount?: number;
-  lastSeenMs: number;
-  /** Whole cycles added to the input phase for this arc. */
-  cycles: number;
-  /** Receiver lock time still describes this arc (not slip-flagged or re-anchored). */
-  trustInput: boolean;
-  /** Lock-time indicator last sent for this signal. */
-  lastLti?: number;
-}
-
 /* ================================================================== */
 /*  Encoder                                                            */
 /* ================================================================== */
@@ -225,8 +209,7 @@ export class MsmEncoder {
   private readonly externalClock: number;
   private readonly systems: Set<string>;
   private readonly gloChannels: Map<number, number>;
-  private readonly arcs = new Map<string, ArcState>();
-  private readonly lastEpoch = new Map<string, number>();
+  private readonly arcs = new LockArcs((s) => this.lti(s));
 
   constructor(opts: MsmEncoderOptions = {}) {
     this.level = opts.msm ?? 7;
@@ -252,8 +235,7 @@ export class MsmEncoder {
 
   /** Forget all lock arcs (e.g. when the source restarts). */
   reset(): void {
-    this.arcs.clear();
-    this.lastEpoch.clear();
+    this.arcs.reset();
   }
 
   /**
@@ -278,8 +260,9 @@ export class MsmEncoder {
     for (const sys of SYSTEM_ORDER) {
       const list = bySystem.get(sys);
       if (!list) continue;
+      this.arcs.beginEpoch(sys, epoch.timeMs);
       const sats = this.buildSats(sys, epoch.timeMs, list);
-      this.lastEpoch.set(sys, epoch.timeMs);
+      this.arcs.endEpoch(sys, epoch.timeMs);
       const epochField = msmEpochField(sys, epoch.timeMs);
       for (const group of splitGroups(sats)) {
         payloads.push((multi) =>
@@ -299,14 +282,6 @@ export class MsmEncoder {
     timeMs: number,
     list: Array<[number, MsmEncodeSat]>
   ): Sat[] {
-    const last = this.lastEpoch.get(sys);
-    if (last !== undefined && timeMs < last) {
-      // Time went backwards (source restarted): every arc is new.
-      for (const key of [...this.arcs.keys()]) {
-        if (key.startsWith(sys)) this.arcs.delete(key);
-      }
-    }
-
     const hiRes = this.level >= 6;
     const withDoppler = this.level === 5 || this.level === 7;
     const withCode = this.level !== 2;
@@ -368,7 +343,7 @@ export class MsmEncoder {
         for (const idx of order) {
           const { s, lambda } = sigs.get(idx)!;
           if (s.phase !== undefined && lambda > 0 && s.phase > 0) {
-            const arc = this.arcs.get(`${sys}${id}/${idx}`);
+            const arc = this.arcs.peek(`${sys}${id}/${idx}`);
             sum += (s.phase + (arc?.cycles ?? 0)) * lambda;
             n++;
           }
@@ -397,7 +372,7 @@ export class MsmEncoder {
       const cells: Cell[] = [];
       for (const idx of order) {
         const { s, lambda } = sigs.get(idx)!;
-        const arc = this.updateArc(`${sys}${id}/${idx}`, timeMs, s);
+        const arc = this.arcs.update(`${sys}${id}/${idx}`, timeMs, s);
 
         // Pseudorange: DF400 (2^-24 ms, 15 bit) / DF405 (2^-29 ms, 20 bit).
         let psr: number | null = null;
@@ -421,9 +396,8 @@ export class MsmEncoder {
           if (Math.abs(v) >= lim && s.pseudorange !== undefined) {
             // Ambiguity puts the phase out of range: re-anchor it near the
             // pseudorange. That changes the ambiguity, so restart the arc.
-            arc.cycles = Math.round(s.pseudorange / lambda - s.phase);
-            arc.lockStartMs = timeMs;
-            arc.trustInput = false;
+            const cycles = Math.round(s.pseudorange / lambda - s.phase);
+            this.arcs.reanchor(arc, cycles, timeMs);
             v = toField(arc.cycles);
           }
           if (Math.abs(v) < lim) phase = v;
@@ -442,19 +416,13 @@ export class MsmEncoder {
           if (Math.abs(v) < 2 ** 14) dop = v;
         }
 
-        // Own arc age, raised to the receiver's figure when that is finer
-        // (a quantized input lock time would otherwise make us lag a step).
-        let lockS = (timeMs - arc.lockStartMs) / 1000;
-        if (arc.trustInput && s.lockTime !== undefined && s.lockTime > lockS) {
-          lockS = s.lockTime;
-        }
         const cn0 = s.cn0 ?? 0;
         cells.push({
           sigIdx: idx,
           psr,
           phase,
           dop,
-          lti: (arc.lastLti = this.lti(lockS)),
+          lti: this.arcs.indicator(arc, timeMs, s),
           halfCycle: s.halfCycle === true,
           cnr: hiRes
             ? Math.min(1023, Math.max(0, Math.round(cn0 * 16)))
@@ -478,63 +446,6 @@ export class MsmEncoder {
     return this.level >= 6
       ? lockTimeIndicator10(seconds)
       : lockTimeIndicator4(seconds);
-  }
-
-  /** Advance (or restart) the lock arc of one satellite × signal. */
-  private updateArc(key: string, timeMs: number, s: MsmEncodeSignal): ArcState {
-    const prev = this.arcs.get(key);
-    const sysLast = this.lastEpoch.get(key[0]!);
-    let restart = !prev || s.slip === true || timeMs < prev.lastSeenMs;
-    if (
-      !restart &&
-      prev?.slipCount !== undefined &&
-      s.slipCount !== undefined &&
-      s.slipCount !== prev.slipCount
-    ) {
-      restart = true;
-    } else if (!restart && prev) {
-      if (s.lockTime !== undefined && prev.inputLock !== undefined) {
-        // The receiver knows best: lock time drops, or grows by less than
-        // the time elapsed, only after a loss of lock (RTKLIB's test).
-        // 1 s of slack for whole-second lock times (SBF); an unchanged
-        // value is a saturated counter (UBX caps at 64.5 s), not a slip.
-        const elapsed = (timeMs - prev.lastSeenMs) / 1000;
-        restart =
-          s.lockTime < prev.inputLock ||
-          (s.lockTime !== prev.inputLock &&
-            s.lockTime + 1 < prev.inputLock + elapsed);
-      } else {
-        // No lock time: continuity means present in every epoch of its
-        // system (epochs without the system at all don't count, so systems
-        // may be fed in separate calls).
-        restart = prev.lastSeenMs !== sysLast;
-      }
-    }
-    if (restart || !prev) {
-      // Rovers see a slip only when the indicator drops (RTKLIB
-      // lossoflock), so a restarted arc must go out below the last one
-      // sent: at the receiver's new lock time if that is lower, else at 0.
-      let lock = s.slip === true ? 0 : (s.lockTime ?? 0);
-      let trustInput = s.slip !== true;
-      if (prev?.lastLti !== undefined && this.lti(lock) >= prev.lastLti) {
-        lock = 0;
-        trustInput = false;
-      }
-      const arc: ArcState = {
-        lockStartMs: timeMs - lock * 1000,
-        inputLock: s.lockTime,
-        slipCount: s.slipCount,
-        lastSeenMs: timeMs,
-        cycles: 0,
-        trustInput,
-      };
-      this.arcs.set(key, arc);
-      return arc;
-    }
-    prev.inputLock = s.lockTime;
-    prev.slipCount = s.slipCount;
-    prev.lastSeenMs = timeMs;
-    return prev;
   }
 
   private writeMessage(

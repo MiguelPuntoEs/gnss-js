@@ -15,7 +15,7 @@ Everything is exposed through subpath exports (`gnss-js/rinex`, `gnss-js/positio
 ## What's inside
 
 - **Formats in** — RINEX 2/3/4 obs + nav (plain, Hatanaka `.crx`, `.gz`), SP3, RINEX CLK, IONEX, SINEX bias; RTCM3 (MSM + legacy obs, ephemeris, SSR/IGS-SSR, station); RTCM 2.x; and the receiver binaries SBF, UBX, NovAtel OEM4, Trimble, BINEX; Android raw GNSS logs (GnssLogger).
-- **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression; RTCM3 encoding (MSM1–7, station, ephemeris) to turn any supported receiver into a reference-station stream.
+- **Formats out** — RINEX 2/3/4 observation + navigation writers and Hatanaka (CRINEX) compression; RTCM3 encoding (MSM1–7, legacy 1001–1012, station, ephemeris) to turn any supported receiver into a reference-station stream.
 - **Navigation** — Keplerian/GLONASS ephemeris handling plus raw-frame decoding of GPS LNAV/CNAV, Galileo I/NAV + F/NAV, BeiDou D1/D2 and B-CNAV1/2/3 (B1C/B2a/B2b), GLONASS strings, and Galileo HAS (E6 C/NAV) corrections.
 - **Authentication** — Galileo OSNMA: the full chain of trust from the Merkle root through ECDSA-signed TESLA keys to per-satellite MAC tags, flagging navigation data Galileo did not sign.
 - **Orbits** — satellite position/velocity, Doppler, DOP, azimuth/elevation, pass prediction and almanac propagation.
@@ -158,9 +158,9 @@ for (const epoch of parseUbxRawx(bytes).epochs) {
 }
 ```
 
-Any receiver decoder's epochs work (UBX, SBF, NovAtel, Trimble, BINEX); `receiverToRtcm3(epochs, ephemerides, opts)` converts a whole log at once. Lower-level pieces are exported too: `MsmEncoder`, `encodeEphemeris`, `encodeStationArp`, `encodeStationDescriptors`, `encodeGloBiases`.
+Any receiver decoder's epochs work (UBX, SBF, NovAtel, Trimble, BINEX); `receiverToRtcm3(epochs, ephemerides, opts)` converts a whole log at once. For rovers that predate MSM, `obs: 'legacy'` sends GPS 1004 and GLONASS 1012 plus the 1007/1008 antenna descriptor. Lower-level pieces are exported too: `MsmEncoder`, `LegacyObsEncoder`, `encodeEphemeris`, `encodeStationArp`, `encodeStationDescriptors`, `encodeAntennaDescriptor`, `encodeGloBiases`.
 
-The encoder is checked three ways. Re-encoding a Trimble base's RTCM stream reproduces its MSM7, 1006, 1033, 1230 and ephemeris messages bit for bit. A NovAtel base log sent through MSM7 gives the same RTK fix as the raw log, within 0.5 mm. And RTKLIB decodes the stream to the same observations as its own NovAtel and u-blox readers.
+The encoder is checked three ways. Re-encoding a Trimble base's RTCM stream reproduces its MSM7, 1006, 1033, 1230 and ephemeris messages bit for bit. A NovAtel base log sent through MSM7 gives the same RTK baseline as the raw log, within 0.5 mm. And RTKLIB decodes the stream to the same observations as its own NovAtel and u-blox readers.
 
 ```ts
 import { Rtcm2Decoder, rtcm2Observation, rtcm2Station } from 'gnss-js/rtcm2';

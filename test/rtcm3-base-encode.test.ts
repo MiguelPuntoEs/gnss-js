@@ -108,7 +108,7 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
     const direct = postProcessRtk(base, rover, ephs, WHU_BASE, opts);
 
     it.each([7, 4] as const)(
-      'MSM%d base stream gives the same fixed baseline as the raw log',
+      'MSM%d base stream gives the same RTK baseline as the raw log',
       (msm) => {
         const rtcm = receiverToRtcm3(base.epochs, baseEphs, {
           msm,
@@ -146,7 +146,7 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       }
     );
 
-    it('MSM3 (compact) resolves back to the same fixed baseline', () => {
+    it('MSM3 (compact) resolves back to the same RTK baseline', () => {
       const rtcm = receiverToRtcm3(base.epochs, baseEphs, {
         msm: 3,
         arp: { position: WHU_BASE },

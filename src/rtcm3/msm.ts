@@ -438,6 +438,12 @@ export interface ObsDecodeOptions {
    * before).
    */
   compactMsm?: boolean;
+  /**
+   * Reference time (ms) for legacy GLONASS obs (1009–1012), which carry only
+   * the ms of day: the day of week is taken from it. Default: now — right
+   * for a live stream, set it when replaying an old capture.
+   */
+  refTimeMs?: number;
 }
 
 /**

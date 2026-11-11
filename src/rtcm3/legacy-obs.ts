@@ -59,7 +59,10 @@ const two = (n: number) => n.toString().padStart(2, '0');
  * Decode a legacy RTCM3 observation frame (1001–1004 GPS, 1009–1012 GLONASS)
  * into an {@link ObsEpoch}, or null for any other message type.
  */
-export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
+export function decodeLegacyObs(
+  frame: Rtcm3Frame,
+  opts: Pick<ObsDecodeOptions, 'refTimeMs'> = {}
+): ObsEpoch | null {
   const type = frame.messageType;
   const gps = type >= 1001 && type <= 1004;
   const glo = type >= 1009 && type <= 1012;
@@ -87,10 +90,16 @@ export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
     r.readU(1); // DF036
     r.readU(3); // DF037
     // MSM-compatible packing for obsEpochToDate: high bits carry the day of
-    // week. Legacy frames don't include it, so derive it from the wall clock
-    // (GLONASS = UTC+3h) — correct for a live stream; for offline replay of an
-    // old capture the day may be off (the ms-of-day is always exact).
-    const gloDow = new Date(Date.now() + 3 * 3600_000).getUTCDay();
+    // week. Legacy frames don't include it, so take the day that puts the
+    // epoch nearest the reference time (GLONASS = UTC+3h; default the wall
+    // clock, right for a live stream) — also across Moscow midnight.
+    const DAY = 86400_000;
+    const ref = (opts.refTimeMs ?? Date.now()) + 3 * 3600_000;
+    let day = Math.floor(ref / DAY);
+    const off = day * DAY + tk - ref;
+    if (off > DAY / 2) day -= 1;
+    else if (off < -DAY / 2) day += 1;
+    const gloDow = (((day + 4) % 7) + 7) % 7; // 1970-01-01 was a Thursday
     epochMs = ((gloDow << 27) | tk) >>> 0;
   }
 
@@ -148,10 +157,10 @@ export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
     // L2 (dual-frequency types only)
     if (dual) {
       const sig: ObsSignal = {
+        // DF016: 0 C/A or L2C, 1 P(Y) direct, 2 P(Y) cross-correlated,
+        // 3 correlated P/Y (RTKLIB's L2codes table).
         rinexCode: gps
-          ? code2 === 0
-            ? '2X'
-            : '2W'
+          ? (['2X', '2P', '2D', '2W'] as const)[code2]!
           : code2 === 0
             ? '2C'
             : '2P',
@@ -161,7 +170,10 @@ export function decodeLegacyObs(frame: Rtcm3Frame): ObsEpoch | null {
       if (pr21 !== PR21_INVALID) sig.pseudorange = pr1 + pr21 * 0.02;
       if (ppr2 !== PPR_INVALID) sig.phase = (pr1 + ppr2 * 0.0005) / lamL2;
       if (ext && cnr2 > 0) sig.cn0 = cnr2 * 0.25;
-      signals.push(sig);
+      // Both fields invalid: the satellite has no L2 this epoch.
+      if (sig.pseudorange !== undefined || sig.phase !== undefined) {
+        signals.push(sig);
+      }
     }
 
     observations.push({
@@ -187,5 +199,5 @@ export function decodeObs(
   frame: Rtcm3Frame,
   opts: ObsDecodeOptions = {}
 ): ObsEpoch | null {
-  return decodeMsmFull(frame, opts) ?? decodeLegacyObs(frame);
+  return decodeMsmFull(frame, opts) ?? decodeLegacyObs(frame, opts);
 }

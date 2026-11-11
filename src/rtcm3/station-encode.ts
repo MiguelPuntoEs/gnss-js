@@ -97,6 +97,30 @@ export function encodeStationDescriptors(d: StationDescriptors): Uint8Array {
 }
 
 /* ================================================================== */
+/*  1007 / 1008 — antenna descriptor                                   */
+/* ================================================================== */
+
+/**
+ * Encode a framed 1007 antenna descriptor, or 1008 when `antennaSerial` is
+ * given. Older rovers read the antenna (for its phase-centre model) from
+ * these rather than from 1033.
+ */
+export function encodeAntennaDescriptor(
+  d: Pick<
+    StationDescriptors,
+    'stationId' | 'antennaType' | 'antennaSetupId' | 'antennaSerial'
+  >
+): Uint8Array {
+  const w = new BitWriter();
+  w.writeU(d.antennaSerial !== undefined ? 1008 : 1007, 12);
+  w.writeU(d.stationId, 12);
+  writeString(w, d.antennaType);
+  w.writeU(d.antennaSetupId ?? 0, 8);
+  if (d.antennaSerial !== undefined) writeString(w, d.antennaSerial);
+  return frameRtcm3(w.toBytes());
+}
+
+/* ================================================================== */
 /*  1230 — GLONASS L1/L2 code-phase biases                             */
 /* ================================================================== */
 
