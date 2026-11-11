@@ -65,3 +65,5 @@
 !/test-fixtures/rd_sterea_proj.json
 !/test-fixtures/nsgi_rdtrans2018.bin
 !/test-fixtures/nsgi_nlgeo2018.bin
+!/test-fixtures/os_ostn15_testpoints.json
+!/test-fixtures/etrf97_proj.json

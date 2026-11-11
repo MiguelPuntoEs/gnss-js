@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.35.0
+
+### Added — Great Britain: OSTN15/OSGM15 National Grid and heights
+
+- `etrs89ToOsgb()` and `osgbToEtrs89()` implement Ordnance Survey's definitive ETRS89 ↔ OSGB36 National Grid (EPSG:27700) transformation and the OSGM15 geoid, as the OS user guide defines them:
+  - ETRS89 is projected with the National Grid parameters on GRS80, then the shifts are interpolated bilinearly from the 1 km grid. The inverse is iterated to 0.1 mm.
+  - The height datum is taken from the nearest-quadrant flag: ODN, St Marys, Douglas02, Stornoway15, Lerwick, Newlyn (Orkney) or Newlyn Offshore (`OSGM15_DATUMS`). Points outside the transformation (flag 16) are refused.
+  - The projection uses OS's own transverse Mercator series, which OSTN15 is defined with. The exact series differs from it by about 1 mm in the far west of the grid.
+- Reproduces all 80 OS test points (TP01–TP40 in both directions): eastings, northings and heights to OS's millimetre, datum flags exactly, latitudes and longitudes to 1e-9°.
+- The grid is supplied by the caller as a node lookup (`OstnGrid`), so it can be loaded in tiles. `ostn15GridPosition()` tells the caller which cell a position needs.
+- `itrfToOsgb()` and `osgbToItrf()` go through ETRF97, the realisation of OS Net v2009.
+- `transformFrame()` knows `'ETRF97'`, via ITRF97 (EPSG:7939), and matches PROJ.
+  - EPSG:10889 (ETRF97 → ETRF2000 directly) puts the two frames 0.28 m apart in Britain, against 6.6 cm through ITRF, so it is not used.
+
 ## 2.34.0
 
 ### Added — the Netherlands: RD and NAP (RDNAPTRANS™2018)

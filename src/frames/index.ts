@@ -41,6 +41,7 @@ export type ReferenceFrame =
   | 'ETRF2020'
   | 'ETRF2014'
   | 'ETRF2000'
+  | 'ETRF97'
   | 'NAD83(2011)'
   | 'NAD83(CSRS)'
   | 'GDA2020'
@@ -241,6 +242,23 @@ const ITRF2014_TO_GDA94 = H(
   2020.0
 );
 
+/**
+ * ITRF97 → ETRF97, EPSG:7939: ETRF97 is ITRF97 rotated with the Eurasian
+ * plate since 1989 (plus the ETRF89 translation). Used by Great Britain's
+ * OS Net v2009, which OSTN15 is tied to. (EPSG:10889, ETRF97 → ETRF2000
+ * directly, puts the two 0.28 m apart in Britain against 6.6 cm through
+ * ITRF, so it is not used.)
+ */
+const ITRF97_TO_ETRF97 = H(
+  [41, 41, -49],
+  0,
+  Z,
+  Z,
+  0,
+  [0.2, 0.5, -0.65],
+  1989.0
+);
+
 /* ================================================================== */
 /*  Helmert application                                                */
 /* ================================================================== */
@@ -298,6 +316,7 @@ const EDGES: Edge[] = [
   { from: 'ITRF2020', to: 'NAD83(CSRS)', p: ITRF2020_TO_NAD83_CSRS },
   { from: 'ITRF2014', to: 'GDA2020', p: ITRF2014_TO_GDA2020 },
   { from: 'ITRF2014', to: 'GDA94', p: ITRF2014_TO_GDA94 },
+  { from: 'ITRF97', to: 'ETRF97', p: ITRF97_TO_ETRF97 },
 ];
 
 /** Frames supported by transformFrame (WGS84 is an ITRF2020 alias). */
@@ -320,6 +339,7 @@ export const REFERENCE_FRAMES: ReferenceFrame[] = [
   'ETRF2020',
   'ETRF2014',
   'ETRF2000',
+  'ETRF97',
   'NAD83(2011)',
   'NAD83(CSRS)',
   'GDA2020',
@@ -410,3 +430,4 @@ export function dateToEpoch(date: Date): number {
 export * from './plate-motion';
 export * from './nkg';
 export * from './rdnap';
+export * from './ostn15';
