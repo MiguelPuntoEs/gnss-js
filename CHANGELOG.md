@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.18.0
+
+### New — elevation-masked QC and above-mask tracking (`analysis`)
+
+- `QualityAccumulator` runs the four QC accumulators (cycle slips, multipath, completeness, ionosphere) behind one observation callback, with an optional elevation mask in front. Run two side by side for masked and unmasked results from one parse; `analyzeQuality` takes the same options as a fifth argument.
+- `ElevationModel.create(ephemerides, rxPos)` gives satellite elevations from broadcast orbits. It samples every 5 min and interpolates, about 10× cheaper than an orbit per observation, and agrees with exact elevations to the 0.01° level. It returns null without a usable receiver position.
+- `TrackingAccumulator` / `QualityResult.tracking` compare the satellite-epochs the orbits put above the mask (healthy, valid ephemeris) with those tracked on carrier phase, per system and dual-frequency. Only systems the receiver recorded are expected. This is the teqc/Anubis "% of expected observations above the mask" metric.
+- `QualityResult` gains `maskDeg`, `belowMask` and `tracking`.
+
+### New — clock jumps, continuity, tracking timeline, signal profile (`analysis`)
+
+The teqc/Anubis checks /qc lacked. All come out of `QualityAccumulator`, which now buffers one epoch at a time (parsers deliver epoch by epoch):
+
+- **`clockJumps`.** Receiver clock resets (teqc "Rx clock offsets", Anubis `nJmp`): code minus phase stepping by the same amount on ≥ 70 % of satellites in one epoch, reported in ms. Whole-millisecond resets are removed from the pseudoranges before the other checks run. Otherwise a 1 ms reset (≈ 300 km) reads as a cycle slip on every satellite. A 1 ms reset injected into a real day is found, and slips and multipath come out identical.
+- **`continuity`.** Expected vs present epochs, gaps > 600 s and short pieces < 1800 s (Anubis defaults), repeated epochs, duplicated satellites, usable epochs (≥ 4 satellites with dual-frequency code and phase), and the most satellites seen in one epoch.
+- **`tracking.timeline`.** Per satellite and time bin (≤ 96 bins), the samples expected above the mask, those tracked, and those tracked below the mask or without nav: teqc's ASCII time plot as data. Also `neverTracked` and `withoutNav`.
+- **`signals`.** Observations per signal above 0/5/10/15/20/30/50/70° (Anubis "Ele>N"), and C/N0 mean ± sd per signal above the mask (teqc "Mean S1 S2").
+
+### New — ionospheric activity (`analysis`)
+
+`IonoResult.activity` reports how disturbed the ionosphere was, apart from cycle slips. It's space weather, not a receiver fault:
+
+- **`events`:** epoch pairs whose L1 ionospheric delay changed faster than teqc's IOD-slip threshold (400 cm/min), per system. Epochs the slip detector confirmed as slips are excluded. teqc counts both as "IOD slips": on ABMF, our events plus our slips (160) match its 159.
+- **`roti`:** the rate-of-TEC index (standard deviation of the 30 s rate of TEC in 5-min windows), as p50/p95/max and the share of windows above 0.5 TECU/min.
+
+SBAS is left out: GEO carrier phase jumps every few dozen epochs at every station.
+
+### Changed — fewer false cycle slips (`analysis`)
+
+Three changes to the Melbourne-Wübbena (MW) and single-frequency detectors, each found by comparing with teqc and Anubis:
+
+- **Persistence.** A jump is a candidate until the next epoch shows the new level persists; a one-epoch code outlier returns and is dropped.
+- **Sliding reference.** MW is compared with the mean of the last 30 epochs instead of the whole arc, so slow MW drift from long-period code multipath no longer accumulates into a "slip" hours into an arc.
+- **Phase confirmation.** A real wide-lane slip moves the phase-only geometry-free combination too (a 1-cycle L1 slip moves it 19 cm). A candidate MW step now needs a ≥5 cm geometry-free jump unless it is ≥3 cycles. A code shift without a phase jump is followed as a new level, not counted.
+
+On clean stations above 10° (GPS + GLONASS), slips now match teqc: BRUX 3 against teqc's 0, ONSA 2/2, WTZR 0/0, ZIM2 9/8. Unmasked, BRUX went from 425 to 27 a day. Slips are reported at the jump epoch, but the `onSlip` callback fires one epoch later, so a slip on an arc's very last epoch can't be confirmed.
+
+`CycleSlipResult` gains `slipEpochs` / `testedEpochs`: distinct satellite-epochs, so one slip seen by two MW pairs counts once (teqc's obs-per-slip sense). It also gains `perSystem` with the same counts by constellation.
+
+### Validation — against teqc 2019Feb25 and G-Nut/Anubis 3.11
+
+Seven IGS/EUREF daily files (ALIC BRUX KOUR MAS1 ONSA WTZR ZIM2, 2026/313) plus the ABMF fixture, with the day's BRDC:
+
+- **Tracking above 10°** is within ~1 point of Anubis "%Rt>10" wherever both count the same systems.
+- **Multipath** is within ±20 % of Anubis mpX for GPS, Galileo and BeiDou. Anubis averages every code on a band with a moving RMS; ours sigma-edits each arc.
+- **Slips:** the constellation ranking matches Anubis. Above 10°, they match teqc's on clean stations. teqc also counts ionospheric-rate events as slips, which we don't: 159 of its 169 on ABMF.
+- **teqc** (GPS + GLONASS L1/L2, via RTKLIB convbin to RINEX 2.11): dual-frequency tracking above 10° is within 1 point of teqc's "complete obs" (ABMF 92.8 vs 92.6 %). Our multipath reads 0.4–1.0× teqc's MP1/MP2, which use the C/A code and a moving average.
+
+`test/qc-oracles.test.ts` pins the ABMF numbers for both tools.
+
 ## 2.17.0
 
 ### New — plate motion: move ITRF2020 coordinates between epochs (`frames`)
