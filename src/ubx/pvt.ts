@@ -6,9 +6,11 @@
  * reference for cross-checking an independent SPP/SBAS solution.
  */
 import { ubxFrames } from './frame';
+import { getGpsLeap } from '../time/utc';
 import type { ReceiverPvt } from '../receiver-pvt';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
+const WEEK_MS = 604800000;
 
 export interface UbxPvtResult {
   records: ReceiverPvt[];
@@ -58,12 +60,19 @@ export function parseUbxPvt(data: Uint8Array): UbxPvtResult {
               ? 'standalone'
               : 'no-pvt';
     const hasFix = fixType >= 2;
-    // Absolute time from the UTC date fields; tow is the GPS iTOW.
-    const timeMs =
-      year > 1980
-        ? Date.UTC(year, month - 1, day, hour, min, sec)
-        : GPS_EPOCH_MS + iTow;
-    const week = Math.floor((timeMs - GPS_EPOCH_MS) / 1000 / 604800);
+    // GPS-scale time (the ReceiverPvt convention): NAV-PVT has no week
+    // number, so take the week from the UTC date (+ leap seconds) and the
+    // exact time from the GPS iTOW, picking the week nearest the estimate so
+    // an epoch at a week boundary lands in the right one. Without a valid
+    // date, fall back to week 0 + iTOW.
+    let timeMs = GPS_EPOCH_MS + iTow;
+    if (year > 1980) {
+      const utc = Date.UTC(year, month - 1, day, hour, min, sec);
+      const approx = utc + getGpsLeap(new Date(utc)) * 1000;
+      const w = Math.round((approx - GPS_EPOCH_MS - iTow) / WEEK_MS);
+      timeMs = GPS_EPOCH_MS + w * WEEK_MS + iTow;
+    }
+    const week = Math.floor((timeMs - GPS_EPOCH_MS) / WEEK_MS);
     records.push({
       timeMs,
       week,
