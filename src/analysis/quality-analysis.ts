@@ -42,6 +42,12 @@ export interface QualityResult {
   maskDeg?: number | null;
   /** Satellite-epochs dropped for being below the mask. */
   belowMask?: number;
+  /**
+   * Satellites left out of the graded statistics because their system's
+   * broadcast navigation carries other satellites but never them (not in
+   * service). Only with a mask.
+   */
+  notBroadcast?: string[];
   /** Above-mask tracking vs the orbits; null without an elevation model. */
   tracking?: TrackingResult | null;
   /** Receiver clock jumps (removed from the code before the other checks). */
@@ -178,6 +184,10 @@ export class QualityAccumulator {
   private elevation: ElevationModel | null;
   private maskDeg: number | null;
   private belowMask = 0;
+  /** Systems the navigation carries, and their satellites (see flush). */
+  private navSystems = new Set<string>();
+  private navPrns = new Set<string>();
+  private notBroadcast = new Set<string>();
   private clock: ClockJumpDetector;
   private continuity: ContinuityAccumulator;
   private profile = new SignalProfileAccumulator();
@@ -213,6 +223,11 @@ export class QualityAccumulator {
       opts.referenceMultipath === false
         ? null
         : new ReferenceMultipathAccumulator(header, this.maskDeg ?? 10);
+    if (this.elevation)
+      for (const p of this.elevation.prns) {
+        this.navPrns.add(p);
+        this.navSystems.add(p[0]!);
+      }
     if (this.elevation)
       this.tracking = new TrackingAccumulator(
         this.elevation,
@@ -268,6 +283,21 @@ export class QualityAccumulator {
         this.belowMask++;
         continue;
       }
+      // A satellite its system's broadcast navigation doesn't carry at all,
+      // while it carries the others, isn't in service (NavIC I06 at KUNZ:
+      // tracked, never broadcast, 1439 "slips" — all of that day's). Its
+      // elevation can't be checked against the mask either: not graded.
+      // A system missing from the navigation entirely is still graded —
+      // unknown elevation is not low elevation.
+      if (
+        this.maskDeg !== null &&
+        el === null &&
+        this.navSystems.has(o.prn[0]!) &&
+        !this.navPrns.has(o.prn)
+      ) {
+        this.notBroadcast.add(o.prn);
+        continue;
+      }
       this.profile.onGradedObservation(o.prn, o.codes, o.values);
       this.sats.onGradedObservation(o.prn, o.codes, o.values);
       this.lock.onObservation(o.prn, o.codes, o.values, o.lli);
@@ -314,6 +344,7 @@ export class QualityAccumulator {
       iono: this.iono.finalize(),
       maskDeg: this.maskDeg,
       belowMask: this.belowMask,
+      notBroadcast: [...this.notBroadcast].sort(),
       tracking,
       clockJumps: this.clock.finalize(),
       continuity: this.continuity.finalize(),
