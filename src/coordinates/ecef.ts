@@ -36,7 +36,7 @@ export function geodeticToEcef(
 }
 
 /**
- * Convert ECEF coordinates to geodetic (iterative Bowring method).
+ * Convert ECEF coordinates to geodetic (fixed-point iteration on latitude).
  * @param x X in meters
  * @param y Y in meters
  * @param z Z in meters
@@ -58,23 +58,26 @@ export function ecefToGeodetic(
     return [lat, lon, alt];
   }
 
-  // Iterative Bowring method
+  // Fixed-point iteration on latitude: converges by a factor ~e² per step.
   let lat = Math.atan2(z, p * (1 - WGS84_ECCENTRICITY_SQUARED));
-  let N: number;
   for (let i = 0; i < 10; i++) {
     const sinLat = Math.sin(lat);
-    N =
+    const N =
       WGS84_SEMI_MAJOR_AXIS /
       Math.sqrt(1 - WGS84_ECCENTRICITY_SQUARED * sinLat * sinLat);
     const prevLat = lat;
     lat = Math.atan2(z + WGS84_ECCENTRICITY_SQUARED * N * sinLat, p);
     if (Math.abs(lat - prevLat) < 1e-15) break;
   }
+  // h = p·cosφ + z·sinφ − a·√(1 − e²·sin²φ): well conditioned at every
+  // latitude. The textbook p / cosφ − N divides by cosφ → 0 near the
+  // poles (0.35 m wrong 1 cm from the axis, 28 m at 0.1 mm).
   const sinLat = Math.sin(lat);
-  N =
-    WGS84_SEMI_MAJOR_AXIS /
-    Math.sqrt(1 - WGS84_ECCENTRICITY_SQUARED * sinLat * sinLat);
-  const alt = p / Math.cos(lat) - N;
+  const alt =
+    p * Math.cos(lat) +
+    z * sinLat -
+    WGS84_SEMI_MAJOR_AXIS *
+      Math.sqrt(1 - WGS84_ECCENTRICITY_SQUARED * sinLat * sinLat);
 
   return [lat, lon, alt];
 }
