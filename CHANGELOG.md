@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.29.0
 
 ### New — receiver channel limits in tracking (`analysis`)
 
