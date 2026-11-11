@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.29.1
+
+### Fixed — BeiDou B1I in RINEX 3.00–3.02 files (`rinex`)
+
+RINEX 3.02 labels BeiDou B1I as band 1 (`C1I`/`L1I`). From 3.03, band 1 means B1C (1575.42 MHz) and B1I is band 2 (`C2I`, 1561.098 MHz). The parser read 3.02 files with the 3.03 meaning, so every B1I phase got the wrong wavelength. In QC this showed as cycle slips on half of all BeiDou epochs:
+
+- GMSD (Trimble NetR9): 10,926 BeiDou slip epochs before, 2 after.
+- HKSL (Leica GR50): 15,586 before, 6 after.
+
+Positioning with BeiDou from such files was affected the same way. The header parser now renames BeiDou band-1 codes to band 2 for versions 3.00–3.02, as RTKLIB does. Files that already declare band-2 codes are left unchanged.
+
 ## 2.29.0
 
 ### New — receiver channel limits in tracking (`analysis`)

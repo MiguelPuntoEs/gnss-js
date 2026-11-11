@@ -263,6 +263,21 @@ function parseHeader(lines: string[]): RinexHeader {
       }
     }
   }
+  // RINEX 3.00–3.02 label BeiDou B1I as band 1 (C1I/L1I); from 3.03 band 1
+  // is B1C (1575.42 MHz) and B1I is band 2 (C2I, 1561.098 MHz). Read as
+  // B1C, every B1I phase took the wrong wavelength: the cycle-slip tests
+  // fired on half the BeiDou epochs (GMSD, Trimble NetR9; HKSL, Leica GR50).
+  // Renamed here, as RTKLIB does, so everything downstream sees band 2 —
+  // unless the file already has band-2 codes (a writer using 3.03 names).
+  if (
+    h.version >= 3 &&
+    h.version < 3.03 &&
+    h.obsTypes['C'] &&
+    !h.obsTypes['C'].some((c) => c[1] === '2')
+  )
+    h.obsTypes['C'] = h.obsTypes['C'].map((c) =>
+      c[1] === '1' ? `${c[0]}2${c.slice(2)}` : c
+    );
   return h;
 }
 
