@@ -53,6 +53,42 @@ describe('parseUbxPvt (NAV-PVT)', () => {
     expect(r.vAccuracyM!).toBeCloseTo(0.22, 3);
     expect(r.nrSV).toBe(22);
   });
+
+  it('timeMs is GPS-scale: week from the UTC date, time from iTOW', () => {
+    const p = new Uint8Array(92);
+    const v = new DataView(p.buffer);
+    // 2026-07-29 00:00:00 GPS = 23:59:42 UTC on the 28th (18 s leap).
+    // GPS week 2429 starts 2026-07-26; Wed 00:00 = tow 259200 s.
+    v.setUint32(0, 259200000, true);
+    v.setUint16(4, 2026, true);
+    p[6] = 7;
+    p[7] = 28;
+    p[8] = 23;
+    p[9] = 59;
+    p[10] = 42;
+    p[20] = 3;
+    const r = parseUbxPvt(ubxFrame(0x01, 0x07, p)).records[0]!;
+    expect(r.timeMs).toBe(Date.UTC(2026, 6, 29));
+    expect(r.week).toBe(2429);
+    expect(r.tow).toBe(259200);
+  });
+
+  it('a week-boundary epoch lands in the right week', () => {
+    const p = new Uint8Array(92);
+    const v = new DataView(p.buffer);
+    // GPS 2026-08-01 23:59:59.5 (tow 604799.5 s, week 2429) = UTC 23:59:41.
+    v.setUint32(0, 604799500, true);
+    v.setUint16(4, 2026, true);
+    p[6] = 8;
+    p[7] = 1;
+    p[8] = 23;
+    p[9] = 59;
+    p[10] = 41;
+    p[20] = 3;
+    const r = parseUbxPvt(ubxFrame(0x01, 0x07, p)).records[0]!;
+    expect(r.week).toBe(2429);
+    expect(r.timeMs).toBe(Date.UTC(2026, 7, 1, 23, 59, 59, 500));
+  });
 });
 
 /** Frame a NovAtel OEM4 binary message with a valid CRC-32. */
