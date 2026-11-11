@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.21.0
+
+Both changes come from a field check of 13 Baltic and Russian reference stations over a week.
+
+### Changed — tracking counts satellites the receiver tracks (`analysis`)
+
+Tracking above the mask, and the sky grid behind the horizon, now count only satellites the receiver tracked at some point that day. Satellites it never locks are beyond the receiver, not a fault of the site:
+
+- **Firmware limits.** Firmware without the newest BeiDou-3 PRNs (C41–C46 at ABMF; PULK's Trimble BD990) read as 78 % BeiDou tracking and as a phantom eastern "obstruction".
+- **Regional systems.** This generalises 2.20.0's rule for NavIC, QZSS and SBAS.
+
+Such satellites are still listed in `neverTracked`, and obstructions, outages and interference still show, because satellites move through them.
+
+### New — tracking per timeline bin (`analysis`)
+
+`tracking.timeline.percent` is the tracked share across all satellites per time bin, so lost _time_ (an outage, interference) can be told from lost _directions_ (an obstruction). PULK in St Petersburg tracks 9–18 % from 00 to 02 UTC and from ~25° all round, which isn't trees.
+
 ## 2.20.0
 
 ### Fixed — tracking expected regional satellites a receiver can't see (`analysis`)
