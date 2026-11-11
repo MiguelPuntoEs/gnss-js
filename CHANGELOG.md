@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.28.0
 
 ### New — multipath as Anubis and teqc average it (`analysis`)
 
