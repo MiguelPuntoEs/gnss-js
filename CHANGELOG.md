@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.20.0
+
+### Fixed — tracking expected regional satellites a receiver can't see (`analysis`)
+
+NavIC, QZSS and SBAS satellites are now expected above the mask only if the receiver tracked them at least once. Their satellites rise over much of the world without being receivable there, so a European station tracking a few NavIC satellites was charged for all of them: WTZR went from 95.7 to 98.0 %, and stopped flickering to Marginal on 95 % days. GPS, GLONASS, Galileo and BeiDou are still expected in full, so a never-tracked satellite still counts.
+
 ## 2.19.0
 
 ### New — site diagnostics: horizon, multipath by direction, antenna C/N0 (`analysis`)
