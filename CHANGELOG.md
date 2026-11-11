@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.38.0
+
+### Added — US State Plane, Belgium and Poland grids; one projection type
+
+- `US_STATE_PLANE_ZONES` lists the 117 SPCS83 metre zones on NAD83(2011): transverse Mercator and Lambert, with parameters and areas of use from EPSG.
+  - `statePlaneZoneAt(lat, lon)` picks the zone with the smallest area of use containing the point. Alaska zone 10, which crosses the antimeridian, is handled.
+  - Not included: Alaska zone 1 (oblique Mercator), and Hawaii and the Pacific islands, which are on NAD83(PA11)/(MA11).
+- `BELGIAN_LAMBERT_2008` (EPSG:3812), `POLAND_CS92` (PL-1992, EPSG:2180) and `POLAND_CS2000_ZONES` (PL-2000 zones 5–8, EPSG:2176–2179).
+- `MapProjection` is one type for both kinds of grid (`GridProjection` and `ConicProjection`). `geodeticToGrid()` and `gridToGeodetic()` work with either, and `isConicProjection()` tells them apart.
+- All of these match PROJ 9.8.1 to 0.1 mm at 774 points; the inverse matches to 1e-9°.
+
+### Fixed
+
+- Transverse Mercator and Lambert conformal conic now wrap the longitude difference from the central meridian to ±180°. Before, a zone that crosses the antimeridian put points on the far side (for example 175°E in the Aleutians) thousands of kilometres off.
+
 ## 2.37.0
 
 ### Added — what RINEX 3 nav records say about themselves
