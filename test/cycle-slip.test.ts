@@ -256,6 +256,17 @@ describe('CycleSlipAccumulator', () => {
       expect(r.slipEpochs).toBe(0);
     });
 
+    it('a lasting code shift without a phase jump is not a slip', () => {
+      // Multipath shifts the code (and so MW) for good, but the carrier
+      // phase is continuous: geometry-free shows no jump → no slip.
+      const acc = new CycleSlipAccumulator(makeHeader({ G: codes }));
+      for (let i = 0; i < 10; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i));
+      for (let i = 10; i < 20; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i, 1.5));
+      expect(acc.finalize().events).toHaveLength(0);
+    });
+
     it('confirms a persistent jump as a slip at the jump epoch', () => {
       const acc = new CycleSlipAccumulator(makeHeader({ G: codes }));
       for (let i = 0; i < 10; i++)

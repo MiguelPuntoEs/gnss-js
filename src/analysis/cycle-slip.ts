@@ -91,6 +91,15 @@ export interface CycleSlipResult {
 const MW_MIN_THRESHOLD = 0.5; // absolute minimum (WL cycles)
 const MW_SIGMA_FACTOR = 4; // n-sigma factor for adaptive threshold
 const MW_MIN_EPOCHS = 3; // minimum epochs before detection starts
+const MW_WINDOW = 30; // epochs in the sliding MW reference window
+/**
+ * A wide-lane slip moves the phase-only geometry-free combination too (a
+ * 1-cycle L1 slip: 19 cm; L2: 24 cm); a code excursion that shifts MW does
+ * not. A candidate needs this GF jump unless its MW step is unambiguous.
+ * Only near-equal slips on both bands (e.g. 4/3 cycles, ~3 cm) slip past.
+ */
+const MW_GF_CONFIRM_M = 0.05;
+const MW_UNAMBIGUOUS = 3; // WL cycles
 
 const GF_THRESHOLD_M = 0.15; // geometry-free epoch-to-epoch jump (metres)
 const SF_THRESHOLD_M = 3.0; // single-freq phase-code jump (metres)
@@ -99,16 +108,25 @@ const SF_THRESHOLD_M = 3.0; // single-freq phase-code jump (metres)
 /*  MW Smoother (Welford online statistics)                            */
 /* ================================================================== */
 
+/**
+ * MW statistics over the last {@link MW_WINDOW} epochs of the arc. A
+ * whole-arc running mean lags the slow MW drift that long-period code
+ * multipath causes; 0.6–2 cycle "slips" deep into hours-long arcs were the
+ * residual false alarms on clean stations against teqc (2026-11-12). A
+ * sliding window follows the drift and still sees a sudden step.
+ */
 interface MwSmooth {
+  buf: number[];
   mean: number;
-  m2: number; // sum of squared deviations from running mean
-  n: number;
+  n: number; // epochs in the arc so far (not capped by the window)
 }
 
 interface MwPending {
   mw: number;
   time: number;
   deviation: number;
+  /** |ΔGF| (m) between the candidate epoch and the one before it. */
+  gfJump: number;
 }
 
 interface SfPending {
@@ -119,19 +137,23 @@ interface SfPending {
 }
 
 function mwSmoothInit(value: number): MwSmooth {
-  return { mean: value, m2: 0, n: 1 };
+  return { buf: [value], mean: value, n: 1 };
 }
 
 function mwSmoothUpdate(s: MwSmooth, value: number): MwSmooth {
-  const n = s.n + 1;
-  const delta = value - s.mean;
-  const mean = s.mean + delta / n;
-  const delta2 = value - mean;
-  return { mean, m2: s.m2 + delta * delta2, n };
+  const buf =
+    s.buf.length >= MW_WINDOW ? [...s.buf.slice(1), value] : [...s.buf, value];
+  let sum = 0;
+  for (const v of buf) sum += v;
+  return { buf, mean: sum / buf.length, n: s.n + 1 };
 }
 
 function mwSmoothStddev(s: MwSmooth): number {
-  return s.n > 1 ? Math.sqrt(s.m2 / (s.n - 1)) : Infinity;
+  const k = s.buf.length;
+  if (k < 2) return Infinity;
+  let ss = 0;
+  for (const v of s.buf) ss += (v - s.mean) * (v - s.mean);
+  return Math.sqrt(ss / (k - 1));
 }
 
 /* ================================================================== */
@@ -298,6 +320,16 @@ export class CycleSlipAccumulator {
             if (deviation <= threshold) {
               // Back at the old level: the candidate was an outlier.
               mwSmooth.set(pairKey, mwSmoothUpdate(prevSmooth, mw));
+            } else if (
+              pending.gfJump <= MW_GF_CONFIRM_M &&
+              pending.deviation < MW_UNAMBIGUOUS
+            ) {
+              // MW moved and stayed, but the phase didn't jump: a code-level
+              // shift (multipath), not a slip. Follow the new level.
+              mwSmooth.set(
+                pairKey,
+                mwSmoothUpdate(mwSmoothInit(pending.mw), mw)
+              );
             } else {
               // Still off the old level: the jump persisted — a slip at the
               // candidate's epoch. Restart the smoother on the new level.
@@ -319,7 +351,17 @@ export class CycleSlipAccumulator {
           } else if (deviation > threshold) {
             // Candidate: hold the smoother until the next epoch decides.
             mwSmooth.set(pairKey, prevSmooth);
-            mwPending.set(pairKey, { mw, time, deviation });
+            const gfNow = gfMap.get(pairKey);
+            const gfPrev = prev?.gf.get(pairKey);
+            mwPending.set(pairKey, {
+              mw,
+              time,
+              deviation,
+              gfJump:
+                gfNow !== undefined && gfPrev !== undefined
+                  ? Math.abs(gfNow - gfPrev)
+                  : Infinity,
+            });
           } else {
             mwSmooth.set(pairKey, mwSmoothUpdate(prevSmooth, mw));
           }

@@ -1,7 +1,13 @@
 /**
- * QC regression against G-Nut/Anubis 3.11 (the EUREF/IGS QC tool) on the
- * ABMF 2024/001 fixture with the day's BRDC — run once, numbers pinned here
- * so the QC statistics can't drift silently. Reproduce with:
+ * QC regression against two independent tools on the ABMF 2024/001 fixture
+ * with the day's BRDC — run once, numbers pinned here so the QC statistics
+ * can't drift silently.
+ *
+ * teqc 2019Feb25 (UNAVCO; GPS + GLONASS L1/L2, RINEX 2 only). Input made
+ * with RTKLIB demo5 convbin (`-v 2.11 -f 2 -x R25 -x R26 -x R27`; teqc
+ * rejects GLONASS slots > 24), then `teqc +qc -nav n,g -set_mask 10`.
+ *
+ * Anubis 3.11 (G-Nut, the EUREF/IGS QC tool). Reproduce with:
  *   CRX2RNX ABMF.crx | gzip > ABMF.rnx.gz
  *   anubis :inp:rinexo ABMF.rnx.gz :inp:rinexn BRDC.rnx.gz \
  *          :out:xtr ABMF.xtr :qc:ele_cut=10
@@ -37,7 +43,19 @@ const ANUBIS = {
   nSlp: { G: 1718, R: 1148, E: 2563, C: 187 },
 };
 
-describe.skipIf(!HAS_DATA)('QC vs Anubis (ABMF 2024/001)', () => {
+/** teqc 2019Feb25, ABMF 2024-01-01, GPS + GLONASS, 10° mask. */
+const TEQC = {
+  // "Complete obs > 10" / "Possible obs > 10": 40473 / 43698
+  completeAbove10: 92.62,
+  mp1: 0.556, // Moving average MP12 (m), GPS + GLONASS
+  mp2: 0.549,
+  // "IOD or MP slips > 10": 169, of which "IOD slips > 10": 159 are
+  // ionospheric-rate events (> 4 m/min), not cycle slips in our sense.
+  slipsAbove10: 169,
+  iodSlipsAbove10: 159,
+};
+
+describe.skipIf(!HAS_DATA)('QC vs teqc / Anubis (ABMF 2024/001)', () => {
   const buf = HAS_DATA ? readFileSync(join(DIR, 'ABMF.crx')) : null!;
   const file = () => new File([new Uint8Array(buf)], 'ABMF.crx');
   // describe.skipIf bodies still execute: only start the run with data.
@@ -109,5 +127,49 @@ describe.skipIf(!HAS_DATA)('QC vs Anubis (ABMF 2024/001)', () => {
     expect(masked.cycleSlips.slipEpochs).toBeLessThan(
       all.cycleSlips.slipEpochs
     );
+  }, 120_000);
+
+  it('dual-frequency tracking ≥10° within 1 point of teqc complete obs', async () => {
+    const { masked } = await run;
+    const gr = masked.tracking!.perSystem.filter((s) =>
+      'GR'.includes(s.system)
+    );
+    const pct =
+      (gr.reduce((a, s) => a + s.dualFreq, 0) /
+        gr.reduce((a, s) => a + s.expected, 0)) *
+      100;
+    expect(Math.abs(pct - TEQC.completeAbove10)).toBeLessThan(1);
+  }, 120_000);
+
+  it('multipath below teqc by its definition (C/A code, moving average)', async () => {
+    const { masked } = await run;
+    const mp = (l: string) =>
+      masked.multipath.signalStats.find((s) => s.label === l)!;
+    const w = (a: string, b: string) => {
+      const x = mp(a);
+      const y = mp(b);
+      return Math.sqrt(
+        (x.rms ** 2 * x.count + y.rms ** 2 * y.count) / (x.count + y.count)
+      );
+    };
+    const mp1 = w('MP L1-L2 (GPS)', 'MP G1-G2 (GLONASS)');
+    const mp2 = w('MP L2-L1 (GPS)', 'MP G2-G1 (GLONASS)');
+    for (const [ours, ref] of [
+      [mp1, TEQC.mp1],
+      [mp2, TEQC.mp2],
+    ] as const) {
+      expect(ours / ref).toBeGreaterThan(0.4);
+      expect(ours / ref).toBeLessThan(1.0);
+    }
+  }, 120_000);
+
+  it('GPS+GLONASS slips ≥10° between teqc MP-only and teqc total', async () => {
+    const { masked } = await run;
+    const ps = masked.cycleSlips.perSystem;
+    const ours = ps.G!.slipEpochs + ps.R!.slipEpochs;
+    expect(ours).toBeGreaterThanOrEqual(
+      TEQC.slipsAbove10 - TEQC.iodSlipsAbove10
+    );
+    expect(ours).toBeLessThanOrEqual(TEQC.slipsAbove10);
   }, 120_000);
 });

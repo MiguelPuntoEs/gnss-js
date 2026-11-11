@@ -9,21 +9,28 @@
 - `TrackingAccumulator` / `QualityResult.tracking` compare the satellite-epochs the orbits put above the mask (healthy, valid ephemeris) with those tracked on carrier phase, per system and dual-frequency. Only systems the receiver recorded are expected. This is the teqc/Anubis "% of expected observations above the mask" metric.
 - `QualityResult` gains `maskDeg`, `belowMask` and `tracking`.
 
-### Changed — cycle slips must persist to count (`analysis`)
+### Changed — fewer false cycle slips (`analysis`)
 
-A Melbourne-Wübbena or single-frequency jump is now a candidate until the next epoch shows the new level persists. A one-epoch code outlier returns to the old level and is dropped. Unconfirmed 0.5–1 wide-lane-cycle spikes and low-elevation GLONASS C/A noise made up most of the "slips" on clean stations (BRUX 2026/313: 425 → 92 a day). Slips are reported at the jump epoch, but the `onSlip` callback fires one epoch later, so a slip on an arc's very last epoch can't be confirmed.
+Three changes to the Melbourne-Wübbena (MW) and single-frequency detectors, each found by comparing with teqc and Anubis:
+
+- **Persistence.** A jump is a candidate until the next epoch shows the new level persists; a one-epoch code outlier returns and is dropped.
+- **Sliding reference.** MW is compared with the mean of the last 30 epochs instead of the whole arc, so slow MW drift from long-period code multipath no longer accumulates into a "slip" hours into an arc.
+- **Phase confirmation.** A real wide-lane slip moves the phase-only geometry-free combination too (a 1-cycle L1 slip moves it 19 cm). A candidate MW step now needs a ≥5 cm geometry-free jump unless it is ≥3 cycles. A code shift without a phase jump is followed as a new level, not counted.
+
+On clean stations above 10° (GPS + GLONASS), slips now match teqc: BRUX 3 against teqc's 0, ONSA 2/2, WTZR 0/0, ZIM2 9/8. Unmasked, BRUX went from 425 to 27 a day. Slips are reported at the jump epoch, but the `onSlip` callback fires one epoch later, so a slip on an arc's very last epoch can't be confirmed.
 
 `CycleSlipResult` gains `slipEpochs` / `testedEpochs`: distinct satellite-epochs, so one slip seen by two MW pairs counts once (teqc's obs-per-slip sense). It also gains `perSystem` with the same counts by constellation.
 
-### Validation — against G-Nut/Anubis 3.11
+### Validation — against teqc 2019Feb25 and G-Nut/Anubis 3.11
 
 Seven IGS/EUREF daily files (ALIC BRUX KOUR MAS1 ONSA WTZR ZIM2, 2026/313) plus the ABMF fixture, with the day's BRDC:
 
 - **Tracking above 10°** is within ~1 point of Anubis "%Rt>10" wherever both count the same systems.
 - **Multipath** is within ±20 % of Anubis mpX for GPS, Galileo and BeiDou. Anubis averages every code on a band with a moving RMS; ours sigma-edits each arc.
-- **Slips:** the constellation ranking matches. Counts are in the same order of magnitude once Anubis's per-signal counting is accounted for.
+- **Slips:** the constellation ranking matches Anubis. Above 10°, they match teqc's on clean stations. teqc also counts ionospheric-rate events as slips, which we don't: 159 of its 169 on ABMF.
+- **teqc** (GPS + GLONASS L1/L2, via RTKLIB convbin to RINEX 2.11): dual-frequency tracking above 10° is within 1 point of teqc's "complete obs" (ABMF 92.8 vs 92.6 %). Our multipath reads 0.4–1.0× teqc's MP1/MP2, which use the C/A code and a moving average.
 
-`test/qc-anubis.test.ts` pins the ABMF numbers.
+`test/qc-oracles.test.ts` pins the ABMF numbers for both tools.
 
 ## 2.16.0
 
