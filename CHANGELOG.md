@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.22.0
 
 ### New — RTCM3 encoding: any receiver as a reference station (`rtcm3`)
 
