@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.33.1
 
 ### Fixed — BeiDou orbits used the wrong Earth rotation rate
 
