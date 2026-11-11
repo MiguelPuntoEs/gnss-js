@@ -42,6 +42,7 @@ export type ReferenceFrame =
   | 'ETRF2014'
   | 'ETRF2000'
   | 'ETRF97'
+  | 'ETRF89'
   | 'NAD83(2011)'
   | 'NAD83(CSRS)'
   | 'GDA2020'
@@ -259,6 +260,12 @@ const ITRF97_TO_ETRF97 = H(
   1989.0
 );
 
+/**
+ * ITRF89 → ETRF89, EPSG:7932: ITRF89 rotated with the Eurasian plate
+ * since 1989. Switzerland's CHTRF95 is ETRF89 at 1993.0.
+ */
+const ITRF89_TO_ETRF89 = H(Z, 0, Z, Z, 0, [0.11, 0.57, -0.71], 1989.0);
+
 /* ================================================================== */
 /*  Helmert application                                                */
 /* ================================================================== */
@@ -317,6 +324,7 @@ const EDGES: Edge[] = [
   { from: 'ITRF2014', to: 'GDA2020', p: ITRF2014_TO_GDA2020 },
   { from: 'ITRF2014', to: 'GDA94', p: ITRF2014_TO_GDA94 },
   { from: 'ITRF97', to: 'ETRF97', p: ITRF97_TO_ETRF97 },
+  { from: 'ITRF89', to: 'ETRF89', p: ITRF89_TO_ETRF89 },
 ];
 
 /** Frames supported by transformFrame (WGS84 is an ITRF2020 alias). */
@@ -340,6 +348,7 @@ export const REFERENCE_FRAMES: ReferenceFrame[] = [
   'ETRF2014',
   'ETRF2000',
   'ETRF97',
+  'ETRF89',
   'NAD83(2011)',
   'NAD83(CSRS)',
   'GDA2020',
