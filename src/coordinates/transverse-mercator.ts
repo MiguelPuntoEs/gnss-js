@@ -85,7 +85,8 @@ export function geodeticToTransverseMercator(
   const { e2, n, aHat } = series(p);
   const b = forwardCoefficients(n);
   const latC = conformalLatitude(lat, e2);
-  const dLon = lon - (p.lon0 * Math.PI) / 180;
+  const dLon0 = lon - (p.lon0 * Math.PI) / 180;
+  const dLon = Math.atan2(Math.sin(dLon0), Math.cos(dLon0));
   const xi = Math.atan2(Math.tan(latC), Math.cos(dLon));
   const eta = Math.atanh(Math.cos(latC) * Math.sin(dLon));
 

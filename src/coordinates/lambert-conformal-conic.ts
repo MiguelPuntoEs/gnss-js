@@ -56,7 +56,9 @@ export function geodeticToLambertConformalConic(
 ): { easting: number; northing: number } {
   const { n, F, rF, t } = constants(p);
   const r = p.a * F * t(lat) ** n;
-  const theta = n * (lon - p.lon0 * D2R);
+  // Wrap λ − λ0 to ±π: zones across the antimeridian (Aleutians).
+  const dLon = lon - p.lon0 * D2R;
+  const theta = n * Math.atan2(Math.sin(dLon), Math.cos(dLon));
   return {
     easting: p.falseEasting + r * Math.sin(theta),
     northing: p.falseNorthing + rF - r * Math.cos(theta),

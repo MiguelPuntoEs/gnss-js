@@ -10,6 +10,7 @@ import {
   GRS80_SEMI_MAJOR_AXIS,
   type GridProjection,
 } from './transverse-mercator';
+import type { ConicProjection } from './lambert-conformal-conic';
 
 const tm = (
   name: string,
@@ -142,4 +143,30 @@ const MTM_EPSG = [
  */
 export const CANADA_MTM_ZONES: readonly GridProjection[] = MTM_CM.map((cm, i) =>
   tm(`NAD83(CSRS) MTM zone ${i + 1}`, MTM_EPSG[i]!, -cm, 0.9999, 304800)
+);
+
+/* Belgium — ETRS89 (BEREF, ETRF2000) */
+
+/** Belgian Lambert 2008 (EPSG:3812). */
+export const BELGIAN_LAMBERT_2008: ConicProjection = {
+  name: 'Belgian Lambert 2008',
+  epsg: 3812,
+  a: GRS80_SEMI_MAJOR_AXIS,
+  f: GRS80_FLATTENING,
+  lat0: 50 + 47 / 60 + 52.134 / 3600,
+  lon0: 4 + 21 / 60 + 33.177 / 3600,
+  lat1: 49 + 50 / 60,
+  lat2: 51 + 10 / 60,
+  falseEasting: 649328,
+  falseNorthing: 665262,
+};
+
+/* Poland — ETRF2000-PL. Polish practice writes x (northing) first. */
+
+/** PL-1992 / CS92 (EPSG:2180), the national map grid. */
+export const POLAND_CS92 = tm('PL-1992', 2180, 19, 0.9993, 500000, -5300000);
+
+/** PL-2000 / CS2000 zones 5–8 (EPSG:2176–2179), for large-scale work. */
+export const POLAND_CS2000_ZONES: readonly GridProjection[] = [5, 6, 7, 8].map(
+  (z) => tm(`PL-2000 zone ${z}`, 2171 + z, z * 3, 0.999923, z * 1e6 + 500000)
 );
