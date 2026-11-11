@@ -53,7 +53,9 @@ export class BitWriter {
         `value ${value} does not fit in ${n} sign-magnitude bits`
       );
     }
-    this.writeU(value < 0 ? half + mag : mag, n);
+    // A negative zero keeps its sign bit, as BitReader.readSM returns it.
+    const negative = value < 0 || Object.is(value, -0);
+    this.writeU(negative ? half + mag : mag, n);
   }
 
   /** Write `n` zero bits (reserved fields). */

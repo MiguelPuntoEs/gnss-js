@@ -63,7 +63,7 @@ describe('BitWriter', () => {
     const r = new BitReader(w.toBytes());
     for (const [k, v, n] of vals) {
       const got = k === 'u' ? r.readU(n) : k === 's' ? r.readS(n) : r.readSM(n);
-      expect(got).toBe(v === 0 ? 0 : v); // -0 from readSM is fine
+      expect(got).toBe(v); // sign-magnitude −0 keeps its sign
     }
   });
 

@@ -79,6 +79,16 @@ export interface EphemerisInfo {
   tauC?: number; // seconds (GLONASS time to UTC)
   n4?: number; // 4-year interval number
   tauGPS?: number; // seconds (GLONASS-GPS time diff)
+  // GLONASS flags carried by 1020 (kept so the message can be re-encoded)
+  almanacHealth?: number; // DF105
+  almanacHealthAvailable?: number; // DF106
+  p1?: number; // DF107
+  p2?: number; // DF109
+  p3?: number; // DF120
+  p?: number; // DF122 (GLONASS-M P)
+  ln?: number; // DF123 (third string)
+  na?: number; // DF132 calendar day of the almanac
+  ln5?: number; // DF136 (fifth string)
 }
 
 /* ================================================================== */
@@ -185,7 +195,9 @@ function decodeGlonassEphemeris(payload: Uint8Array): EphemerisInfo | null {
   r.skip(12); // message type
   const slot = r.readU(6);
   const freqChannel = r.readU(5) - 7; // DF040: 0-20 → -7 to +13
-  r.skip(1 + 1 + 2); // almanac health, health avail, P1
+  const almanacHealth = r.readU(1);
+  const almanacHealthAvailable = r.readU(1);
+  const p1 = r.readU(2);
   // tk: hours(5) + minutes(6) + 30s-flag(1), Moscow time → UTC
   const tkHours = r.readU(5);
   const tkMins = r.readU(6);
@@ -193,7 +205,7 @@ function decodeGlonassEphemeris(payload: Uint8Array): EphemerisInfo | null {
   const tkMoscow = tkHours * 3600 + tkMins * 60 + tk30s * 30;
   const tk = (((tkMoscow - 3 * 3600) % 86400) + 86400) % 86400; // Moscow→UTC, wrap at day boundary
   const healthBn = r.readU(1);
-  r.skip(1); // P2
+  const p2 = r.readU(1);
   const tb = r.readU(7) * 15; // time interval index → minutes
   const vx = r.readSM(24) * 2 ** -20; // km/s (sign-magnitude)
   const x = r.readSM(27) * 2 ** -11; // km
@@ -204,10 +216,10 @@ function decodeGlonassEphemeris(payload: Uint8Array): EphemerisInfo | null {
   const vz = r.readSM(24) * 2 ** -20;
   const z = r.readSM(27) * 2 ** -11;
   const azz = r.readSM(5) * 2 ** -30;
-  r.skip(1); // P3
+  const p3 = r.readU(1);
   const gammaN = r.readSM(11) * 2 ** -40;
-  r.skip(2); // P (GLONASS-M indicator)
-  r.skip(1); // ln (third string)
+  const p = r.readU(2); // GLONASS-M P
+  const ln = r.readU(1); // third string
   const tauN = r.readSM(22) * 2 ** -30; // clock bias (sign-magnitude)
   const deltaTauN = r.readSM(5) * 2 ** -30;
   const en = r.readU(5); // age of data (days)
@@ -215,11 +227,17 @@ function decodeGlonassEphemeris(payload: Uint8Array): EphemerisInfo | null {
   const ft = r.readU(4); // URA index
   const nt = r.readU(11); // calendar day within 4-yr cycle
   const satType = r.readU(2); // M field (satellite type)
+  // DF131 flags DF132–DF135 as valid; the fields are always present.
+  // DF132 N^A sits before τc — skipping it garbled τc, N4 and τGPS.
   const additionalData = r.readU(1);
-  const tauC = additionalData ? r.readSM(32) * 2 ** -31 : undefined; // GLONASS→UTC correction
-  const n4 = additionalData ? r.readU(5) : undefined; // 4-year interval number
-  const tauGPS = additionalData ? r.readSM(22) * 2 ** -30 : undefined; // GLONASS−GPS time diff
-  // ln5 (fifth string health) — 1 bit, skip
+  const na = r.readU(11);
+  const tauCRaw = r.readSM(32) * 2 ** -31; // GLONASS→UTC correction
+  const n4Raw = r.readU(5); // 4-year interval number
+  const tauGPSRaw = r.readSM(22) * 2 ** -30; // GLONASS−GPS time diff
+  const ln5 = r.readU(1); // fifth string
+  const tauC = additionalData ? tauCRaw : undefined;
+  const n4 = additionalData ? n4Raw : undefined;
+  const tauGPS = additionalData ? tauGPSRaw : undefined;
 
   return {
     prn: `R${String(slot).padStart(2, '0')}`,
@@ -250,6 +268,15 @@ function decodeGlonassEphemeris(payload: Uint8Array): EphemerisInfo | null {
     tauC,
     n4,
     tauGPS,
+    almanacHealth,
+    almanacHealthAvailable,
+    p1,
+    p2,
+    p3,
+    p,
+    ln,
+    ln5,
+    ...(additionalData ? { na } : {}),
   };
 }
 
