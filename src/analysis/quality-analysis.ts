@@ -105,7 +105,11 @@ function multipathSky(
     new Array<number>(nEl).fill(0)
   );
   const n = Array.from({ length: nAz }, () => new Array<number>(nEl).fill(0));
-  for (const s of mp.series)
+  for (const s of mp.series) {
+    // SBAS GEOs sit in one cell all day: they don't map a reflector, and an
+    // anomalous GEO signal (S28 on 2026/313: 19 m code "multipath" at BIK0
+    // and DJIG, 4000 km apart) would put the worst sector on it everywhere.
+    if (s.prn[0] === 'S') continue;
     for (const p of s.points) {
       const ae = model.azElDeg(s.prn, p.time);
       if (!ae || ae.el < 0) continue;
@@ -114,6 +118,7 @@ function multipathSky(
       sum2[ia]![ie]! += p.mp * p.mp;
       n[ia]![ie]!++;
     }
+  }
   let worst: MultipathSky['worst'] = null;
   const rms = sum2.map((col, ia) =>
     col.map((x, ie) => {
