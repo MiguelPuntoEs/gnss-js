@@ -12,6 +12,8 @@
 
 ## 2.38.0
 
+Not published on its own: a GitHub Actions outage stranded its CI, so its changes first ship in 2.39.0.
+
 ### Added — US State Plane, Belgium and Poland grids; one projection type
 
 - `US_STATE_PLANE_ZONES` lists the 117 SPCS83 metre zones on NAD83(2011): transverse Mercator and Lambert, with parameters and areas of use from EPSG.
