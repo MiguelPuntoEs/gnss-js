@@ -17,6 +17,7 @@ import {
 import { ephInfoToEphemeris } from '../src/orbit';
 import { parseNovatelNav, parseNovatelRange } from '../src/novatel';
 import { parseTrimble } from '../src/trimble';
+import { parseUbxRawx } from '../src/ubx';
 import { postProcessRtk } from '../src/positioning';
 import type { RtkObsEpoch } from '../src/positioning';
 import type { Ephemeris } from '../src/rinex/nav';
@@ -250,5 +251,38 @@ describe('receiver adapters', () => {
       0
     );
     expect(nIn).toBeGreaterThan(20);
+  });
+
+  it('carries u-blox F9P GLONASS phase without an ephemeris (RAWX freqId)', () => {
+    const { epochs } = parseUbxRawx(
+      new Uint8Array(readFileSync(join(FIX, 'f9p_rawx_slice.ubx')))
+    );
+    const ep = epochs[0]!;
+    // freqId − 7 must be the channel that makes phase × λ ≈ pseudorange.
+    for (const m of ep.meas.filter(
+      (x) => x.prn[0] === 'R' && x.code === '1C' && x.pr && x.cp
+    )) {
+      const lambda = C / (1602e6 + m.gloChannel! * 0.5625e6);
+      expect(Math.abs(m.cp! * lambda - m.pr!), m.prn).toBeLessThan(1000);
+    }
+    resetGloFreqCache();
+    const frames = new Rtcm3Decoder().decode(
+      receiverToRtcm3([ep], [], { msm: 4 })
+    );
+    resetGloFreqCache(); // MSM4 has no DF419: the channel must not leak from elsewhere
+    const glo = frames
+      .map((f) => decodeMsmFull(f))
+      .find((e) => e?.system === 'R');
+    expect(glo).toBeDefined();
+    const msm7 = new Rtcm3Decoder().decode(
+      receiverToRtcm3([ep], [], { msm: 7 })
+    );
+    const glo7 = msm7
+      .map((f) => decodeMsmFull(f))
+      .find((e) => e?.system === 'R')!;
+    const withPhase = glo7.observations
+      .flatMap((o) => o.signals)
+      .filter((s) => s.phase !== undefined);
+    expect(withPhase.length).toBeGreaterThanOrEqual(10);
   });
 });
