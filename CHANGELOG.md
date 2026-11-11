@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.36.0
+
+### Added — France: Lambert-93 and the CC zones
+
+- `geodeticToLambertConformalConic()` and `lambertConformalConicToGeodetic()` implement EPSG method 9802, the two-standard-parallel Lambert conformal conic projection, as PROJ's `lcc`.
+- `LAMBERT_93` (EPSG:2154) and `FRANCE_CC_ZONES` (CC42–CC50, EPSG:3942–3950) are on RGF93, France's ETRS89, which IGN realises as ETRF2000 (RGF93 v2b).
+- `franceCcZone(lat)` returns the CC zone for a latitude.
+- Matches PROJ 9.8.1 to 0.1 mm at 143 points across mainland France and Corsica. The inverse matches to 1e-9°.
+
 ## 2.35.0
 
 ### Added — Great Britain: OSTN15/OSGM15 National Grid and heights
