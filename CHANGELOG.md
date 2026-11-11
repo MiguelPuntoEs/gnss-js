@@ -29,6 +29,8 @@ Not published on its own: a GitHub Actions outage stranded its CI, so its change
 
 ## 2.37.0
 
+Not published on its own, for the same reason as 2.38.0: these changes first ship in 2.39.0.
+
 ### Added — what RINEX 3 nav records say about themselves
 
 `parseNavFile()` now keeps four fields of GPS, Galileo, BeiDou, QZSS and NavIC records that it used to drop. All are optional on `KeplerEphemeris`, and both nav writers write them back.
