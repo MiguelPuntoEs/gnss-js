@@ -35,8 +35,14 @@ import {
   ecefToGeodetic,
   vincenty,
   deg2rad,
+  geodeticToTransverseMercator,
+  SWEREF99_TM,
 } from 'gnss-js/coordinates';
-import { transformFrame } from 'gnss-js/frames';
+import {
+  transformFrame,
+  itrfToSweref99,
+  velocityGridModel,
+} from 'gnss-js/frames';
 
 const gpsTime = getGpsTime(new Date()); // ms since GPS epoch
 const [x, y, z] = geodeticToEcef(deg2rad(48.8566), deg2rad(2.3522), 35);
@@ -48,6 +54,21 @@ const itrf = transformFrame(
   'ETRF2000',
   'ITRF2020',
   2010.5
+);
+
+// Sweden: ITRF → SWEREF 99 with the NKG2020 land-uplift model (bring the
+// NKG_RF17vel grid, e.g. PROJ's eur_nkg_nkgrf17vel.tif), then the national grid.
+const sweref = itrfToSweref99(
+  itrf,
+  'ITRF2020',
+  2026.5,
+  velocityGridModel(grid)
+);
+const [lat, lon] = ecefToGeodetic(...sweref);
+const { northing, easting } = geodeticToTransverseMercator(
+  lat,
+  lon,
+  SWEREF99_TM
 );
 ```
 

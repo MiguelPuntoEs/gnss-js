@@ -54,3 +54,6 @@
 !/test-fixtures/binex_qzss_eph.bnx
 !/test-fixtures/binex_obs_7f05.bnx
 !/test-fixtures/android_gnsslogger_google_slice.txt
+!/test-fixtures/sweref99_tm_proj.json
+!/test-fixtures/sweref99_nkg_proj.json
+!/test-fixtures/nkg_rf17vel_sweden.i16
