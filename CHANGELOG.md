@@ -9,6 +9,15 @@
 - `TrackingAccumulator` / `QualityResult.tracking` compare the satellite-epochs the orbits put above the mask (healthy, valid ephemeris) with those tracked on carrier phase, per system and dual-frequency. Only systems the receiver recorded are expected. This is the teqc/Anubis "% of expected observations above the mask" metric.
 - `QualityResult` gains `maskDeg`, `belowMask` and `tracking`.
 
+### New — ionospheric activity (`analysis`)
+
+`IonoResult.activity` reports how disturbed the ionosphere was, apart from cycle slips. It's space weather, not a receiver fault:
+
+- **`events`:** epoch pairs whose L1 ionospheric delay changed faster than teqc's IOD-slip threshold (400 cm/min), per system. Epochs the slip detector confirmed as slips are excluded. teqc counts both as "IOD slips": on ABMF, our events plus our slips (160) match its 159.
+- **`roti`:** the rate-of-TEC index (standard deviation of the 30 s rate of TEC in 5-min windows), as p50/p95/max and the share of windows above 0.5 TECU/min.
+
+SBAS is left out: GEO carrier phase jumps every few dozen epochs at every station.
+
 ### Changed — fewer false cycle slips (`analysis`)
 
 Three changes to the Melbourne-Wübbena (MW) and single-frequency detectors, each found by comparing with teqc and Anubis:

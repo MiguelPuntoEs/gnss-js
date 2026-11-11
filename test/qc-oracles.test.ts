@@ -172,4 +172,17 @@ describe.skipIf(!HAS_DATA)('QC vs teqc / Anubis (ABMF 2024/001)', () => {
     );
     expect(ours).toBeLessThanOrEqual(TEQC.slipsAbove10);
   }, 120_000);
+
+  it('iono events + confirmed slips ≈ teqc IOD slips (it counts both)', async () => {
+    // teqc flags any geometry-free jump > 400 cm/min of L1 delay; we split
+    // that into ionospheric events (iono.activity) and cycle slips.
+    const { masked } = await run;
+    const a = masked.iono.activity!.perSystem;
+    const ps = masked.cycleSlips.perSystem;
+    const ours =
+      a.G!.events + a.R!.events + ps.G!.slipEpochs + ps.R!.slipEpochs;
+    expect(
+      Math.abs(ours - TEQC.iodSlipsAbove10) / TEQC.iodSlipsAbove10
+    ).toBeLessThan(0.15);
+  }, 120_000);
 });

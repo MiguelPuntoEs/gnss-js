@@ -73,6 +73,36 @@ export interface IonoResult {
   maxStec: number;
   /** Mean STEC across all samples (TECU). */
   meanStec: number;
+  /** Ionospheric-rate events (teqc "IOD slips"); see {@link IonoActivity}. */
+  activity?: IonoActivity;
+}
+
+/**
+ * How disturbed the ionosphere was — space weather, not a receiver fault.
+ *
+ * `events` are epoch pairs whose L1 ionospheric delay changed faster than
+ * teqc's IOD-slip threshold (400 cm/min), excluding epochs the cycle-slip
+ * detector confirmed as slips (a real slip jumps the geometry-free
+ * combination too). They break phase continuity for ambiguity resolution
+ * even when the receiver tracked perfectly: teqc counts them as slips, we
+ * report them apart. ROTI is the rate-of-TEC index of scintillation: the
+ * standard deviation of the 30 s rate of TEC in 5-min windows, TECU/min.
+ */
+export interface IonoActivity {
+  thresholdCmPerMin: number;
+  /** Consecutive epoch pairs tested. */
+  tested: number;
+  events: number;
+  perSystem: Record<string, { events: number; tested: number }>;
+  /** ROTI over all 5-min satellite windows (null without 30 s-or-faster data). */
+  roti: {
+    p50: number;
+    p95: number;
+    max: number;
+    /** Share of windows with ROTI > 0.5 TECU/min (irregularities). */
+    shareAbove05: number;
+    windows: number;
+  } | null;
 }
 
 /* ================================================================== */
@@ -86,6 +116,13 @@ const TEC_FACTOR = 40.3e16;
  *  cycle-slip detector's GF criterion. The iono itself rarely moves
  *  more than a few cm between 30 s epochs. */
 const GF_JUMP_M = 0.15;
+
+/** teqc's IOD-slip threshold: L1 ionospheric delay rate, cm/min. */
+const IOD_EVENT_CM_PER_MIN = 400;
+/** ROTI: ROT baseline (s), window (ms), minimum ROT samples per window. */
+const ROT_SEC = 30;
+const ROTI_WINDOW_MS = 300_000;
+const ROTI_MIN_SAMPLES = 5;
 
 /* ================================================================== */
 /*  Arc state                                                          */
@@ -120,6 +157,11 @@ export class IonoAccumulator {
   private pairLabel = new Map<string, string>();
   private pairCodes = new Map<string, [string, string]>();
   private pairMeta = new Map<string, { fi: number; gamma: number }>();
+  /** Candidate rate events (filtered against confirmed slips at the end). */
+  private rateEvents: { prn: string; time: number }[] = [];
+  private rateTested = new Map<string, number>();
+  /** `${prn}@${time}` of every epoch the cycle-slip detector confirmed. */
+  private slipKeys = new Set<string>();
 
   constructor(header: RinexHeader) {
     this.interval = header.interval ?? 30;
@@ -211,6 +253,25 @@ export class IonoAccumulator {
     }
 
     const gap = ps.lastTime > 0 ? (time - ps.lastTime) / 1000 : 0;
+    // Ionospheric rate on L1 between consecutive epochs: L4 = I1·(γ − 1).
+    // Counted before the GF-jump split below, which would hide exactly
+    // these events from the series.
+    // SBAS is left out: GEO carrier phase jumps every few dozen epochs at
+    // every station (~260 "events" a day even in Sweden), which is not
+    // ionosphere — the same reason the SF slip test skips SBAS.
+    if (
+      prn[0] !== 'S' &&
+      ps.lastTime > 0 &&
+      ps.arc.times.length > 0 &&
+      gap > 0 &&
+      gap <= this.interval * ARC_GAP_FACTOR
+    ) {
+      const sys = prn[0]!;
+      this.rateTested.set(sys, (this.rateTested.get(sys) ?? 0) + 1);
+      const cmPerMin =
+        ((Math.abs(l4 - ps.lastL4) / (gamma - 1)) * 100) / (gap / 60);
+      if (cmPerMin > IOD_EVENT_CM_PER_MIN) this.rateEvents.push({ prn, time });
+    }
     if (ps.lastTime > 0 && gap > this.interval * ARC_GAP_FACTOR) {
       this.closeArc(prn, pairKey, ps);
     } else if (
@@ -233,7 +294,8 @@ export class IonoAccumulator {
   }
 
   /** External cycle-slip notification — close affected arcs. */
-  notifySlip(_time: number, prn: string, bands: Set<string>) {
+  notifySlip(time: number, prn: string, bands: Set<string>) {
+    this.slipKeys.add(`${prn}@${time}`);
     const satStates = this.state.get(prn);
     if (!satStates) return;
     for (const [pairKey, ps] of satStates) {
@@ -331,10 +393,65 @@ export class IonoAccumulator {
     }
     series.sort((a, b) => a.prn.localeCompare(b.prn));
 
-    return {
+    const result: IonoResult = {
       series,
       maxStec: count > 0 ? maxStec : 0,
       meanStec: count > 0 ? sum / count : 0,
+    };
+    result.activity = this.activity(result);
+    return result;
+  }
+
+  private activity(result: IonoResult): IonoActivity {
+    const perSystem: IonoActivity['perSystem'] = {};
+    for (const [sys, tested] of this.rateTested)
+      perSystem[sys] = { events: 0, tested };
+    let events = 0;
+    for (const e of this.rateEvents) {
+      if (this.slipKeys.has(`${e.prn}@${e.time}`)) continue;
+      events++;
+      perSystem[e.prn[0]!]!.events++;
+    }
+
+    // ROTI: std of ~30 s ROT within 5-min windows, per satellite.
+    const rotis: number[] = [];
+    if (this.interval <= ROT_SEC) {
+      for (const rs of computeIonoRate(result, ROT_SEC)) {
+        const bins = new Map<number, number[]>();
+        for (const p of rs.points) {
+          const k = Math.floor(p.time / ROTI_WINDOW_MS);
+          let b = bins.get(k);
+          if (!b) bins.set(k, (b = []));
+          b.push(p.value);
+        }
+        for (const v of bins.values()) {
+          if (v.length < ROTI_MIN_SAMPLES) continue;
+          const m = v.reduce((a, x) => a + x, 0) / v.length;
+          const sd = Math.sqrt(
+            v.reduce((a, x) => a + (x - m) * (x - m), 0) / (v.length - 1)
+          );
+          rotis.push(sd);
+        }
+      }
+    }
+    rotis.sort((a, b) => a - b);
+    const q = (f: number) =>
+      rotis[Math.min(rotis.length - 1, Math.floor(f * rotis.length))]!;
+    const tested = [...this.rateTested.values()].reduce((a, b) => a + b, 0);
+    return {
+      thresholdCmPerMin: IOD_EVENT_CM_PER_MIN,
+      tested,
+      events,
+      perSystem,
+      roti: rotis.length
+        ? {
+            p50: q(0.5),
+            p95: q(0.95),
+            max: rotis[rotis.length - 1]!,
+            shareAbove05: rotis.filter((r) => r > 0.5).length / rotis.length,
+            windows: rotis.length,
+          }
+        : null,
     };
   }
 }
