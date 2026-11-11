@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.23.0
+
+### Fixed — the jump search found steps in plain flicker noise (`analysis`)
+
+`fitCoordinateSeries` searched for unannounced steps with a BIC that assumes white noise. GNSS coordinate series carry flicker noise, and under it the search found two or three steps in every simulated five-year series, each one bending the velocity. A candidate step must now also be significant under the white + flicker noise model: χ² > 20 over East, North and Up, with the flicker share fitted without the step (`jumpChi2` to change it; off with `noiseModel: false`).
+
+Checked against EPN's repro3 series for HOFN (Höfn, Iceland), 2021–2026, every fifth day: the three steps the old search placed are gone, and the East velocity moves from 15.19 to 14.72 mm/yr against EPN's 14.22. Simulated 5 mm steps are still found every time. Fits take about 1 s longer on five years of data.
+
 ## 2.22.0
 
 ### New — RTCM3 encoding: any receiver as a reference station (`rtcm3`)
