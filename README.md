@@ -62,6 +62,7 @@ const itrf = transformFrame(
 // itrfToNkg() does the same for EUREF-FIN, EUREF89 (Norway, plus Kartverket's
 // shift grid) and ETRS89-DNK; TM35FIN, NTM, DKTM, MGA and MTM grids are built in.
 // Netherlands: itrfToRdnap() — RDNAPTRANS2018 to RD x/y and NAP heights.
+// Great Britain: itrfToOsgb() — OSTN15/OSGM15 to the National Grid and ODN.
 const sweref = itrfToSweref99(
   itrf,
   'ITRF2020',
