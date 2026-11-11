@@ -424,9 +424,10 @@ function msmSystem(type: number): string {
 }
 
 function satPrn(sys: string, satIdx1: number): string {
-  const prefix = sys === 'S' ? 'S' : sys;
-  const num = sys === 'S' ? satIdx1 + 119 : satIdx1; // SBAS PRNs start at 120
-  return `${prefix}${String(num).padStart(2, '0')}`;
+  // SBAS satellite 1 is PRN 120, named S20 as in RINEX (PRN − 100) like
+  // every other decoder here — "S120" broke 3-character PRN columns.
+  const num = sys === 'S' ? satIdx1 + 19 : satIdx1;
+  return `${sys}${String(num).padStart(2, '0')}`;
 }
 
 /** Options for the RTCM3 observation decoders. */

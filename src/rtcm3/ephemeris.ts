@@ -480,7 +480,7 @@ function decodeSbasEphemeris(payload: Uint8Array): EphemerisInfo | null {
   const prn = 120 + svId;
 
   return {
-    prn: `S${String(prn).padStart(3, '0')}`,
+    prn: `S${String(prn - 100).padStart(2, '0')}`, // RINEX naming (PRN − 100)
     constellation: 'SBAS',
     health: 0, // SBAS 1043 has no explicit health bit
     lastReceived: Date.now(),

@@ -336,7 +336,7 @@ describe('MSM encode → decode', () => {
       })
     );
     const prns = frames.map((f) => decodeMsmFull(f)!.observations[0]!.prn);
-    expect(prns).toEqual(['S123', 'J02']); // decoder's own SBAS naming
+    expect(prns).toEqual(['S23', 'J02']); // RINEX naming either way in
   });
 
   it('marks a signal with pseudorange but no phase as phase-invalid', () => {

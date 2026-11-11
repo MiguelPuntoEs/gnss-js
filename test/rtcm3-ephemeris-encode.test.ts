@@ -102,7 +102,7 @@ describe('ephemeris types not in the fixture', () => {
     // af0 LSB is 2^-31 s, af1 2^-40: keep them a few LSB wide.
     roundTrip(
       {
-        prn: 'S123',
+        prn: 'S23',
         constellation: 'SBAS',
         health: 0,
         lastReceived: 0,
