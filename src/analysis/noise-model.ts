@@ -89,6 +89,28 @@ export function fitWhiteFlicker(
   y: readonly number[],
   tYears: readonly number[]
 ): NoiseFit | null {
+  const r = whiteFlicker(A, y, tYears);
+  return r
+    ? {
+        flickerShare: r.flickerShare,
+        velocitySigma: r.sigma[1]!,
+        velocity: r.beta[1]!,
+      }
+    : null;
+}
+
+/**
+ * Least squares under white + flicker noise: every parameter of the design
+ * `A` with its 1σ. The flicker share is fitted by maximum likelihood, or
+ * held at `flickerShare` (cheaper: one evaluation instead of ~45). Null
+ * when the series is too short.
+ */
+export function whiteFlicker(
+  A: readonly (readonly number[])[],
+  y: readonly number[],
+  tYears: readonly number[],
+  flickerShare?: number
+): { flickerShare: number; beta: number[]; sigma: number[] } | null {
   let rows = A.map((_, i) => i);
   if (rows.length > MAX_SAMPLES) {
     const step = rows.length / MAX_SAMPLES;
@@ -150,10 +172,14 @@ export function fitWhiteFlicker(
     const logL = -0.5 * (n * Math.log(sigma2) + logdet + n);
     return {
       logL,
-      velocity: beta[1]!,
-      velocitySigma: Math.sqrt(sigma2 * Ninv[1]![1]!),
+      beta,
+      sigma: Ninv.map((row, j) => Math.sqrt(sigma2 * row[j]!)),
     };
   };
+  if (flickerShare != null) {
+    const r = evaluate(flickerShare);
+    return r ? { flickerShare, beta: r.beta, sigma: r.sigma } : null;
+  }
 
   // Grid search over the flicker share, then golden-section refinement.
   let best: {
@@ -183,11 +209,7 @@ export function fitWhiteFlicker(
       if (rb.logL > best.r.logL) best = { phi: b, r: rb };
     }
   }
-  return {
-    flickerShare: best.phi,
-    velocitySigma: best.r.velocitySigma,
-    velocity: best.r.velocity,
-  };
+  return { flickerShare: best.phi, beta: best.r.beta, sigma: best.r.sigma };
 }
 
 function invert(N: number[][]): number[][] | null {

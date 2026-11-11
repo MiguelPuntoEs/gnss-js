@@ -178,3 +178,53 @@ describe('fitCoordinateSeries known jumps', () => {
     expect(f!.e.steps[0]).toBeCloseTo(0.02, 3);
   });
 });
+
+describe('fitCoordinateSeries jump search under flicker noise', () => {
+  // Seeded Gaussian noise, and flicker noise by Kasdin's fractional
+  // integration (α = 1): what GNSS series carry. Under it a white-noise
+  // BIC finds two or three steps in every five-year series.
+  let seed = 11;
+  const uni = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const gauss = () =>
+    Math.sqrt(-2 * Math.log(uni() + 1e-12)) * Math.cos(2 * Math.PI * uni());
+  const flicker = (n: number): number[] => {
+    const h = [1];
+    for (let k = 1; k < n; k++) h.push((h[k - 1]! * (k - 0.5)) / k);
+    const w = Array.from({ length: n }, gauss);
+    return w.map((_, i) => {
+      let s = 0;
+      for (let k = 0; k <= i; k++) s += h[k]! * w[i - k]!;
+      return s;
+    });
+  };
+  /** Five years every 5 days: 1.5 mm white + flicker (2.5× in Up). */
+  const noisy = (step = 0): CoordinateSample[] => {
+    const n = 365;
+    const f = [flicker(n), flicker(n), flicker(n)];
+    return Array.from({ length: n }, (_, i) => {
+      const tMs = T0 + i * 5 * DAY;
+      const c = (k: number, s: number) =>
+        s * (0.0015 * gauss() + 0.0005 * f[k]![i]!);
+      return {
+        tMs,
+        ecef: enuToEcef(c(0, 1) + (i >= n / 2 ? step : 0), c(1, 1), c(2, 2.5)),
+        sigmaEnu: [0.001, 0.001, 0.003],
+      };
+    });
+  };
+
+  it('adds no steps to flicker noise', () => {
+    let found = 0;
+    for (let k = 0; k < 4; k++)
+      found += fitCoordinateSeries(noisy(), { seasonal: false })!.jumps.length;
+    expect(found).toBeLessThanOrEqual(1);
+  }, 60_000);
+
+  it('still finds a real 8 mm step in it', () => {
+    const f = fitCoordinateSeries(noisy(0.008), { seasonal: false })!;
+    const truth = T0 + 182.5 * 5 * DAY;
+    const k = f.jumps.findIndex((j) => Math.abs(j.tMs - truth) < 15 * DAY);
+    expect(k).toBeGreaterThanOrEqual(0);
+    expect(f.e.steps[k]!).toBeCloseTo(0.008, 2);
+  }, 60_000);
+});

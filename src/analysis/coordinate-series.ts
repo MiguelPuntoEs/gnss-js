@@ -22,7 +22,10 @@
  */
 import { normalQuantile } from './quantiles';
 import { ecefToGeodetic } from '../coordinates/ecef';
-import { fitWhiteFlicker } from './noise-model';
+import { fitWhiteFlicker, whiteFlicker } from './noise-model';
+
+/** χ² (3 components) a detected step needs under white + flicker noise. */
+const DEFAULT_JUMP_CHI2 = 20;
 
 /** One position solution (e.g. a daily PPP result). */
 export interface CoordinateSample {
@@ -47,6 +50,9 @@ export interface SeriesFitOptions {
   outlierK?: number;
   /** Reference epoch for the offset (ms). Default: middle of the span. */
   refEpochMs?: number;
+  /** A detected step must reach this χ² (3 components) under the white +
+   *  flicker noise model, when `noiseModel` is on. Default 20. */
+  jumpChi2?: number;
   /** Samples a detected jump needs on each side. Default 5. */
   minSamplesPerSide?: number;
   /** Fit white + flicker noise for realistic velocity sigmas. Default true. */
@@ -356,6 +362,29 @@ export function fitCoordinateSeries(
 
   // Greedy jump search: the step (all three components at once) that
   // lowers BIC = n·ln(RSS/n) + p·ln(n) the most, repeated.
+  const noiseModel = opts.noiseModel ?? true;
+  const jumpChi2 = opts.jumpChi2 ?? DEFAULT_JUMP_CHI2;
+  /** χ² of a candidate step (E, N, U) under white + flicker noise. */
+  const stepSignificant = (tj: number): boolean => {
+    const rowsOf = (d: Design) =>
+      t.flatMap((ti, i) => (used[i] ? [designRow(ti, d)] : []));
+    const tYears = t.flatMap((ti, i) => (used[i] ? [ti / MS_PER_YEAR] : []));
+    const trial: Design = {
+      ...design,
+      jumps: [...design.jumps, tj].sort((a, b) => a - b),
+    };
+    const col = 2 + trial.jumps.indexOf(tj);
+    let chi2 = 0;
+    for (let c = 0; c < 3; c++) {
+      const y = series[c]!.filter((_, i) => used[i]);
+      const base = whiteFlicker(rowsOf(design), y, tYears);
+      if (!base) return true; // too short to tell: trust BIC
+      const r = whiteFlicker(rowsOf(trial), y, tYears, base.flickerShare);
+      if (!r) return true;
+      chi2 += (r.beta[col]! / r.sigma[col]!) ** 2;
+    }
+    return chi2 > jumpChi2;
+  };
   if (opts.detectJumps ?? true) {
     const minSide = opts.minSamplesPerSide ?? 5;
     for (let added = 0; added < (opts.maxJumps ?? 3); added++) {
@@ -386,6 +415,11 @@ export function fitCoordinateSeries(
       }
       // Require a decisive improvement (ΔBIC > 10, "very strong").
       if (!best || bic0 - best.bic <= 10) break;
+      // BIC assumes white noise; GNSS series carry flicker noise, under
+      // which it finds steps that aren't there (2–3 per series in
+      // simulations). Keep the step only if it is significant under the
+      // white + flicker model too (flicker share fitted without it).
+      if (noiseModel && !stepSignificant(best.tMs)) break;
       design.jumps = [...design.jumps, best.tMs].sort((a, b) => a - b);
       detected.add(best.tMs);
       sol = robustPass();
