@@ -269,18 +269,6 @@ export interface PppArc {
 /*  Small dense linear algebra (state ~ 5 + #ambiguities)              */
 /* ================================================================== */
 
-function matVec(P: number[][], h: number[]): number[] {
-  const n = P.length;
-  const out = new Array<number>(n).fill(0);
-  for (let i = 0; i < n; i++) {
-    let s = 0;
-    const Pi = P[i]!;
-    for (let j = 0; j < n; j++) s += Pi[j]! * h[j]!;
-    out[i] = s;
-  }
-  return out;
-}
-
 /** Least-squares [Δx, Δy, Δz, Δclock] from time-differenced phase. */
 function tdLsq(
   qs: readonly { v: { e: [number, number, number] }; d: number }[]
@@ -330,6 +318,11 @@ const CODE_GATE_M = 15;
  * Sequential (scalar) EKF measurement update — process one measurement at
  * a time; avoids inverting the innovation matrix and stays numerically
  * stable with a freely-varying receiver clock and many ambiguities.
+ *
+ * `h` is sparse (position, clock, ZWD and one ambiguity of ~100 states), so
+ * P·hᵀ only reads the non-zero columns, and the rank-1 covariance update —
+ * exactly symmetric — is computed on one triangle and mirrored: ~5× fewer
+ * operations than the dense form, the bulk of a day's PPP.
  */
 function ekfUpdateScalar(
   x: number[],
@@ -341,31 +334,34 @@ function ekfUpdateScalar(
   rejectK = 0
 ): boolean {
   const n = x.length;
-  const Ph = matVec(P, h); // P·hᵀ  (n)
+  const nz: number[] = [];
+  for (let k = 0; k < n; k++) if (h[k] !== 0) nz.push(k);
+  // P·hᵀ over the non-zero entries of h.
+  const Ph = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const Pi = P[i]!;
+    let s = 0;
+    for (const k of nz) s += Pi[k]! * h[k]!;
+    Ph[i] = s;
+  }
   let hPh = 0;
-  for (let i = 0; i < n; i++) hPh += h[i]! * Ph[i]!;
+  for (const k of nz) hPh += h[k]! * Ph[k]!;
   const s = hPh + r;
   if (s <= 0) return false;
   if (rejectK > 0 && innovation * innovation > rejectK * rejectK * s) {
     return false; // outlier — skip
   }
-  // Kalman gain K = P·hᵀ / s
-  const K = Ph.map((v) => v / s);
-  // State update x += K·innovation
-  for (let i = 0; i < n; i++) x[i]! += K[i]! * innovation;
-  // Covariance Joseph-free form P = (I − K·h)·P, symmetrised.
-  // P_new = P − K·(hᵀP) = P − K·(Ph)ᵀ  (since P symmetric, hᵀP = (P·hᵀ)ᵀ = Ph)
+  // State update x += K·innovation, K = P·hᵀ / s.
+  for (let i = 0; i < n; i++) x[i]! += (Ph[i]! / s) * innovation;
+  // P −= (P·hᵀ)(P·hᵀ)ᵀ / s: symmetric, so one triangle, mirrored.
   for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      P[i]![j]! -= K[i]! * Ph[j]!;
-    }
-  }
-  // Force symmetry to curb round-off.
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const m = 0.5 * (P[i]![j]! + P[j]![i]!);
-      P[i]![j]! = m;
-      P[j]![i]! = m;
+    const ki = Ph[i]! / s;
+    if (ki === 0) continue;
+    const Pi = P[i]!;
+    for (let j = i; j < n; j++) {
+      const v = Pi[j]! - ki * Ph[j]!;
+      Pi[j] = v;
+      P[j]![i] = v;
     }
   }
   return true;
