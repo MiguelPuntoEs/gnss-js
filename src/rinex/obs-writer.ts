@@ -11,6 +11,7 @@
  */
 
 import type { RinexHeader } from './parser';
+import type { SatValues } from './epoch-sats';
 import { padL, padR, fmtF, hdrLine } from './format';
 import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
 
@@ -21,11 +22,13 @@ import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
 /**
  * Compact epoch — stores observation values in Float64Arrays
  * indexed by a per-system obs code registry (NaN = missing).
- * ~10-15x less memory than Map-of-Maps.
+ * ~10-15x less memory than Map-of-Maps; an {@link EpochSats} for `sats`
+ * halves it again on large files.
  */
 export interface CompactEpoch {
   time: number; // unix ms
-  sats: Map<string, Float64Array>; // PRN → values indexed by obsTypes order
+  /** PRN → values indexed by obsTypes order: a Map or an EpochSats. */
+  sats: SatValues;
   /** PRN → loss-of-lock indicator per value (0 = blank), same order. */
   lli?: Map<string, Uint8Array>;
 }
