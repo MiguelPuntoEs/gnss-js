@@ -100,6 +100,15 @@ describe('CycleSlipAccumulator', () => {
       const L1 = range / lam1 + 1_000_000 + 100; // +100 cycles slip
       const L2 = range / lam2 + 2_000_000;
       acc.onObservation(t, 'G01', codes, [C1, L1, C2, L2]);
+      // A slip persists: the next epoch keeps the +100 cycles (MW confirms
+      // a jump only when it stays).
+      const r2 = baseRange + rangeRate * (slipEpoch + 1) * 30;
+      acc.onObservation(t + 30_000, 'G01', codes, [
+        r2,
+        r2 / lam1 + 1_000_000 + 100,
+        r2,
+        r2 / lam2 + 2_000_000,
+      ]);
 
       const result = acc.finalize();
       // Should detect at least one slip event
@@ -131,6 +140,12 @@ describe('CycleSlipAccumulator', () => {
       acc.onObservation(t, 'G01', codes, [
         range,
         range / lam1 + 1_000_000 + 50,
+      ]);
+      // The slip persists into the next epoch (an outlier would flip back).
+      const r2 = baseRange + rangeRate * (slipEpoch + 1) * 30;
+      acc.onObservation(t + 30_000, 'G01', codes, [
+        r2,
+        r2 / lam1 + 1_000_000 + 50,
       ]);
 
       const result = acc.finalize();
@@ -201,10 +216,56 @@ describe('CycleSlipAccumulator', () => {
         range,
         range / lamS5 + 2_000_000 + 100,
       ]);
+      // …and stays there (a slip persists; MW confirms on the next epoch).
+      const r2 = baseRange + 5 * 13 * 30;
+      acc.onObservation(t + 30_000, 'S23', codes, [
+        r2,
+        r2 / lamS1 + 1_000_000,
+        r2,
+        r2 / lamS5 + 2_000_000 + 100,
+      ]);
 
       const result = acc.finalize();
       expect(result.events.length).toBeGreaterThanOrEqual(1);
       expect(result.satSlipCounts['S23']).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('MW persistence', () => {
+    const codes = ['C1C', 'L1C', 'C2W', 'L2W'];
+    const obs = (i: number, codeErr = 0, l1Slip = 0) => {
+      const range = 20_000_000 + 800 * i * 30;
+      return [
+        range + codeErr,
+        range / lam1 + 1_000_000 + l1Slip,
+        range + codeErr,
+        range / lam2 + 2_000_000,
+      ];
+    };
+
+    it('rejects a one-epoch code outlier (MW returns to its level)', () => {
+      const acc = new CycleSlipAccumulator(makeHeader({ G: codes }));
+      for (let i = 0; i < 10; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i));
+      // 5 m code spike on both bands → ~5.8 WL cycles of MW, for one epoch.
+      acc.onObservation(10 * 30_000, 'G01', codes, obs(10, 5));
+      for (let i = 11; i < 15; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i));
+      const r = acc.finalize();
+      expect(r.events).toHaveLength(0);
+      expect(r.slipEpochs).toBe(0);
+    });
+
+    it('confirms a persistent jump as a slip at the jump epoch', () => {
+      const acc = new CycleSlipAccumulator(makeHeader({ G: codes }));
+      for (let i = 0; i < 10; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i));
+      for (let i = 10; i < 15; i++)
+        acc.onObservation(i * 30_000, 'G01', codes, obs(i, 0, 3));
+      const r = acc.finalize();
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0]!.time).toBe(10 * 30_000);
+      expect(r.slipEpochs).toBe(1);
     });
   });
 
@@ -250,6 +311,12 @@ describe('CycleSlipAccumulator', () => {
         range,
         range / lam1 + 1_000_000 + 50,
       ]);
+      // …and persists, so the next epoch confirms it.
+      const r2 = baseRange + rangeRate * 6 * 30;
+      acc.onObservation(t + 30_000, 'G01', codes, [
+        r2,
+        r2 / lam1 + 1_000_000 + 50,
+      ]);
 
       acc.finalize();
       expect(slipCalls.length).toBeGreaterThanOrEqual(1);
@@ -277,6 +344,11 @@ describe('CycleSlipAccumulator', () => {
       acc.onObservation(20 * 30_000, 'G01', codes, [
         range,
         range / lam1 + 1e6 + 100,
+      ]);
+      const r21 = baseRange + 800 * 21 * 30;
+      acc.onObservation(21 * 30_000, 'G01', codes, [
+        r21,
+        r21 / lam1 + 1e6 + 100,
       ]);
 
       const result = acc.finalize();

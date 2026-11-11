@@ -4,8 +4,13 @@
  * Detection hierarchy (per frequency pair):
  *  1. Melbourne-Wübbena (MW): uses both code (C) and phase (L) on two bands.
  *     MW = φ_WL − P_NL / λ_WL  (wide-lane ambiguity, cycles)
- *     Smoothed with running mean — a deviation > threshold flags a slip.
- *     Skipped for GLONASS (FDMA: per-satellite frequencies unknown).
+ *     Smoothed with running mean — a deviation > threshold makes a candidate,
+ *     confirmed only if the next epoch stays at the new level (a slip
+ *     persists; a one-epoch code outlier returns). Without this, noise spikes
+ *     of 0.5–1 WL cycle were most of the "slips" on clean IGS stations —
+ *     ~5× Anubis's counts (2026-11-11 comparison, 7 IGS/EUREF stations).
+ *     GLONASS FDMA frequencies come from the header's GLONASS SLOT / FRQ #
+ *     channel map; without it, GLONASS isn't tested.
  *  2. Geometry-Free (GF): L1·λ1 − L2·λ2 (requires only phase on two bands).
  *     Removes geometry but retains ionospheric signature.
  *  3. Single-frequency phase-code (SF): |Δφ_m − ΔP| between consecutive epochs.
@@ -64,6 +69,14 @@ export interface CycleSlipSignalStats {
 export interface CycleSlipResult {
   events: CycleSlipEvent[];
   signalStats: CycleSlipSignalStats[];
+  /**
+   * Distinct satellite-epochs with at least one slip. One L1 slip trips both
+   * "MW L1-L2" and "MW L1-L5" — two events, one slip here. The headline
+   * count (teqc's "slps" sense); per-signal stats double-count by design.
+   */
+  slipEpochs: number;
+  /** Distinct satellite-epochs any detector tested. */
+  testedEpochs: number;
   /** Per-satellite slip counts. Key = PRN, value = total slips. */
   satSlipCounts: Record<string, number>;
 }
@@ -90,6 +103,19 @@ interface MwSmooth {
   n: number;
 }
 
+interface MwPending {
+  mw: number;
+  time: number;
+  deviation: number;
+}
+
+interface SfPending {
+  time: number;
+  magnitude: number;
+  /** Phase − code (m) at the last epoch before the jump. */
+  ref: number;
+}
+
 function mwSmoothInit(value: number): MwSmooth {
   return { mean: value, m2: 0, n: 1 };
 }
@@ -114,6 +140,10 @@ interface PrevState {
   time: number;
   /** Smoothed MW per pair key "b1-b2" */
   mwSmooth: Map<string, MwSmooth>;
+  /** Unconfirmed MW jump per pair key, awaiting the next epoch. */
+  mwPending: Map<string, MwPending>;
+  /** Unconfirmed single-frequency jump per band, awaiting the next epoch. */
+  sfPending: Map<string, SfPending>;
   /** GF values per pair key "b1-b2" (in metres) */
   gf: Map<string, number>;
   /** Phase values (metres) per band */
@@ -135,6 +165,11 @@ export class CycleSlipAccumulator {
   private signalEpochs = new Map<string, number>();
   private signalSlips = new Map<string, number>();
   private signalSats = new Map<string, Set<string>>();
+  private slipEpochs = 0;
+  private testedEpochs = 0;
+  /** Per-call flags folded into slipEpochs / testedEpochs. */
+  private tested = false;
+  private slipped = false;
 
   constructor(header: RinexHeader, onSlip?: OnSlipDetected) {
     this.interval = header.interval ?? 30;
@@ -152,6 +187,7 @@ export class CycleSlipAccumulator {
     bands: Set<string>
   ) {
     this.events.push({ time, prn, signal, magnitude });
+    this.slipped = true;
     this.signalSlips.set(sigKey, (this.signalSlips.get(sigKey) ?? 0) + 1);
     if (!this.signalSats.has(sigKey)) this.signalSats.set(sigKey, new Set());
     this.signalSats.get(sigKey)!.add(prn);
@@ -159,6 +195,7 @@ export class CycleSlipAccumulator {
   }
 
   private countEpoch(sigKey: string) {
+    this.tested = true;
     this.signalEpochs.set(sigKey, (this.signalEpochs.get(sigKey) ?? 0) + 1);
   }
 
@@ -193,6 +230,8 @@ export class CycleSlipAccumulator {
       }
     }
     if (phaseM.size === 0) return;
+    this.tested = false;
+    this.slipped = false;
 
     const prev = this.prev.get(prn);
     const gap = prev ? (time - prev.time) / 1000 : 0;
@@ -200,6 +239,8 @@ export class CycleSlipAccumulator {
 
     // Carry forward or initialise MW smoothers
     const mwSmooth = new Map<string, MwSmooth>();
+    const mwPending = new Map<string, MwPending>();
+    const sfPending = new Map<string, SfPending>();
     const gfMap = new Map<string, number>();
     const pairs = DUAL_FREQ_PAIRS[sys] ?? [];
 
@@ -248,18 +289,34 @@ export class CycleSlipAccumulator {
             MW_SIGMA_FACTOR * stddev
           );
           const deviation = Math.abs(mw - prevSmooth.mean);
+          const pending = prev?.mwPending.get(pairKey);
 
-          if (deviation > threshold) {
-            this.recordSlip(
-              sigKey,
-              time,
-              prn,
-              signal,
-              deviation,
-              new Set([b1, b2])
-            );
-            // Reset smoother after slip
-            mwSmooth.set(pairKey, mwSmoothInit(mw));
+          if (pending) {
+            if (deviation <= threshold) {
+              // Back at the old level: the candidate was an outlier.
+              mwSmooth.set(pairKey, mwSmoothUpdate(prevSmooth, mw));
+            } else {
+              // Still off the old level: the jump persisted — a slip at the
+              // candidate's epoch. Restart the smoother on the new level.
+              this.recordSlip(
+                sigKey,
+                pending.time,
+                prn,
+                signal,
+                pending.deviation,
+                new Set([b1, b2])
+              );
+              mwSmooth.set(
+                pairKey,
+                Math.abs(mw - pending.mw) <= threshold
+                  ? mwSmoothUpdate(mwSmoothInit(pending.mw), mw)
+                  : mwSmoothInit(mw)
+              );
+            }
+          } else if (deviation > threshold) {
+            // Candidate: hold the smoother until the next epoch decides.
+            mwSmooth.set(pairKey, prevSmooth);
+            mwPending.set(pairKey, { mw, time, deviation });
           } else {
             mwSmooth.set(pairKey, mwSmoothUpdate(prevSmooth, mw));
           }
@@ -311,6 +368,9 @@ export class CycleSlipAccumulator {
       // false-slip storm (~900/1000) on a satellite that isn't slipping. RTKLIB
       // and teqc likewise don't cycle-slip-QC SBAS L1. Dual-frequency MW/GF on
       // SBAS (L1-L5) is unaffected and still runs above.
+      // Like MW, a jump is only a candidate until the next epoch: a slip
+      // shifts phase − code for good, a code outlier flips back. Unconfirmed,
+      // low-elevation GLONASS C/A noise was most SF "slips" on clean sites.
       if (sys !== 'S') {
         for (const [band, lm] of phaseM) {
           if (dualChecked.has(band)) continue;
@@ -319,22 +379,39 @@ export class CycleSlipAccumulator {
           const cm = codeM.get(band);
           const prevCm = prev.code.get(band);
           if (cm === undefined || prevCm === undefined) continue;
-          const dPhase = lm - prevLm;
-          const dCode = cm - prevCm;
-          const jumpM = Math.abs(dPhase - dCode);
+          const d = lm - cm;
           const lbl = BAND_LABELS[sys]?.[band] ?? band;
           const sigKey = `${sys}:${lbl}`;
           this.countEpoch(sigKey);
-          if (jumpM > SF_THRESHOLD_M) {
-            this.recordSlip(sigKey, time, prn, lbl, jumpM, new Set([band]));
+          const pending = prev.sfPending.get(band);
+          if (pending) {
+            if (Math.abs(d - pending.ref) > SF_THRESHOLD_M)
+              this.recordSlip(
+                sigKey,
+                pending.time,
+                prn,
+                lbl,
+                pending.magnitude,
+                new Set([band])
+              );
+            continue;
           }
+          const ref = prevLm - prevCm;
+          const jumpM = Math.abs(d - ref);
+          if (jumpM > SF_THRESHOLD_M)
+            sfPending.set(band, { time, magnitude: jumpM, ref });
         }
       }
     }
 
+    if (this.tested) this.testedEpochs++;
+    if (this.slipped) this.slipEpochs++;
+
     this.prev.set(prn, {
       time,
       mwSmooth,
+      mwPending,
+      sfPending,
       gf: gfMap,
       phase: phaseM,
       code: codeM,
@@ -376,6 +453,12 @@ export class CycleSlipAccumulator {
       return a.label.localeCompare(b.label);
     });
 
-    return { events: this.events, signalStats, satSlipCounts };
+    return {
+      events: this.events,
+      signalStats,
+      satSlipCounts,
+      slipEpochs: this.slipEpochs,
+      testedEpochs: this.testedEpochs,
+    };
   }
 }
