@@ -11,7 +11,7 @@ import type {
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
-import { OMEGA_E, C_LIGHT } from '../constants/gnss';
+import { OMEGA_E, OMEGA_E_BDS, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 import { invertMatrix } from './matrix';
 import { nearestValidEphemeris } from './validity';
@@ -97,6 +97,7 @@ let geoVelocityPass = false;
  */
 export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
   const GM = gmForSystem(eph.system);
+  const wE = eph.system === 'C' ? OMEGA_E_BDS : OMEGA_E;
   const a = eph.sqrtA * eph.sqrtA;
   const n0 = Math.sqrt(GM / (a * a * a));
   const n = n0 + eph.deltaN;
@@ -160,7 +161,7 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
 
   if (isBdsGeo) {
     // GEO node: no Earth rotation subtracted from omegaDot
-    const omegak = eph.omega0 + eph.omegaDot * tk - OMEGA_E * eph.toe;
+    const omegak = eph.omega0 + eph.omegaDot * tk - wE * eph.toe;
     const cosO = Math.cos(omegak);
     const sinO = Math.sin(omegak);
     const cosI = Math.cos(ik);
@@ -172,7 +173,7 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
     const zg = yp * sinI;
 
     // Apply Rz(OMEGA_E * tk) * Rx(-5°)
-    const phi = OMEGA_E * tk;
+    const phi = wE * tk;
     const cosPhi = Math.cos(phi);
     const sinPhi = Math.sin(phi);
     const COS5 = Math.cos((-5 * Math.PI) / 180);
@@ -205,8 +206,8 @@ export function keplerPosition(eph: KeplerEphemeris, t: number): SatPosition {
   }
 
   // Standard MEO/IGSO: Earth rotation folded into the node
-  const omegak = eph.omega0 + (eph.omegaDot - OMEGA_E) * tk - OMEGA_E * eph.toe;
-  const omegakDot = eph.omegaDot - OMEGA_E;
+  const omegak = eph.omega0 + (eph.omegaDot - wE) * tk - wE * eph.toe;
+  const omegakDot = eph.omegaDot - wE;
 
   const cosO = Math.cos(omegak);
   const sinO = Math.sin(omegak);

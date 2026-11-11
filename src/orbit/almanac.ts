@@ -18,7 +18,7 @@
  * the BDS-GEO doubly-rotated frame per the BDS ICD.
  */
 
-import { OMEGA_E } from '../constants/gnss';
+import { OMEGA_E, OMEGA_E_BDS } from '../constants/gnss';
 import type { SbfKeplerAlmanac } from '../sbf/nav';
 
 const GM_GPS = 3.986005e14;
@@ -95,13 +95,14 @@ export function almanacSatPosition(
   const yp = rk * Math.sin(uk);
 
   const clockBias = alm.af0 + alm.af1 * tk;
+  const wE = alm.system === 'C' ? OMEGA_E_BDS : OMEGA_E;
 
   const isGeo =
     alm.system === 'C' && BDS_GEO_PRNS.has(Number(alm.prn.slice(1)));
 
   if (isGeo) {
     // BDS GEO: node without Earth rotation, then Rz(ΩE·tk)·Rx(−5°).
-    const omegak = alm.omega0 + alm.omegaDot * tk - OMEGA_E * alm.toaSec;
+    const omegak = alm.omega0 + alm.omegaDot * tk - wE * alm.toaSec;
     const cosO = Math.cos(omegak);
     const sinO = Math.sin(omegak);
     const cosI = Math.cos(ik);
@@ -109,7 +110,7 @@ export function almanacSatPosition(
     const xg = xp * cosO - yp * cosI * sinO;
     const yg = xp * sinO + yp * cosI * cosO;
     const zg = yp * sinI;
-    const phi = OMEGA_E * tk;
+    const phi = wE * tk;
     const cosPhi = Math.cos(phi);
     const sinPhi = Math.sin(phi);
     const COS5 = Math.cos((-5 * Math.PI) / 180);
@@ -126,8 +127,7 @@ export function almanacSatPosition(
   // MEO/IGSO: Earth rotation folded into the node. The reference-time
   // term uses the system-scale seconds of week (BDT sow for BeiDou),
   // matching the ephemeris path's convention.
-  const omegak =
-    alm.omega0 + (alm.omegaDot - OMEGA_E) * tk - OMEGA_E * alm.toaSec;
+  const omegak = alm.omega0 + (alm.omegaDot - wE) * tk - wE * alm.toaSec;
   const cosO = Math.cos(omegak);
   const sinO = Math.sin(omegak);
   const cosI = Math.cos(ik);

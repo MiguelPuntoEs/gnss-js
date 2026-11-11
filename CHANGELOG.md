@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — BeiDou orbits used the wrong Earth rotation rate
+
+- `computeSatPosition()`, `keplerPosition()` and the almanac path now use the CGCS2000 Earth rotation rate for BeiDou (`OMEGA_E_BDS`, 7.2921150e-5 rad/s, BDS-SIS-ICD; RTKLIB's `OMGE_CMP`). They used WGS84's 7.2921151467e-5. The 1.467e-12 rad/s difference enters through the Ωe·toe term, so the error was a rotation about the Earth's axis that grew through the BDT week: under a metre on Sunday, 15–35 m along- and cross-track by Saturday. GPS, Galileo, QZSS and NavIC keep the WGS84 value.
+- Found by comparing a month of broadcast BeiDou orbits against ESA's final orbits. With the fix, BeiDou matches them to 1–2 m on every day of the week. Pinned in `test/orbit-bds-rotation.test.ts`: C30 was 14 m off and C08 33 m off on Saturday 2026-09-19.
+
 ## 2.33.0
 
 ### Added — national frames and grids for Finland, Norway, Denmark, Australia and Canada
