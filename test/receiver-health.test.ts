@@ -112,7 +112,7 @@ describe.skipIf(!existsSync(FIX))(
         'GLO L2',
         'B3',
         'L5/E5a/B2a',
-        'E5b/B2I',
+        'E5b/B2b',
         'GPS L1/E1',
         'GLO L1',
         'B1',
@@ -149,6 +149,7 @@ describe('parseSbfHealth — RFStatus (4092)', () => {
     v.setUint32(12, 1575420000, true);
     v.setUint16(16, 2000, true); // kHz
     body[18] = 0x02; // mitigated, antenna 0
+    v.setInt8(19, -95); // estimated power (dBm)
     v.setUint32(20, 1227600000, true);
     v.setUint16(24, 500, true);
     body[26] = 0x08 | (1 << 6); // detected, antenna 1
@@ -162,7 +163,7 @@ describe('parseSbfHealth — RFStatus (4092)', () => {
         antenna: 0,
         centerMHz: 1575.42,
         bandwidthMHz: 2,
-        powerDbm: null,
+        powerDbm: -95,
         state: 'mitigated',
         method: null,
       },
@@ -179,6 +180,33 @@ describe('parseSbfHealth — RFStatus (4092)', () => {
     expect(r.flags!.map((f) => f.code)).toEqual([
       'interference',
       'spoofing-osnma',
+    ]);
+  });
+});
+
+describe('parseSbfHealth — ReceiverStatus fault flags', () => {
+  it('flags a front end whose PLL is not locked (Gain = −128)', () => {
+    const body = new Uint8Array(24 + 2 * 4);
+    const v = new DataView(body.buffer);
+    v.setUint32(0, 1000, true);
+    v.setUint16(4, 2430, true);
+    body[6] = 12; // CPULoad
+    body[20] = 2; // N
+    body[21] = 4; // SBLength
+    body[23] = 140; // Temperature → 40 °C
+    body[24] = 0; // GPS L1/E1
+    v.setInt8(25, 30);
+    body[28] = 5; // L5/E5a/B2a
+    v.setInt8(29, -128); // PLL not locked
+    const r = parseSbfHealth(sbfFrame(4014, 1, body)).records[0]!;
+    expect(r.temperatureC).toBe(40);
+    expect(r.bands!.map((b) => b.agcGainDb)).toEqual([30, null]);
+    expect(r.flags).toEqual([
+      {
+        level: 'error',
+        code: 'frontend-pll',
+        text: 'RF front-end PLL not locked: L5/E5a/B2a',
+      },
     ]);
   });
 });

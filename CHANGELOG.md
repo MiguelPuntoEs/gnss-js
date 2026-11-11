@@ -6,11 +6,11 @@
 
 What the receiver reports about itself: CPU load, temperature, uptime, antenna feed (OK / open / short / unpowered, plus voltage and current where measured), AGC and noise per RF front end, jamming state, detected interferers, and spoofing flags. `parseSbfHealth`, `parseUbxHealth` and `parseNovatelHealth` return one partial record per message. `summarizeReceiverHealth` folds them into the latest picture with an overall `ok` / `warning` / `error` level.
 
-- **Septentrio:** ReceiverStatus (4014) and RFStatus (4092). Validated on TU Delft's PolaRx5 TUDB: 32–49 % CPU, 52 °C, eight front ends with 20–27 dB AGC gain, and a latched software-error bit.
+- **Septentrio:** ReceiverStatus (4014) and RFStatus (4092), per the SBF Reference Guide, including each interferer's estimated power and a flag for a front end whose PLL is not locked. Validated on TU Delft's PolaRx5 TUDB: 32–49 % CPU, 52 °C, eight front ends with 20–27 dB AGC gain, and a latched software-error bit.
 - **u-blox:** MON-HW, MON-RF and MON-SYS. MON-RF replaces MON-HW's single L1 row when both are logged.
 - **NovAtel:** HWMONITOR, RXSTATUS and ITDETECTSTATUS (centre, bandwidth and power of each interferer, per antenna).
 
-Only conditions the receiver itself flags become warnings or errors; there are no invented thresholds. No public u-blox or NovAtel capture carries these messages, so those two decoders are tested on frames built from the manuals (the NovAtel ones from the OEM7 manual's own examples).
+Only conditions the receiver itself flags become warnings or errors; there are no invented thresholds. No public u-blox or NovAtel capture carries these messages, so those two decoders are tested on frames built from the manuals: MON-HW from the u-blox M8 spec, MON-RF and MON-SYS (F9 only) from pyubx2, NovAtel from the OEM7 manual's own examples.
 
 ## 2.24.0
 

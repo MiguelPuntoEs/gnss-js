@@ -4,9 +4,9 @@
  * — the same per RF block (L1, L2/L5) on F9 and later; UBX-MON-SYS
  * (0x0A 0x39) — CPU load, uptime and temperature.
  *
- * Layouts per the u-blox F9 interface description, cross-checked against
- * pyubx2. No public capture carries these messages yet, so the decoder is
- * tested on byte-built frames only.
+ * MON-HW per the u-blox 8/M8 protocol spec (UBX-13003221 §31.17.3); MON-RF
+ * and MON-SYS (F9 and later, not in that spec) per pyubx2. No public capture
+ * carries these messages yet, so the decoder is tested on byte-built frames.
  */
 import { ubxFrames } from './frame';
 import type {
@@ -65,7 +65,7 @@ function jammingFlags(b: RfBandHealth): HealthFlag[] {
       {
         level: 'error',
         code: 'jamming',
-        text: `Jamming critical on ${b.band}`,
+        text: `Jamming critical on ${b.band}: interference visible and no fix`,
       },
     ];
   if (b.jamming === 'warning')
@@ -73,7 +73,7 @@ function jammingFlags(b: RfBandHealth): HealthFlag[] {
       {
         level: 'warning',
         code: 'jamming',
-        text: `Jamming warning on ${b.band}`,
+        text: `Jamming warning on ${b.band}: interference visible, fix OK`,
       },
     ];
   return [];

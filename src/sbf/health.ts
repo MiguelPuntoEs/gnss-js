@@ -4,10 +4,9 @@
  * gain / pulse-blanking table — and RFStatus (4092) — the AIM+ interference
  * report (detected / mitigated bands) and spoofing flags.
  *
- * Layout per the SBF Reference Guide, cross-checked against pysbf2 and
- * Septentrio's own ROS driver (RFStatus Info bit 1 = mitigated, bit 3 =
- * present; Flags bit 0 = authenticity test, bit 1 = OSNMA). Validated on a
- * real PolaRx5 (TU Delft TUDB) ReceiverStatus stream.
+ * Layout per the SBF Reference Guide (AsteRx-m3 Pro+ firmware 4.15.1,
+ * §4: ReceiverStatus p. 418, RFStatus p. 435). Validated on a real PolaRx5
+ * (TU Delft TUDB) ReceiverStatus stream.
  */
 import { scanSbfFrames } from './frame';
 import type {
@@ -27,15 +26,15 @@ const FRONTEND: Record<number, string> = {
   3: 'GPS L2',
   4: 'GLO L2',
   5: 'L5/E5a/B2a',
-  6: 'E5b/B2I',
-  7: 'E5(a+b)',
+  6: 'E5b/B2b',
+  7: 'E5',
   8: 'L1 (GPS/GLO/SBAS/GAL)',
   9: 'L2 (GPS/GLO)',
   10: 'L-band (MSS)',
   11: 'B1',
   12: 'B3',
   13: 'S-band',
-  14: 'B3/E6',
+  14: 'B3/E6 (combined)',
 };
 
 /** RxError bits → flag (Septentrio names). */
@@ -158,14 +157,18 @@ export function parseSbfHealth(data: Uint8Array): SbfHealthResult {
       const tempRaw = rev >= 1 ? view.getUint8(b + 31) : 0;
 
       const bands: RfBandHealth[] = [];
+      // Gain = −128 is the guide's do-not-use for "front-end PLL not locked".
+      const unlocked: string[] = [];
       if (sbLen >= 4) {
         for (let k = 0; k < n && b + 32 + (k + 1) * sbLen <= b + len; k++) {
           const o = b + 32 + k * sbLen;
           const fe = view.getUint8(o);
           const gain = view.getInt8(o + 1);
           const blank = view.getUint8(o + 3);
+          const band = FRONTEND[fe & 0x1f] ?? `frontend ${fe & 0x1f}`;
+          if (gain === -128) unlocked.push(band);
           bands.push({
-            band: FRONTEND[fe & 0x1f] ?? `frontend ${fe & 0x1f}`,
+            band,
             antenna: fe >> 5,
             agcGainDb: gain === -128 ? null : gain,
             agcPct: null,
@@ -180,6 +183,12 @@ export function parseSbfHealth(data: Uint8Array): SbfHealthResult {
       const flags: HealthFlag[] = [];
       for (const [bit, f] of RX_ERROR) if (rxError & (1 << bit)) flags.push(f);
       for (const [bit, f] of EXT_ERROR) if (ext & (1 << bit)) flags.push(f);
+      if (unlocked.length)
+        flags.push({
+          level: 'error',
+          code: 'frontend-pll',
+          text: `RF front-end PLL not locked: ${unlocked.join(', ')}`,
+        });
 
       const short = (rxError & (1 << 5)) !== 0;
       const active = (rxState & (1 << 1)) !== 0;
@@ -193,7 +202,8 @@ export function parseSbfHealth(data: Uint8Array): SbfHealthResult {
           {
             antenna: 0,
             // ACTIVEANTENNA = an active antenna draws current; unset can be
-            // a passive antenna, so it is not reported as 'open'.
+            // a passive antenna, so it is not reported as 'open'. With two
+            // antennas the bit alternates main/aux every 10 s (SBF guide).
             state: short ? 'short' : active ? 'ok' : 'unknown',
             voltageV: null,
             currentMa: null,
@@ -211,19 +221,22 @@ export function parseSbfHealth(data: Uint8Array): SbfHealthResult {
     const sbLen = view.getUint8(b + 15);
     const flagsByte = view.getUint8(b + 16);
     const interference: InterferenceReport[] = [];
-    if (sbLen >= 7) {
+    if (sbLen >= 8) {
       for (let k = 0; k < n && b + 20 + (k + 1) * sbLen <= b + len; k++) {
         const o = b + 20 + k * sbLen;
         const freqHz = view.getUint32(o, true);
         const bwKHz = view.getUint16(o + 4, true);
         const info = view.getUint8(o + 6);
+        const power = view.getInt8(o + 7); // dBm, 0 = not estimated
+        // Mode (bits 0–3) is an enum: 1 manual notch, 2 detected and
+        // cancelled, 8 detected, not mitigated.
         const mode = info & 0x0f;
         const state =
-          mode & 0x08
+          mode === 8
             ? 'detected'
-            : mode & 0x02
+            : mode === 2
               ? 'mitigated'
-              : mode & 0x01
+              : mode === 1
                 ? 'suppressed'
                 : null;
         if (!state) continue;
@@ -232,7 +245,7 @@ export function parseSbfHealth(data: Uint8Array): SbfHealthResult {
           antenna: info >> 6,
           centerMHz: freqHz / 1e6,
           bandwidthMHz: bwKHz / 1000,
-          powerDbm: null,
+          powerDbm: power === 0 ? null : power,
           state,
           method: null,
         });
