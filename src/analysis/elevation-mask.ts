@@ -157,6 +157,29 @@ export interface TrackingSystemStats {
   dualPercent: number;
 }
 
+/**
+ * teqc-style tracking timeline: per satellite and time bin, how many grid
+ * samples the orbits put above the mask, how many of those were tracked, and
+ * how many were tracked below the mask. "Expected but not tracked" is the
+ * teqc `-` symbol: it shows *when* tracking failed (obstruction,
+ * interference, an outage), which a single percentage can't.
+ */
+export interface TrackingTimeline {
+  /** First bin start (GPS-scale ms) and bin length (s). */
+  start: number;
+  binSec: number;
+  bins: number;
+  rows: {
+    prn: string;
+    /** Per bin: samples above the mask (healthy, valid ephemeris). */
+    expected: number[];
+    /** Per bin: of those, tracked on carrier phase. */
+    tracked: number[];
+    /** Per bin: tracked while below the mask (or with no ephemeris). */
+    other: number[];
+  }[];
+}
+
 export interface TrackingResult {
   maskDeg: number;
   /** Grid step the expected count was sampled on (s). */
@@ -167,7 +190,15 @@ export interface TrackingResult {
   percent: number;
   dualPercent: number;
   perSystem: TrackingSystemStats[];
+  timeline: TrackingTimeline;
+  /** Satellites above the mask at some point that were never tracked. */
+  neverTracked: string[];
+  /** Satellites the receiver tracked without any valid ephemeris. */
+  withoutNav: string[];
 }
+
+/** At most this many timeline bins, whatever the file length. */
+const MAX_BINS = 96;
 
 /**
  * Compares the satellite-epochs the orbits put above the mask with the ones
@@ -186,6 +217,7 @@ export class TrackingAccumulator {
   private last = -Infinity;
   /** grid index → prn → number of distinct phase bands. */
   private seen = new Map<number, Map<string, number>>();
+  private observed = new Set<string>();
 
   constructor(
     model: ElevationModel,
@@ -206,6 +238,7 @@ export class TrackingAccumulator {
     if (this.first === null) this.first = time;
     if (time > this.last) this.last = time;
     this.systems.add(prn[0]!);
+    this.observed.add(prn);
     const off = time - this.first;
     const k = Math.round(off / this.stepMs);
     if (Math.abs(off - k * this.stepMs) > 1) return; // off-grid epoch
@@ -228,19 +261,46 @@ export class TrackingAccumulator {
       { expected: number; tracked: number; dual: number }
     >();
     const prns = this.model.prns.filter((p) => this.systems.has(p[0]!));
+    const withoutNav = [...this.observed]
+      .filter((p) => !this.model.prns.includes(p))
+      .sort();
     const n = Math.round((this.last - this.first) / this.stepMs);
+    const binSteps = Math.max(1, Math.ceil((n + 1) / MAX_BINS));
+    const nBins = Math.ceil((n + 1) / binSteps);
+    const rows = new Map<string, TrackingTimeline['rows'][number]>();
+    const rowFor = (prn: string) => {
+      let r = rows.get(prn);
+      if (!r)
+        rows.set(
+          prn,
+          (r = {
+            prn,
+            expected: new Array<number>(nBins).fill(0),
+            tracked: new Array<number>(nBins).fill(0),
+            other: new Array<number>(nBins).fill(0),
+          })
+        );
+      return r;
+    };
     for (let k = 0; k <= n; k++) {
       const t = this.first + k * this.stepMs;
       const row = this.seen.get(k);
+      const b = Math.floor(k / binSteps);
+      for (const prn of withoutNav) if (row?.has(prn)) rowFor(prn).other[b]!++;
       for (const prn of prns) {
         const el = this.model.elevationDeg(prn, t);
-        if (el === null || el < this.maskDeg) continue;
-        if (!this.model.isHealthy(prn, t)) continue;
+        const nb = row?.get(prn) ?? 0;
+        if (el === null || el < this.maskDeg || !this.model.isHealthy(prn, t)) {
+          if (nb >= 1) rowFor(prn).other[b]!++;
+          continue;
+        }
+        const r = rowFor(prn);
+        r.expected[b]!++;
+        if (nb >= 1) r.tracked[b]!++;
         const sys = prn[0]!;
         let a = agg.get(sys);
         if (!a) agg.set(sys, (a = { expected: 0, tracked: 0, dual: 0 }));
         a.expected++;
-        const nb = row?.get(prn) ?? 0;
         if (nb >= 1) a.tracked++;
         if (nb >= 2) a.dual++;
       }
@@ -272,6 +332,24 @@ export class TrackingAccumulator {
       percent: pct(tracked, expected),
       dualPercent: pct(dualFreq, expected),
       perSystem,
+      timeline: {
+        start: this.first,
+        binSec: (binSteps * this.stepMs) / 1000,
+        bins: nBins,
+        rows: [...rows.values()].sort(
+          (a, b) =>
+            rank(a.prn[0]!) - rank(b.prn[0]!) || a.prn.localeCompare(b.prn)
+        ),
+      },
+      neverTracked: [...rows.values()]
+        .filter(
+          (r) =>
+            r.expected.some((x) => x > 0) &&
+            r.tracked.every((x) => x === 0) &&
+            r.other.every((x) => x === 0)
+        )
+        .map((r) => r.prn),
+      withoutNav,
     };
   }
 }

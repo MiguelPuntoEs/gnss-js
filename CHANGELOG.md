@@ -9,6 +9,15 @@
 - `TrackingAccumulator` / `QualityResult.tracking` compare the satellite-epochs the orbits put above the mask (healthy, valid ephemeris) with those tracked on carrier phase, per system and dual-frequency. Only systems the receiver recorded are expected. This is the teqc/Anubis "% of expected observations above the mask" metric.
 - `QualityResult` gains `maskDeg`, `belowMask` and `tracking`.
 
+### New — clock jumps, continuity, tracking timeline, signal profile (`analysis`)
+
+The teqc/Anubis checks /qc lacked. All come out of `QualityAccumulator`, which now buffers one epoch at a time (parsers deliver epoch by epoch):
+
+- **`clockJumps`.** Receiver clock resets (teqc "Rx clock offsets", Anubis `nJmp`): code minus phase stepping by the same amount on ≥ 70 % of satellites in one epoch, reported in ms. Whole-millisecond resets are removed from the pseudoranges before the other checks run. Otherwise a 1 ms reset (≈ 300 km) reads as a cycle slip on every satellite. A 1 ms reset injected into a real day is found, and slips and multipath come out identical.
+- **`continuity`.** Expected vs present epochs, gaps > 600 s and short pieces < 1800 s (Anubis defaults), repeated epochs, duplicated satellites, usable epochs (≥ 4 satellites with dual-frequency code and phase), and the most satellites seen in one epoch.
+- **`tracking.timeline`.** Per satellite and time bin (≤ 96 bins), the samples expected above the mask, those tracked, and those tracked below the mask or without nav: teqc's ASCII time plot as data. Also `neverTracked` and `withoutNav`.
+- **`signals`.** Observations per signal above 0/5/10/15/20/30/50/70° (Anubis "Ele>N"), and C/N0 mean ± sd per signal above the mask (teqc "Mean S1 S2").
+
 ### New — ionospheric activity (`analysis`)
 
 `IonoResult.activity` reports how disturbed the ionosphere was, apart from cycle slips. It's space weather, not a receiver fault:
