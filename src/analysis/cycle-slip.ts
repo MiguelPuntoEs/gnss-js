@@ -140,12 +140,18 @@ function mwSmoothInit(value: number): MwSmooth {
   return { buf: [value], mean: value, n: 1 };
 }
 
+/** Add a value, in place (the previous state is never read again). The
+ *  sum runs oldest to newest, as it always has, so results are unchanged
+ *  to the bit. */
 function mwSmoothUpdate(s: MwSmooth, value: number): MwSmooth {
-  const buf =
-    s.buf.length >= MW_WINDOW ? [...s.buf.slice(1), value] : [...s.buf, value];
+  const buf = s.buf;
+  if (buf.length >= MW_WINDOW) buf.shift();
+  buf.push(value);
   let sum = 0;
-  for (const v of buf) sum += v;
-  return { buf, mean: sum / buf.length, n: s.n + 1 };
+  for (let i = 0; i < buf.length; i++) sum += buf[i]!;
+  s.mean = sum / buf.length;
+  s.n++;
+  return s;
 }
 
 function mwSmoothStddev(s: MwSmooth): number {
@@ -162,6 +168,8 @@ function mwSmoothStddev(s: MwSmooth): number {
 
 interface PrevState {
   time: number;
+  /** False until the satellite's first epoch with phase. */
+  valid: boolean;
   /** Smoothed MW per pair key "b1-b2" */
   mwSmooth: Map<string, MwSmooth>;
   /** Unconfirmed MW jump per pair key, awaiting the next epoch. */
@@ -176,9 +184,38 @@ interface PrevState {
   code: Map<string, number>;
 }
 
+/** Per-system strings for a dual-frequency pair, built once. */
+interface PairInfo {
+  b1: string;
+  b2: string;
+  key: string;
+  mwSignal: string;
+  mwSigKey: string;
+  gfSignal: string;
+  gfSigKey: string;
+}
+
+const newState = (): PrevState => ({
+  time: 0,
+  valid: false,
+  mwSmooth: new Map(),
+  mwPending: new Map(),
+  sfPending: new Map(),
+  gf: new Map(),
+  phase: new Map(),
+  code: new Map(),
+});
+
 export class CycleSlipAccumulator {
   private obsIndices: Map<string, Map<string, { L: number; C: number | null }>>;
-  private prev = new Map<string, PrevState>();
+  /** Two states per satellite, swapped each epoch: the previous one is
+   *  read while the other is cleared and filled (no Maps per epoch). */
+  private states = new Map<
+    string,
+    { s: [PrevState, PrevState]; cur: number }
+  >();
+  private pairInfo = new Map<string, PairInfo[]>();
+  private sfInfo = new Map<string, { lbl: string; sigKey: string }>();
   private events: CycleSlipEvent[] = [];
   private interval: number;
   /** GLONASS PRN → channel k for FDMA frequency computation. */
@@ -224,6 +261,39 @@ export class CycleSlipAccumulator {
     this.signalEpochs.set(sigKey, (this.signalEpochs.get(sigKey) ?? 0) + 1);
   }
 
+  private pairsOf(sys: string): PairInfo[] {
+    let p = this.pairInfo.get(sys);
+    if (!p) {
+      p = (DUAL_FREQ_PAIRS[sys] ?? []).map(([b1, b2]) => {
+        const lbl1 = BAND_LABELS[sys]?.[b1] ?? b1;
+        const lbl2 = BAND_LABELS[sys]?.[b2] ?? b2;
+        const mwSignal = `MW ${lbl1}-${lbl2}`;
+        const gfSignal = `GF ${lbl1}-${lbl2}`;
+        return {
+          b1,
+          b2,
+          key: `${b1}-${b2}`,
+          mwSignal,
+          mwSigKey: `${sys}:${mwSignal}`,
+          gfSignal,
+          gfSigKey: `${sys}:${gfSignal}`,
+        };
+      });
+      this.pairInfo.set(sys, p);
+    }
+    return p;
+  }
+
+  private sfOf(sys: string, band: string) {
+    const k = sys + band;
+    let i = this.sfInfo.get(k);
+    if (!i) {
+      const lbl = BAND_LABELS[sys]?.[band] ?? band;
+      this.sfInfo.set(k, (i = { lbl, sigKey: `${sys}:${lbl}` }));
+    }
+    return i;
+  }
+
   /** Resolve frequency for a given PRN + band. Handles GLONASS FDMA. */
   private getFreqForPrn(prn: string, band: string): number | undefined {
     return getFreq(this.gloChannels, prn, band);
@@ -241,9 +311,17 @@ export class CycleSlipAccumulator {
     // For non-GLONASS, need FREQ entry; for GLONASS, resolved per-satellite
     if (sys !== 'R' && !FREQ[sys]) return;
 
+    let st = this.states.get(prn);
+    if (!st)
+      this.states.set(prn, (st = { s: [newState(), newState()], cur: 0 }));
+    const prevState = st.s[st.cur]!;
+    const next = st.s[1 - st.cur]!;
+
     // Extract phase (cycles→metres) and code (metres) per band
-    const phaseM = new Map<string, number>(); // band → L in metres
-    const codeM = new Map<string, number>(); // band → C/P in metres
+    const phaseM = next.phase; // band → L in metres
+    const codeM = next.code; // band → C/P in metres
+    phaseM.clear();
+    codeM.clear();
     for (const [band, { L, C }] of idxMap) {
       const freq = this.getFreqForPrn(prn, band);
       if (!freq) continue;
@@ -258,24 +336,29 @@ export class CycleSlipAccumulator {
     this.tested = false;
     this.slipped = false;
 
-    const prev = this.prev.get(prn);
+    const prev = prevState.valid ? prevState : undefined;
     const gap = prev ? (time - prev.time) / 1000 : 0;
     const isArcBreak = !prev || gap > this.interval * ARC_GAP_FACTOR;
 
     // Carry forward or initialise MW smoothers
-    const mwSmooth = new Map<string, MwSmooth>();
-    const mwPending = new Map<string, MwPending>();
-    const sfPending = new Map<string, SfPending>();
-    const gfMap = new Map<string, number>();
-    const pairs = DUAL_FREQ_PAIRS[sys] ?? [];
+    const mwSmooth = next.mwSmooth;
+    const mwPending = next.mwPending;
+    const sfPending = next.sfPending;
+    const gfMap = next.gf;
+    mwSmooth.clear();
+    mwPending.clear();
+    sfPending.clear();
+    gfMap.clear();
+    const pairs = this.pairsOf(sys);
 
-    for (const [b1, b2] of pairs) {
+    for (const pi of pairs) {
+      const { b1, b2 } = pi;
       const l1 = phaseM.get(b1);
       const l2 = phaseM.get(b2);
       const f1 = this.getFreqForPrn(prn, b1);
       const f2 = this.getFreqForPrn(prn, b2);
       if (!f1 || !f2) continue;
-      const pairKey = `${b1}-${b2}`;
+      const pairKey = pi.key;
 
       // GF: always computable if both L available
       if (l1 !== undefined && l2 !== undefined) {
@@ -302,10 +385,8 @@ export class CycleSlipAccumulator {
         const prevSmooth = isArcBreak ? undefined : prev?.mwSmooth.get(pairKey);
 
         if (prevSmooth && prevSmooth.n >= MW_MIN_EPOCHS) {
-          const lbl1 = BAND_LABELS[sys]?.[b1] ?? b1;
-          const lbl2 = BAND_LABELS[sys]?.[b2] ?? b2;
-          const signal = `MW ${lbl1}-${lbl2}`;
-          const sigKey = `${sys}:${signal}`;
+          const signal = pi.mwSignal;
+          const sigKey = pi.mwSigKey;
           this.countEpoch(sigKey);
 
           const stddev = mwSmoothStddev(prevSmooth);
@@ -378,10 +459,9 @@ export class CycleSlipAccumulator {
     if (!isArcBreak && prev) {
       const dualChecked = new Set<string>(); // bands covered by MW or GF
 
-      for (const [b1, b2] of pairs) {
-        const pairKey = `${b1}-${b2}`;
-        const lbl1 = BAND_LABELS[sys]?.[b1] ?? b1;
-        const lbl2 = BAND_LABELS[sys]?.[b2] ?? b2;
+      for (const pi of pairs) {
+        const { b1, b2 } = pi;
+        const pairKey = pi.key;
 
         // --- 1. Melbourne-Wübbena (already handled above during smoothing) ---
         if (mwSmooth.has(pairKey)) {
@@ -394,8 +474,8 @@ export class CycleSlipAccumulator {
         const curGf = gfMap.get(pairKey);
         const prevGf = prev.gf.get(pairKey);
         if (curGf !== undefined && prevGf !== undefined) {
-          const signal = `GF ${lbl1}-${lbl2}`;
-          const sigKey = `${sys}:${signal}`;
+          const signal = pi.gfSignal;
+          const sigKey = pi.gfSigKey;
           this.countEpoch(sigKey);
           const jump = Math.abs(curGf - prevGf);
           if (jump > GF_THRESHOLD_M) {
@@ -425,8 +505,7 @@ export class CycleSlipAccumulator {
           const prevCm = prev.code.get(band);
           if (cm === undefined || prevCm === undefined) continue;
           const d = lm - cm;
-          const lbl = BAND_LABELS[sys]?.[band] ?? band;
-          const sigKey = `${sys}:${lbl}`;
+          const { lbl, sigKey } = this.sfOf(sys, band);
           this.countEpoch(sigKey);
           const pending = prev.sfPending.get(band);
           if (pending) {
@@ -461,15 +540,9 @@ export class CycleSlipAccumulator {
       }
     }
 
-    this.prev.set(prn, {
-      time,
-      mwSmooth,
-      mwPending,
-      sfPending,
-      gf: gfMap,
-      phase: phaseM,
-      code: codeM,
-    });
+    next.time = time;
+    next.valid = true;
+    st.cur = 1 - st.cur;
   };
 
   finalize(): CycleSlipResult {

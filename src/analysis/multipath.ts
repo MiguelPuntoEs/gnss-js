@@ -9,7 +9,7 @@
  */
 
 import type { RinexHeader } from '../rinex/parser';
-import { MIN_ARC_LENGTH, median } from './stats-util';
+import { MIN_ARC_LENGTH } from './stats-util';
 import {
   C_LIGHT,
   BAND_LABELS,
@@ -94,6 +94,29 @@ interface SatBandState {
  * Steps beyond this close the arc and start a new one.
  */
 const MP_JUMP_M = 1.25;
+const tailBuf = new Float64Array(16);
+
+/**
+ * Median of the last `k` (≤ 16) values, without copying the array: the hot
+ * path of the MP step test (once per MP point). Same value as
+ * `median(a.slice(-k))`.
+ */
+function medianTail(a: number[], k: number): number {
+  const n = Math.min(k, a.length);
+  const off = a.length - n;
+  for (let i = 0; i < n; i++) {
+    const v = a[off + i]!;
+    let j = i - 1;
+    while (j >= 0 && tailBuf[j]! > v) {
+      tailBuf[j + 1] = tailBuf[j]!;
+      j--;
+    }
+    tailBuf[j + 1] = v;
+  }
+  const m = n >> 1;
+  return n % 2 ? tailBuf[m]! : (tailBuf[m - 1]! + tailBuf[m]!) / 2;
+}
+
 /** Points compared against the running median for step detection. */
 const MP_JUMP_WINDOW = 5;
 /** Iterative sigma-editing threshold for per-arc outlier rejection. */
@@ -203,8 +226,10 @@ export class MultipathAccumulator {
     if (bandState.lastTime > 0 && gap > this.interval * ARC_GAP_FACTOR) {
       this.closeArc(prn, band, refBand, bandState);
     } else if (bandState.arc.rawMp.length > 0) {
-      const recent = bandState.arc.rawMp.slice(-MP_JUMP_WINDOW);
-      if (Math.abs(mp - median(recent)) > MP_JUMP_M) {
+      if (
+        Math.abs(mp - medianTail(bandState.arc.rawMp, MP_JUMP_WINDOW)) >
+        MP_JUMP_M
+      ) {
         this.closeArc(prn, band, refBand, bandState);
       }
     }
