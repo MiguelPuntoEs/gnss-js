@@ -15,7 +15,9 @@
  *   is written with its SVN only.
  * Comments inside antenna records are not kept by the parser.
  */
+import { epochMs } from './index';
 import type {
+  SatellitePrnAssignment,
   AntennaEntry,
   AntexCalibration,
   AntexEpoch,
@@ -190,25 +192,60 @@ function samePattern(a: FrequencyData, b: FrequencyData): boolean {
   );
 }
 
+/** ANTEX 2.0 Table 1: the frequency bands that share a centre frequency
+ *  (the bands one 2.0 frequency record can serve). */
+const CENTRE_FREQUENCY: Record<string, string> = {};
+for (const [mhz, bands] of [
+  ['2492.028', 'I09'],
+  ['1602.000', 'R01'],
+  ['1600.995', 'R04'],
+  ['1575.420', 'G01 E01 C01 J01 I01 S01'],
+  ['1561.098', 'C02'],
+  ['1278.750', 'E06 J06'],
+  ['1268.520', 'C06'],
+  ['1248.065', 'R06'],
+  ['1246.000', 'R02'],
+  ['1227.600', 'G02 J02'],
+  ['1207.140', 'E07 C07'],
+  ['1202.025', 'R03'],
+  ['1191.795', 'E08 C08'],
+  ['1176.450', 'G05 E05 C05 J05 I05 S05'],
+] as const)
+  for (const b of bands.split(' ')) CENTRE_FREQUENCY[b] = mhz;
+
+const sameCentre = (a: string, b: string) =>
+  CENTRE_FREQUENCY[a] !== undefined &&
+  CENTRE_FREQUENCY[a] === CENTRE_FREQUENCY[b];
+
 /** Frequencies grouped into 2.0 frequency records: as read from a 2.0
- *  file (`bands`), else bands with identical data together; at most ten
- *  bands per record. */
+ *  file (`bands`), else runs of adjacent bands on the same centre
+ *  frequency with identical data (so the band order survives a conversion
+ *  and back); at most ten per record. */
 function frequencyRecords(freqs: readonly FrequencyData[]): FrequencyData[][] {
   const groups: FrequencyData[][] = [];
   const done = new Set<FrequencyData>();
-  for (const f of freqs) {
-    if (done.has(f)) continue;
-    const group = freqs.filter(
-      (g) =>
-        !done.has(g) &&
-        (f.bands
-          ? g.bands === f.bands || f.bands.includes(g.frequency)
-          : samePattern(f, g))
-    );
+  freqs.forEach((f, i) => {
+    if (done.has(f)) return;
+    let group: FrequencyData[];
+    if (f.bands) {
+      group = freqs.filter((g) => g.bands === f.bands);
+    } else {
+      group = [f];
+      for (let j = i + 1; j < freqs.length; j++) {
+        const g = freqs[j]!;
+        if (
+          g.bands ||
+          !sameCentre(f.frequency, g.frequency) ||
+          !samePattern(f, g)
+        )
+          break;
+        group.push(g);
+      }
+    }
     for (const g of group) done.add(g);
-    for (let i = 0; i < group.length; i += 10)
-      groups.push(group.slice(i, i + 10));
-  }
+    for (let k = 0; k < group.length; k += 10)
+      groups.push(group.slice(k, k + 10));
+  });
   return groups;
 }
 
@@ -292,12 +329,40 @@ const sameData = (a: AntennaEntry, b: AntennaEntry) =>
       samePattern(f, b.frequencies[i]!)
   );
 
-/** Write an {@link AntexFile} as ANTEX 2.0. `release` ("YYYY:DDD" or
- *  "YYYYDDD") defaults to the file's, else today. */
+/** Same instant to within a millisecond (1.4 ends a period at its last
+ *  instant, 23:59:59.9999999; the metadata at the next start). */
+const near = (a: number | null, b: number) =>
+  a !== null && (a === b || Math.abs(a - b) < 1);
+
+/** The time of a validity bound, if any. */
+const boundMs = (epoch: AntexEpoch | undefined, str: string) => {
+  const e = epoch ?? stringEpoch(str);
+  return e ? epochMs(e) : null;
+};
+
+/**
+ * Write an {@link AntexFile} as ANTEX 2.0. `release` ("YYYY:DDD" or
+ * "YYYYDDD") defaults to the file's, else today.
+ *
+ * `prns` (from `parseSatellitePrns`): a 1.4 file can only give a satellite
+ * antenna per PRN period, so its validity starts and ends with the PRN
+ * assignment; with the assignments, a bound that is just the SVN's first
+ * or last PRN date is dropped, as a 2.0 file writes it (the SVN is the
+ * antenna).
+ */
 export function writeAntex20(
   antex: AntexFile,
-  opts: { release?: string; referenceFrame?: string } = {}
+  opts: {
+    release?: string;
+    referenceFrame?: string;
+    prns?: readonly SatellitePrnAssignment[];
+  } = {}
 ): string {
+  const svnSpan = new Map<string, [number, number]>();
+  for (const p of opts.prns ?? []) {
+    const [f, u] = svnSpan.get(p.svn) ?? [Infinity, -Infinity];
+    svnSpan.set(p.svn, [Math.min(f, p.fromMs), Math.max(u, p.untilMs)]);
+  }
   const out: string[] = [];
   out.push(L(F(2.0, 8, 1), 'ANTEX VERSION'));
   out.push(L('', 'START OF HEADER'));
@@ -374,6 +439,25 @@ export function writeAntex20(
         phases.push(phaseCalibration(e));
       }
       prev = e;
+    }
+    const span = a.isSatellite ? svnSpan.get(a.svnCode) : undefined;
+    const first = phases[0];
+    const last = phases[phases.length - 1];
+    if (
+      span &&
+      first &&
+      near(boundMs(first.validFromEpoch, first.validFrom), span[0])
+    ) {
+      first.validFrom = '';
+      delete first.validFromEpoch;
+    }
+    if (
+      span &&
+      last &&
+      near(boundMs(last.validUntilEpoch, last.validUntil), span[1])
+    ) {
+      last.validUntil = '';
+      delete last.validUntilEpoch;
     }
     for (const c of phases) writeCalibration(out, c, a.isSatellite);
     for (const c of a.codeCalibrations ?? [])

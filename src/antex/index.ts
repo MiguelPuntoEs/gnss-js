@@ -730,12 +730,21 @@ export function antexWithPrns(
       if (f >= u) continue;
       const { validFromEpoch: _f, validUntilEpoch: _u, ...rest } = e;
       const fe = f === from ? e.validFromEpoch : msEpoch(f);
-      const ue = u === until ? e.validUntilEpoch : msEpoch(u);
+      // A PRN period's end in 1.4's style: its last instant, 23:59:59.9999999
+      // for a change at midnight (the metadata gives the next start).
+      let ue = e.validUntilEpoch;
+      if (u !== until && Number.isFinite(u)) {
+        ue = msEpoch(Math.floor(u / 1000) * 1000 - 1000)!;
+        ue[5] += 0.9999999;
+      }
       antennas.push({
         ...rest,
         serialNo: a.prn,
         validFrom: fmtValidity(f),
-        validUntil: fmtValidity(u),
+        validUntil:
+          u !== until && Number.isFinite(u)
+            ? fmtValidity(u - 1)
+            : fmtValidity(u),
         ...(fe ? { validFromEpoch: fe } : {}),
         ...(ue ? { validUntilEpoch: ue } : {}),
       });

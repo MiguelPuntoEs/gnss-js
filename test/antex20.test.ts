@@ -105,7 +105,8 @@ describe('ANTEX 2.0', () => {
     );
     // Two PRN G04 periods (a gap in 2019 when G074 had no PRN).
     expect(byPrn.map((a) => [a.serialNo, a.validFrom, a.validUntil])).toEqual([
-      ['G04', '2019-01-09 00:00', '2019-07-13 00:00'],
+      // 1.4's style: a period ends at its last instant (23:59:59.9999999).
+      ['G04', '2019-01-09 00:00', '2019-07-12 23:59'],
       ['G04', '2019-10-21 00:00', ''],
     ]);
     const s14 = v14.antennas.filter((a) => a.isSatellite);

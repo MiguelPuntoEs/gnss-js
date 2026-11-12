@@ -101,6 +101,36 @@ describe('ANTEX writers', () => {
       if (k in d20) expect(v).toEqual(d20[k]);
   });
 
+  it('1.4 → 2.0 → 1.4 gives the 1.4 file back', () => {
+    const v14 = parseAntex(t14);
+    const back = writeAntex14(
+      antexWithPrns(parseAntex(writeAntex20(v14, { prns })), prns)
+    );
+    // SINEX CODE and COSPAR ID have no place in 2.0, nor the NOAZI row of
+    // an azimuth-dependent pattern (one followed by azimuth rows); the
+    // NOAZI-only pattern of 3S-02-TSADM must come back.
+    const strip = (t: string) =>
+      lines(t)
+        .filter(
+          (l, k, all) =>
+            !l.endsWith('SINEX CODE') &&
+            !(l.startsWith('   NOAZI') && all[k + 1]?.startsWith('     0.0'))
+        )
+        .map((l) =>
+          l.endsWith('TYPE / SERIAL NO') ? l.substring(0, 50).trimEnd() : l
+        );
+    expect(strip(back)).toEqual(strip(t14));
+  });
+
+  it('2.0 → 1.4 → 2.0 gives the 2.0 file back', () => {
+    const v20 = parseAntex(t20);
+    const back = writeAntex20(
+      parseAntex(writeAntex14(antexWithPrns(v20, prns))),
+      { prns, release: v20.release, referenceFrame: v20.referenceFrame }
+    );
+    expect(lines(back)).toEqual(lines(t20));
+  });
+
   it('keeps missing values blank in 2.0 and writes 0 in 1.4', () => {
     const l = (c: string, label: string) => c.padEnd(60) + label;
     const src = [
