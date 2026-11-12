@@ -8,6 +8,10 @@
 - Read-only: the solution is identical with it on. Off by default (one small object per satellite and epoch).
 - New types `PppEpochDiagnostics` and `PppSatDiagnostics`.
 
+### Added — finer multipath sky
+
+- `QualityResult.multipathSky.fine`: the code-multipath RMS on a 10° azimuth × 5° elevation grid (cells with fewer than 20 samples null), for drawing. The median, worst sector and grading stay on the 30° × 10° cells.
+
 ### Fixed
 
 - An epoch without usable satellites reported a zenith hydrostatic delay of 0, so its ZTD dropped to the wet part alone (about 0.2 m instead of 2.5 m). It is now the station's zenith delay from the same troposphere model.

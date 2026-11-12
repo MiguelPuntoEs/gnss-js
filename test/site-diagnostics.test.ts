@@ -102,6 +102,15 @@ describe.skipIf(!HAS_DATA)('site diagnostics on a real day (ABMF)', () => {
     expect(mp.medianRms!).toBeGreaterThan(0.15);
     expect(mp.medianRms!).toBeLessThan(0.5);
     expect(mp.worst!.rms).toBeGreaterThanOrEqual(mp.medianRms!);
+    // The fine grid pools the same samples: 36 × 18 cells, same total.
+    const f = mp.fine!;
+    expect(f.rms).toHaveLength(36);
+    expect(f.rms[0]).toHaveLength(18);
+    const total = (g: number[][]) =>
+      g.reduce((a, col) => a + col.reduce((b, x) => b + x, 0), 0);
+    expect(total(f.n)).toBe(total(mp.n));
+    const filled = f.rms.flat().filter((x) => x !== null).length;
+    expect(filled).toBeGreaterThan(300); // a 24 h day covers most of the sky
     const c = compareCn0WithTemplate(q.signals!.cn0ByElevation)!;
     expect(Math.abs(c.deficitDb)).toBeLessThan(4);
   }, 120_000);
