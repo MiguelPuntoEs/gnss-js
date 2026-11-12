@@ -202,6 +202,9 @@ export interface PppEpochDiagnostics {
   /** Receiver clock offset per constellation (m; divide by c for seconds).
    *  Each constellation has its own, absorbing the inter-system bias. */
   clockM: Record<string, number>;
+  /** Formal 1σ of the position after this epoch's update, East/North/Up
+   *  (m), from the filter covariance. */
+  positionSigmaEnu: [number, number, number];
   /** Satellites above the elevation mask with dual-frequency data. */
   sats: PppSatDiagnostics[];
 }
@@ -1301,6 +1304,22 @@ export class PppEngine {
     if (opts.diagnostics) {
       const clockM: Record<string, number> = {};
       for (const [sys, ci] of clkIdx) clockM[sys] = x[ci]!;
+      // Position covariance rotated to East/North/Up at the epoch's position.
+      const sl = Math.sin(latRad),
+        cl = Math.cos(latRad),
+        so = Math.sin(lonRad),
+        co = Math.cos(lonRad);
+      const R = [
+        [-so, co, 0],
+        [-sl * co, -sl * so, cl],
+        [cl * co, cl * so, sl],
+      ];
+      const sigma = R.map((r) => {
+        let v = 0;
+        for (let i = 0; i < 3; i++)
+          for (let j = 0; j < 3; j++) v += r[i]! * P[i]![j]! * r[j]!;
+        return Math.sqrt(Math.max(v, 0));
+      }) as [number, number, number];
       const raw = vis.map((v) => {
         const ci = clockOf(v.prn[0]!);
         const common =
@@ -1338,6 +1357,7 @@ export class PppEngine {
       );
       diagnostics = {
         clockM,
+        positionSigmaEnu: sigma,
         sats: raw.map((r) => {
           const sys = r.v.prn[0]!;
           return {

@@ -257,6 +257,11 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     for (const s of tail) {
       const d = s.diagnostics!;
       expect(Object.keys(d.clockM).sort()).toEqual(['C', 'E', 'G']);
+      // Converged static position: millimetres to centimetres, Up the largest.
+      const [se, sn, su] = d.positionSigmaEnu;
+      expect(Math.max(se, sn)).toBeLessThan(0.05);
+      expect(su).toBeGreaterThan(Math.min(se, sn));
+      expect(su).toBeLessThan(0.1);
       // Every satellite the filter counted appears, above the mask.
       expect(d.sats.length).toBeGreaterThanOrEqual(s.nSats);
       expect(
