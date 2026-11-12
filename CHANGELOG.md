@@ -18,6 +18,8 @@
 - 2.0 identifies satellite antennas by SVN. `parseSatellitePrns` reads the SATELLITE/PRN block of the IGS satellite metadata SINEX and `antexWithPrns` repeats each SVN entry per PRN period, so `buildPppAntenna` looks them up by PRN as with 1.4.
 - Checked against IGS's current files (release 2026:312): all 512 receiver antennas (4,681 bands) and all 422 satellite PRN periods give identical offsets and azimuth grids from 1.4 and 2.0; the 2.0 azimuth mean is within 0.03 mm (median) of 1.4's NOAZI rows.
 - The PPP and RTK receiver models prefer an antenna type's mean calibration over an individual (serial-number) one.
+- `writeAntex14` / `writeAntex20`: write an `AntexFile` (from either version) as ANTEX 1.4 or 2.0, so files convert both ways. Validity epochs keep their seconds (`validFromEpoch` / `validUntilEpoch`, e.g. 23:59:59.9999999); calibration dates convert between 1.4's "09-JUN-19" and 2.0's "2019/06/09"; bands with identical data share a 2.0 record; 1.4 PRN periods of one SVN merge into one 2.0 antenna. Not carried over, by the formats' design: 1.4 NOAZI rows of azimuth-dependent patterns (→ 2.0), code and gain patterns (→ 1.4; missing values become 0.00).
+- On IGS's files: parsing and writing back reproduces `igs20.atx`, `igs20_rcv.atx2` and `igs20_sat.atx2` line for line (numerically — IGS writes "+0.68" and "-2.8" where the format gives "0.68" and "-2.80"); converting either way and reading back gives identical offsets and grids for all 512 receiver antennas and 422 satellite PRN periods.
 
 ### Added — opt-in, off by default
 

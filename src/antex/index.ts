@@ -54,6 +54,10 @@ export interface FrequencyData {
   gainOffsetDb?: number;
 }
 
+/** A validity epoch exactly as written: year, month, day, hour, minute,
+ *  seconds (GPS time). */
+export type AntexEpoch = [number, number, number, number, number, number];
+
 /** One ANTEX 2.0 calibration record (phase, code or gain patterns on one
  *  grid and validity interval). */
 export interface AntexCalibration {
@@ -64,6 +68,9 @@ export interface AntexCalibration {
   date: string;
   validFrom: string;
   validUntil: string;
+  /** The validity epochs to the written precision (seconds included). */
+  validFromEpoch?: AntexEpoch;
+  validUntilEpoch?: AntexEpoch;
   /** Azimuth increment (degrees). 0 = no azimuth dependence. */
   dazi: number;
   zen1: number;
@@ -109,6 +116,9 @@ export interface AntennaEntry {
   validFrom: string;
   /** Valid-until date, "YYYY-MM-DD HH:MM" (optional) */
   validUntil: string;
+  /** The validity epochs to the written precision (seconds included). */
+  validFromEpoch?: AntexEpoch;
+  validUntilEpoch?: AntexEpoch;
   /** Per-frequency phase calibration data */
   frequencies: FrequencyData[];
   /** ANTEX 2.0: the antenna's group delay (code) calibrations. */
@@ -150,6 +160,22 @@ function label(line: string): string {
 
 function num(s: string): number {
   return parseFloat(s) || 0;
+}
+
+/** A validity line's epoch (5I6,F13.7), or undefined. */
+function parseEpoch(line: string): AntexEpoch | undefined {
+  const f = [0, 6, 12, 18, 24].map((c) =>
+    parseInt(line.substring(c, c + 6), 10)
+  );
+  if (Number.isNaN(f[0])) return undefined;
+  return [
+    f[0]!,
+    f[1] || 1,
+    f[2] || 1,
+    f[3] || 0,
+    f[4] || 0,
+    parseFloat(line.substring(30, 43)) || 0,
+  ];
 }
 
 /** Parse a validity date line (5I6,F13.7) into "YYYY-MM-DD HH:MM". */
@@ -315,8 +341,10 @@ function parseAntex14(allLines: string[]): AntexFile {
       entry.sinexCode = line.substring(0, 10).trim();
     } else if (lbl === 'VALID FROM') {
       entry.validFrom = parseValidityDate(line);
+      entry.validFromEpoch = parseEpoch(line);
     } else if (lbl === 'VALID UNTIL') {
       entry.validUntil = parseValidityDate(line);
+      entry.validUntilEpoch = parseEpoch(line);
     } else if (lbl === 'START OF FREQUENCY') {
       inFreq = true;
       freqLines = [line];
@@ -459,6 +487,8 @@ function parseAntex2(allLines: string[]): AntexFile {
         date: c.date,
         validFrom: c.validFrom,
         validUntil: c.validUntil,
+        ...(c.validFromEpoch ? { validFromEpoch: c.validFromEpoch } : {}),
+        ...(c.validUntilEpoch ? { validUntilEpoch: c.validUntilEpoch } : {}),
         dazi: c.dazi,
         zen1: c.zen1,
         zen2: c.zen2,
@@ -565,8 +595,10 @@ function parseAntex2(allLines: string[]): AntexFile {
       calib.date = line.substring(50, 60).trim();
     } else if (lbl === 'VALID FROM') {
       calib.validFrom = parseValidityDate(line);
+      calib.validFromEpoch = parseEpoch(line);
     } else if (lbl === 'VALID UNTIL') {
       calib.validUntil = parseValidityDate(line);
+      calib.validUntilEpoch = parseEpoch(line);
     } else if (lbl === 'DAZI') {
       calib.fileDazi = num(line.substring(2, 8));
       // 360° = one pattern for all azimuths: 0, as in 1.4.
@@ -637,10 +669,27 @@ export function parseSatellitePrns(text: string): SatellitePrnAssignment[] {
   return out;
 }
 
+const msEpoch = (ms: number): AntexEpoch | undefined => {
+  if (!Number.isFinite(ms)) return undefined;
+  const d = new Date(ms);
+  return [
+    d.getUTCFullYear(),
+    d.getUTCMonth() + 1,
+    d.getUTCDate(),
+    d.getUTCHours(),
+    d.getUTCMinutes(),
+    d.getUTCSeconds() + d.getUTCMilliseconds() / 1000,
+  ];
+};
+
 const fmtValidity = (ms: number) =>
   Number.isFinite(ms)
     ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
     : '';
+
+/** An {@link AntexEpoch} as UTC ms (the GPS-time fields taken as is). */
+export const epochMs = ([y, mo, d, h, mi, s]: AntexEpoch) =>
+  Date.UTC(y, mo - 1, d, h, mi) + s * 1000;
 
 const validityMs = (s: string, open: number) => {
   const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(s);
@@ -669,22 +718,33 @@ export function antexWithPrns(
       antennas.push(e);
       continue;
     }
-    const from = validityMs(e.validFrom, -Infinity);
-    const until = validityMs(e.validUntil, Infinity);
+    const from = e.validFromEpoch
+      ? epochMs(e.validFromEpoch)
+      : validityMs(e.validFrom, -Infinity);
+    const until = e.validUntilEpoch
+      ? epochMs(e.validUntilEpoch)
+      : validityMs(e.validUntil, Infinity);
     for (const a of bySvn.get(e.svnCode) ?? []) {
       const f = Math.max(from, a.fromMs);
       const u = Math.min(until, a.untilMs);
       if (f >= u) continue;
+      const { validFromEpoch: _f, validUntilEpoch: _u, ...rest } = e;
+      const fe = f === from ? e.validFromEpoch : msEpoch(f);
+      const ue = u === until ? e.validUntilEpoch : msEpoch(u);
       antennas.push({
-        ...e,
+        ...rest,
         serialNo: a.prn,
         validFrom: fmtValidity(f),
         validUntil: fmtValidity(u),
+        ...(fe ? { validFromEpoch: fe } : {}),
+        ...(ue ? { validUntilEpoch: ue } : {}),
       });
     }
   }
   return { ...antex, antennas };
 }
+
+export { writeAntex14, writeAntex20 } from './write';
 
 /* ── Frequency label mapping ─────────────────────────────────────── */
 
