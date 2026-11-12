@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added — start PPP from a known position
+
+- `PppOptions.aprioriSigmaM`: the 1σ of `aprioriPos` (default 100 m, as before). Starting on a surveyed mark (a few mm to cm) gives a converged filter from the first epoch.
+- `PppOptions.initialStaticSec`: in kinematic mode, the receiver stands still for this long at the start (on the mark, before moving), so its position is held as one state over that time.
+- On ABMF processed kinematically, starting from its coordinate (1 cm) with 10 minutes on the mark: minutes 10–30 at 1.7 cm horizontal RMS, against 18.5 cm from a cold start.
+
 ## 2.43.0
 
 ### Added — PPP cycle-slip repair (kinematic re-convergence)

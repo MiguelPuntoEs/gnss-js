@@ -111,6 +111,14 @@ export interface PppOptions {
   /** Expose the final EKF state (position + ambiguities + covariance) in the
    * solution for ambiguity-resolved positioning. Default false. */
   exposeState?: boolean;
+  /** 1σ (m) of `aprioriPos`, per axis. Default 100 m (a header or code
+   *  position). A surveyed starting mark (a few mm–cm) makes the filter
+   *  start converged: the ambiguities are determined at once. */
+  aprioriSigmaM?: number;
+  /** Kinematic: the receiver stands still for this long (s) at the start —
+   *  on the known mark before moving — so its position is one state over
+   *  that time, not re-estimated each epoch. Default 0. */
+  initialStaticSec?: number;
   /** Record per-epoch diagnostics in the series (`PppEpochResult.diagnostics`):
    *  the receiver clocks and, per satellite, the post-fit residuals and
    *  whether each observation was used — for processing reports. Default
@@ -771,9 +779,10 @@ export class PppEngine {
     this.x = [opts.aprioriPos[0], opts.aprioriPos[1], opts.aprioriPos[2], 0.1];
     const P: number[][] = [];
     for (let i = 0; i < NBASE; i++) P.push(new Array<number>(NBASE).fill(0));
-    P[IDX_X]![IDX_X] = 100 * 100; // 100 m a priori position σ
-    P[IDX_Y]![IDX_Y] = 100 * 100;
-    P[IDX_Z]![IDX_Z] = 100 * 100;
+    const s0 = (opts.aprioriSigmaM ?? 100) ** 2; // 100 m: a header position
+    P[IDX_X]![IDX_X] = s0;
+    P[IDX_Y]![IDX_Y] = s0;
+    P[IDX_Z]![IDX_Z] = s0;
     P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
     this.P = P;
     this.clkIdx = new Map();
@@ -1016,7 +1025,13 @@ export class PppEngine {
     // decorrelate the position states and reset their variance so the rover is
     // re-estimated from this epoch's measurements; epoch-to-epoch continuity
     // still lives in the persisting carrier-ambiguity states.
-    if (kinematic && ei > 0) {
+    // During an initial static period (on the start mark) the position is
+    // held as one state, like a static session.
+    const holding =
+      ei > 0 &&
+      (opts.initialStaticSec ?? 0) > 0 &&
+      epoch.timeMs - this.t0 < (opts.initialStaticSec ?? 0) * 1000;
+    if (kinematic && ei > 0 && !holding) {
       for (const p of [IDX_X, IDX_Y, IDX_Z]) {
         for (let j = 0; j < x.length; j++) {
           P[p]![j] = 0;

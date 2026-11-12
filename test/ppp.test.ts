@@ -301,6 +301,56 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     ).toBeLessThan(0.001);
   });
 
+  it('kinematic: a known start mark converges at once', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    // The truth shifted to ABMF's IGS20 coordinate at the epoch (see vsRef).
+    const part = epochs.slice(0, 120); // the first hour (30 s)
+    // The mark: the header moved by ABMF_HEADER_OFFSET_EN (East/North).
+    const lat = Math.atan2(truth[2], Math.hypot(truth[0], truth[1]));
+    const lon = Math.atan2(truth[1], truth[0]);
+    const [dE, dN] = ABMF_HEADER_OFFSET_EN as [number, number];
+    const mark: [number, number, number] = [
+      truth[0] - Math.sin(lon) * dE - Math.sin(lat) * Math.cos(lon) * dN,
+      truth[1] + Math.cos(lon) * dE - Math.sin(lat) * Math.sin(lon) * dN,
+      truth[2] + Math.cos(lat) * dN,
+    ];
+    const base = {
+      aprioriPos: truth,
+      groundTruth: truth,
+      mode: 'kinematic' as const,
+    };
+    const cold = solvePpp(part, sp3, base);
+    const warm = solvePpp(part, sp3, {
+      ...base,
+      aprioriPos: mark,
+      aprioriSigmaM: 0.01,
+      initialStaticSec: 600,
+    });
+    const horiz = (sol: typeof cold, from: number, to: number) => {
+      const s = sol.series.slice(from, to);
+      return Math.sqrt(
+        s.reduce((a, x) => {
+          const r = vsRef(x.enu!);
+          return a + r[0]! ** 2 + r[1]! ** 2;
+        }, 0) / s.length
+      );
+    };
+    // Minutes 10–30, once moving: decimetres cold, centimetres warm.
+    const c = horiz(cold, 20, 60);
+    const w = horiz(warm, 20, 60);
+    expect(w).toBeLessThan(c / 2);
+    expect(w).toBeLessThan(0.3);
+    // During the hold the position is one state: it hardly moves.
+    const held = warm.series.slice(1, 20).map((x) => x.position);
+    const spread = Math.max(
+      ...held.map((p) =>
+        Math.hypot(p[0] - held[0]![0], p[1] - held[0]![1], p[2] - held[0]![2])
+      )
+    );
+    expect(spread).toBeLessThan(0.05);
+  });
+
   it('kinematic mode tracks a (static) rover epoch-by-epoch near truth', async () => {
     const { epochs, truth } = await load();
     const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
