@@ -111,6 +111,11 @@ export interface PppOptions {
   /** Expose the final EKF state (position + ambiguities + covariance) in the
    * solution for ambiguity-resolved positioning. Default false. */
   exposeState?: boolean;
+  /** Record per-epoch diagnostics in the series (`PppEpochResult.diagnostics`):
+   *  the receiver clocks and, per satellite, the post-fit residuals and
+   *  whether each observation was used — for processing reports. Default
+   *  false (one small object per satellite and epoch). */
+  diagnostics?: boolean;
   /** High-rate precise satellite clocks (RINEX CLOCK, typically 30 s). When
    * given, satellite clock offsets come from this by linear interpolation
    * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
@@ -187,6 +192,38 @@ export interface PppEpochResult {
   nFixed: number;
   /** PPP-AR: the ambiguity-fixed position, when the latest attempt fixed. */
   fixedPosition: [number, number, number] | null;
+  /** Receiver clocks and per-satellite residuals, when
+   *  `PppOptions.diagnostics` is set. */
+  diagnostics?: PppEpochDiagnostics;
+}
+
+/** One epoch's processing detail (`PppOptions.diagnostics`). */
+export interface PppEpochDiagnostics {
+  /** Receiver clock offset per constellation (m; divide by c for seconds).
+   *  Each constellation has its own, absorbing the inter-system bias. */
+  clockM: Record<string, number>;
+  /** Satellites above the elevation mask with dual-frequency data. */
+  sats: PppSatDiagnostics[];
+}
+
+/** One satellite in one epoch (`PppOptions.diagnostics`). */
+export interface PppSatDiagnostics {
+  prn: string;
+  elevDeg: number;
+  azDeg: number;
+  /** Post-fit ionosphere-free code residual against the epoch's final state
+   *  (m), the constellation's mean over used observations removed (the
+   *  receiver clock is a free parameter each epoch). */
+  codeRes: number;
+  /** Post-fit ionosphere-free phase residual (m), same convention; null
+   *  before the satellite has an ambiguity. */
+  phaseRes: number | null;
+  /** The code observation entered the filter (not screened or gated out). */
+  codeUsed: boolean;
+  /** The phase observation entered the filter. */
+  phaseUsed: boolean;
+  /** The ambiguity was (re)initialised this epoch: new arc or cycle slip. */
+  slip: boolean;
 }
 
 export interface PppSolution {
@@ -857,6 +894,7 @@ export class PppEngine {
       prn: string;
       e: [number, number, number]; // LOS unit rcv→sat
       elRad: number;
+      azRad: number;
       pIf: number;
       lIf: number;
       satClkM: number;
@@ -945,6 +983,7 @@ export class PppEngine {
         prn: o.prn,
         e,
         elRad,
+        azRad,
         pIf,
         lIf,
         satClkM: sat.state.clkM,
@@ -1115,6 +1154,10 @@ export class PppEngine {
       return ai;
     };
 
+    /** Per-satellite outcome this epoch, for `diagnostics`. */
+    const codeUsed = new Set<string>();
+    const phaseUsed = new Set<string>();
+    const reinited = new Set<string>();
     const codeUpdate = (v: Vis): void => {
       const ci = clockOf(v.prn[0]!);
       const common =
@@ -1130,8 +1173,11 @@ export class PppEngine {
       // Loose absolute bound (clock jumps up to ~ms); the S-based reject
       // gate (rejectK) does the real outlier screening once the clock is
       // pinned.
-      if (Math.abs(innov) < 1e6)
-        ekfUpdateScalar(x, P, h, innov, (codeSigma / sinEl) ** 2, 4);
+      if (
+        Math.abs(innov) < 1e6 &&
+        ekfUpdateScalar(x, P, h, innov, (codeSigma / sinEl) ** 2, 4)
+      )
+        codeUsed.add(v.prn);
     };
 
     const phaseUpdate = (v: Vis, ai: number): void => {
@@ -1156,7 +1202,9 @@ export class PppEngine {
         h[ai] = 1;
         used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
       }
+      if (used) phaseUsed.add(v.prn);
       if (reinit) {
+        reinited.add(v.prn);
         flushArc(v.prn); // undetected slip → close the arc, re-initialise
         x[ai] = v.lIf - (commonPh + v.windupM);
         for (let j = 0; j < P.length; j++) {
@@ -1249,6 +1297,63 @@ export class PppEngine {
       }
     }
 
+    let diagnostics: PppEpochDiagnostics | undefined;
+    if (opts.diagnostics) {
+      const clockM: Record<string, number> = {};
+      for (const [sys, ci] of clkIdx) clockM[sys] = x[ci]!;
+      const raw = vis.map((v) => {
+        const ci = clockOf(v.prn[0]!);
+        const common =
+          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+        const ai = ambIdx.get(v.prn);
+        return {
+          v,
+          code: v.pIf - common,
+          phase:
+            ai === undefined ? null : v.lIf - (common + v.windupM + x[ai]!),
+        };
+      });
+      // Constellation means over the observations that entered the filter
+      // (phase: also below the gross-outlier bound used for phaseResRms).
+      const mean = (pick: (r: (typeof raw)[number]) => number | null) => {
+        const acc = new Map<string, { s: number; n: number }>();
+        for (const r of raw) {
+          const val = pick(r);
+          if (val === null) continue;
+          const a = acc.get(r.v.prn[0]!) ?? { s: 0, n: 0 };
+          a.s += val;
+          a.n++;
+          acc.set(r.v.prn[0]!, a);
+        }
+        return (sys: string) => {
+          const a = acc.get(sys);
+          return a && a.n ? a.s / a.n : 0;
+        };
+      };
+      const codeMean = mean((r) => (codeUsed.has(r.v.prn) ? r.code : null));
+      const phaseMean = mean((r) =>
+        phaseUsed.has(r.v.prn) && r.phase !== null && Math.abs(r.phase) < 0.15
+          ? r.phase
+          : null
+      );
+      diagnostics = {
+        clockM,
+        sats: raw.map((r) => {
+          const sys = r.v.prn[0]!;
+          return {
+            prn: r.v.prn,
+            elevDeg: (r.v.elRad * 180) / Math.PI,
+            azDeg: ((((r.v.azRad * 180) / Math.PI) % 360) + 360) % 360,
+            codeRes: r.code - codeMean(sys),
+            phaseRes: r.phase === null ? null : r.phase - phaseMean(sys),
+            codeUsed: codeUsed.has(r.v.prn),
+            phaseUsed: phaseUsed.has(r.v.prn),
+            slip: r.v.slip || reinited.has(r.v.prn),
+          };
+        }),
+      };
+    }
+
     // Drop ambiguities of satellites unseen for > 20 epochs.
     for (const [prn, seen] of [...lastSeen]) {
       if (ei - seen > 20) {
@@ -1301,6 +1406,7 @@ export class PppEngine {
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
       nFixed: this.lastFix?.nFixed ?? 0,
       fixedPosition: this.lastFix?.position ?? null,
+      ...(diagnostics ? { diagnostics } : {}),
     };
     series.push(result);
     this.ei = ei + 1;

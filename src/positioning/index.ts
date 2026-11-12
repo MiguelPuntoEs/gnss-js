@@ -697,6 +697,8 @@ export type {
   PppOptions,
   PppTroposphereModel,
   PppEpochResult,
+  PppEpochDiagnostics,
+  PppSatDiagnostics,
   PppSolution,
   PppArc,
   PppFixState,
