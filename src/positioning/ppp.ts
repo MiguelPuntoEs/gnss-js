@@ -104,6 +104,20 @@ export interface PppOptions {
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
   troposphere?: boolean;
+  /**
+   * Estimate north/east horizontal troposphere gradients (Chen & Herring
+   * mapping, random walk) as geodetic software does. Unmodelled gradients
+   * bias the horizontal position by up to several mm, station by station.
+   * `true` uses the defaults. Default off.
+   */
+  estimateGradients?:
+    | boolean
+    | {
+        /** A-priori 1σ (m). Default 0.003. */
+        sigmaM?: number;
+        /** Random walk (m/√h). Default 0.0003. */
+        randomWalkMPerSqrtH?: number;
+      };
   /** A-priori troposphere model (zenith hydrostatic delay, mapping
    *  functions, gradients) — e.g. GPT3 + VMF3 from `gnss-js/troposphere`.
    *  Default: Saastamoinen with the standard atmosphere + Niell. */
@@ -669,7 +683,33 @@ const IDX_X = 0;
 const IDX_Y = 1;
 const IDX_Z = 2;
 const IDX_ZWD = 3;
-const NBASE = 4; // position(3) + zenith wet delay(1)
+const IDX_GN = 4;
+const IDX_GE = 5;
+/** position(3) + zenith wet delay(1) + north/east gradient(2); the
+ *  gradient states stay at zero variance unless `estimateGradients`. */
+const NBASE = 6;
+/** Wet slant delay from the troposphere states: zenith wet × its mapping
+ *  plus the horizontal gradients. */
+const wetSlant = (
+  x: readonly number[],
+  v: { mw: number; mgN: number; mgE: number }
+) => x[IDX_ZWD]! * v.mw + x[IDX_GN]! * v.mgN + x[IDX_GE]! * v.mgE;
+
+function gradientConfig(
+  opts: PppOptions
+): { sigmaM: number; randomWalkMPerSqrtH: number } | null {
+  const g = opts.estimateGradients;
+  if (!g) return null;
+  const c = g === true ? {} : g;
+  return {
+    sigmaM: c.sigmaM ?? 0.003,
+    randomWalkMPerSqrtH: c.randomWalkMPerSqrtH ?? 0.0003,
+  };
+}
+
+/** Chen & Herring (1997) gradient mapping function. */
+const gradientMapping = (el: number) =>
+  1 / (Math.sin(el) * Math.tan(el) + 0.0032);
 // Per-constellation receiver clocks (absorbing the inter-system bias) and
 // float ambiguities are appended dynamically after the base states.
 const CLK_VAR = 1e10; // white-noise clock variance reset each epoch (σ≈100 km)
@@ -756,6 +796,7 @@ export class PppEngine {
   private series!: PppEpochResult[];
   private ei = 0;
   private t0 = 0;
+  private lastEpochMs: number | null = null;
   private convergenceSec: number | null = null;
   private convergedStreak = 0;
 
@@ -776,7 +817,14 @@ export class PppEngine {
   reset(): void {
     const { opts } = this;
     // State vector and covariance. Position is estimated absolutely (metres).
-    this.x = [opts.aprioriPos[0], opts.aprioriPos[1], opts.aprioriPos[2], 0.1];
+    this.x = [
+      opts.aprioriPos[0],
+      opts.aprioriPos[1],
+      opts.aprioriPos[2],
+      0.1,
+      0,
+      0,
+    ];
     const P: number[][] = [];
     for (let i = 0; i < NBASE; i++) P.push(new Array<number>(NBASE).fill(0));
     const s0 = (opts.aprioriSigmaM ?? 100) ** 2; // 100 m: a header position
@@ -784,7 +832,13 @@ export class PppEngine {
     P[IDX_Y]![IDX_Y] = s0;
     P[IDX_Z]![IDX_Z] = s0;
     P[IDX_ZWD]![IDX_ZWD] = 0.5 * 0.5;
+    const grad = gradientConfig(opts);
+    if (grad) {
+      P[IDX_GN]![IDX_GN] = grad.sigmaM ** 2;
+      P[IDX_GE]![IDX_GE] = grad.sigmaM ** 2;
+    }
     this.P = P;
+    this.lastEpochMs = null;
     this.clkIdx = new Map();
     this.clockSeeded = new Set();
     this.ambIdx = new Map();
@@ -1045,6 +1099,15 @@ export class PppEngine {
     for (const ci of clkIdx.values()) P[ci]![ci] = CLK_VAR;
     // Zenith wet delay: random walk.
     P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
+    // Gradients: random walk in time.
+    const grad = gradientConfig(opts);
+    if (grad && this.lastEpochMs !== null) {
+      const dtH = Math.max(0, epoch.timeMs - this.lastEpochMs) / 3_600_000;
+      const q = grad.randomWalkMPerSqrtH ** 2 * dtH;
+      P[IDX_GN]![IDX_GN]! += q;
+      P[IDX_GE]![IDX_GE]! += q;
+    }
+    this.lastEpochMs = epoch.timeMs;
 
     const rcv: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
     // ecefToGeodetic returns radians.
@@ -1065,6 +1128,9 @@ export class PppEngine {
       range: number;
       tropoFixed: number; // zhd·mh (+ range corrections)
       mw: number;
+      /** Gradient partials: mapping × cos/sin azimuth (0 when not estimated). */
+      mgN: number;
+      mgE: number;
       windupM: number;
       slip: boolean;
       f1: number;
@@ -1179,6 +1245,8 @@ export class PppEngine {
         range,
         tropoFixed: zhd * mh + trop.gradient + corr.rangeM,
         mw,
+        mgN: grad ? gradientMapping(elRad) * Math.cos(azRad) : 0,
+        mgE: grad ? gradientMapping(elRad) * Math.sin(azRad) : 0,
         windupM: corr.phaseWindupM,
         slip,
         f1: o.f1,
@@ -1277,7 +1345,6 @@ export class PppEngine {
     // clock is uncertain, then tightens once it is pinned by the code. On
     // the very first usable epoch the clock is seeded from the median code
     // residual so it starts in range. ──
-    const zwd0 = x[IDX_ZWD]!;
     // Seed each constellation's clock from its own median code residual on
     // first sighting (a different receiver hardware delay per system — the
     // inter-system bias — so they must not share a clock), and keep its
@@ -1285,7 +1352,7 @@ export class PppEngine {
     const bySys = new Map<string, number[]>();
     for (const v of vis) {
       const sys = v.prn[0]!;
-      const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw);
+      const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + wetSlant(x, v));
       const arr = bySys.get(sys);
       if (arr) arr.push(r);
       else bySys.set(sys, [r]);
@@ -1305,7 +1372,7 @@ export class PppEngine {
       const med = [...res].sort((a, b) => a - b)[Math.floor(res.length / 2)]!;
       for (const v of vis) {
         if (v.prn[0] !== sys) continue;
-        const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + zwd0 * v.mw);
+        const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + wetSlant(x, v));
         if (Math.abs(r - med) > codeGate) screened.add(v.prn);
       }
     }
@@ -1336,7 +1403,7 @@ export class PppEngine {
     const prepAmbiguity = (v: Vis): number => {
       const ci = clockOf(v.prn[0]!);
       const common =
-        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + zwd0 * v.mw;
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       // A flagged/detected slip ends the current arc before re-init.
       if (v.slip) flushArc(v.prn);
       let ai = ambIdx.get(v.prn);
@@ -1373,7 +1440,7 @@ export class PppEngine {
     const codeUpdate = (v: Vis): void => {
       const ci = clockOf(v.prn[0]!);
       const common =
-        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       const sinEl = Math.max(Math.sin(v.elRad), 0.1);
       const h = new Array<number>(x.length).fill(0);
       h[IDX_X] = -v.e[0];
@@ -1381,6 +1448,8 @@ export class PppEngine {
       h[IDX_Z] = -v.e[2];
       h[ci] = 1;
       h[IDX_ZWD] = v.mw;
+      h[IDX_GN] = v.mgN;
+      h[IDX_GE] = v.mgE;
       const innov = v.pIf - common;
       // Loose absolute bound (clock jumps up to ~ms); the S-based reject
       // gate (rejectK) does the real outlier screening once the clock is
@@ -1397,7 +1466,7 @@ export class PppEngine {
       const sinEl = Math.max(Math.sin(v.elRad), 0.1);
       const rPhase = (phaseSigma / sinEl) ** 2;
       const commonPh =
-        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+        rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
       // Slips are caught before the updates (MW + time-differenced
       // phase), so a gated-out phase is an outlier, and only a run of them
@@ -1411,6 +1480,8 @@ export class PppEngine {
         h[IDX_Z] = -v.e[2];
         h[ci] = 1;
         h[IDX_ZWD] = v.mw;
+        h[IDX_GN] = v.mgN;
+        h[IDX_GE] = v.mgE;
         h[ai] = 1;
         used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
       }
@@ -1493,7 +1564,7 @@ export class PppEngine {
         const sys = v.prn[0]!;
         const ci = clockOf(sys);
         const commonPh =
-          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
         const innov = v.lIf - (commonPh + v.windupM + x[ai]!);
         if (Math.abs(innov) >= 0.15) continue; // undetected slip / gross outlier
         const arr = bySysRes.get(sys);
@@ -1533,7 +1604,7 @@ export class PppEngine {
       const raw = vis.map((v) => {
         const ci = clockOf(v.prn[0]!);
         const common =
-          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + x[IDX_ZWD]! * v.mw;
+          rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
         const ai = ambIdx.get(v.prn);
         return {
           v,

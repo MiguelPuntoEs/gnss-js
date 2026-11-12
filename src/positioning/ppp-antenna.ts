@@ -8,12 +8,20 @@
 import type { AntexFile, AntennaEntry, FrequencyData } from '../antex/index';
 
 export interface AntennaOffset {
-  /** IF-combined PCO (m): satellite → body-frame [X,Y,Z]; receiver → ENU. */
+  /** IF-combined PCO (m): satellite → body-frame [X,Y,Z]; receiver →
+   *  [North, East, Up], ANTEX's order (not ENU — swap before adding to an
+   *  ENU antenna delta). */
   pco: [number, number, number];
   /** IF-combined no-azimuth PCV samples (m) over zenith/nadir angle. */
   pcvZen1Deg: number;
   pcvDzenDeg: number;
   pcvNoazi: number[];
+  /** Azimuth step (deg) of `pcvAzi`; absent/0 = no azimuth dependence. */
+  pcvDaziDeg?: number;
+  /** IF-combined azimuth-dependent PCV (m): rows = azimuth 0…360 by
+   *  `pcvDaziDeg`, columns = the zenith angles of `pcvNoazi`. When present
+   *  it replaces `pcvNoazi` (ANTEX: the full pattern). */
+  pcvAzi?: number[][];
 }
 
 export interface PppAntennaModel {
@@ -76,7 +84,25 @@ function combineIf(
   for (let i = 0; i < nz; i++) {
     pcvNoazi[i] = (g * fA.pcvNoazi[i]! - (g - 1) * fB.pcvNoazi[i]!) * mm;
   }
-  return { pco, pcvZen1Deg: 0, pcvDzenDeg: 0, pcvNoazi };
+  const rows = Math.min(fA.pcv.length, fB.pcv.length);
+  const pcvAzi = rows
+    ? Array.from({ length: rows }, (_, r) => {
+        const a = fA.pcv[r]!;
+        const b = fB.pcv[r]!;
+        const n = Math.min(a.length, b.length, nz);
+        return Array.from(
+          { length: n },
+          (_, i) => (g * a[i]! - (g - 1) * b[i]!) * mm
+        );
+      })
+    : undefined;
+  return {
+    pco,
+    pcvZen1Deg: 0,
+    pcvDzenDeg: 0,
+    pcvNoazi,
+    ...(pcvAzi ? { pcvAzi } : {}),
+  };
 }
 
 export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
@@ -93,11 +119,15 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
     }
   }
 
-  const withZen = (entry: AntennaEntry, off: AntennaOffset): AntennaOffset => ({
-    ...off,
-    pcvZen1Deg: entry.zen1,
-    pcvDzenDeg: entry.dzen,
-  });
+  const withZen = (entry: AntennaEntry, off: AntennaOffset): AntennaOffset => {
+    const { pcvAzi, ...rest } = off;
+    return {
+      ...rest,
+      pcvZen1Deg: entry.zen1,
+      pcvDzenDeg: entry.dzen,
+      ...(pcvAzi && entry.dazi > 0 ? { pcvAzi, pcvDaziDeg: entry.dazi } : {}),
+    };
+  };
 
   return {
     satOffset(prn, dateMs, band1, band2, f1, f2) {
@@ -227,16 +257,50 @@ export function enuToEcef(
   ];
 }
 
-/** Interpolate a no-azimuth PCV (m) at a zenith/nadir angle (deg). */
-export function interpPcv(off: AntennaOffset, angleDeg: number): number {
-  const { pcvZen1Deg, pcvDzenDeg, pcvNoazi } = off;
-  if (pcvDzenDeg <= 0 || pcvNoazi.length < 2) return 0;
-  const x = (angleDeg - pcvZen1Deg) / pcvDzenDeg;
-  if (x <= 0) return pcvNoazi[0]!;
-  if (x >= pcvNoazi.length - 1) return pcvNoazi[pcvNoazi.length - 1]!;
+/** Linear interpolation along one zenith row. */
+function interpRow(
+  row: readonly number[],
+  zen1: number,
+  dzen: number,
+  angleDeg: number
+): number {
+  const x = (angleDeg - zen1) / dzen;
+  if (x <= 0) return row[0]!;
+  if (x >= row.length - 1) return row[row.length - 1]!;
   const i = Math.floor(x);
   const t = x - i;
-  return pcvNoazi[i]! * (1 - t) + pcvNoazi[i + 1]! * t;
+  return row[i]! * (1 - t) + row[i + 1]! * t;
+}
+
+/**
+ * Interpolate the PCV (m) at a zenith/nadir angle (deg) — and, when the
+ * offset carries an azimuth grid and `azimuthDeg` is given, bilinearly in
+ * azimuth too (north = 0°, clockwise, as ANTEX).
+ */
+export function interpPcv(
+  off: AntennaOffset,
+  angleDeg: number,
+  azimuthDeg?: number
+): number {
+  const { pcvZen1Deg, pcvDzenDeg, pcvNoazi, pcvAzi, pcvDaziDeg } = off;
+  if (pcvDzenDeg <= 0) return 0;
+  if (
+    azimuthDeg !== undefined &&
+    pcvAzi &&
+    pcvAzi.length >= 2 &&
+    pcvDaziDeg &&
+    pcvDaziDeg > 0
+  ) {
+    const az = ((azimuthDeg % 360) + 360) % 360;
+    const y = Math.min(az / pcvDaziDeg, pcvAzi.length - 1);
+    const j = Math.min(Math.floor(y), pcvAzi.length - 2);
+    const u = y - j;
+    const a = interpRow(pcvAzi[j]!, pcvZen1Deg, pcvDzenDeg, angleDeg);
+    const b = interpRow(pcvAzi[j + 1]!, pcvZen1Deg, pcvDzenDeg, angleDeg);
+    return a * (1 - u) + b * u;
+  }
+  if (pcvNoazi.length < 2) return 0;
+  return interpRow(pcvNoazi, pcvZen1Deg, pcvDzenDeg, angleDeg);
 }
 
 export { dot as vdot, norm as vnorm, cross as vcross };

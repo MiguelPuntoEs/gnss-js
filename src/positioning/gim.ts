@@ -69,7 +69,8 @@ export function gimVerticalTec(
   lonDeg: number
 ): number | null {
   const e = grid.epochs;
-  if (e.length === 0 || timeMs < e[0]! || timeMs > e[e.length - 1]!) return null;
+  if (e.length === 0 || timeMs < e[0]! || timeMs > e[e.length - 1]!)
+    return null;
   let i = 0;
   while (i < e.length - 2 && e[i + 1]! <= timeMs) i++;
   const span = e[i + 1]! - e[i]!;

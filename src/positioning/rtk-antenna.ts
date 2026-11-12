@@ -17,7 +17,7 @@
 import type { AntexFile, AntennaEntry, FrequencyData } from '../antex/index';
 import { enuToEcef, interpPcv, vdot, type AntennaOffset } from './ppp-antenna';
 
-/** A single-frequency receiver antenna offset (PCO in ENU metres + no-azimuth
+/** A single-frequency receiver antenna offset (PCO in North/East/Up metres, ANTEX order, + no-azimuth
  *  PCV over zenith). Shares {@link AntennaOffset}'s shape so {@link interpPcv}
  *  applies directly. */
 export type RtkAntennaOffset = AntennaOffset;
@@ -75,8 +75,9 @@ export function rcvAntennaRangeM(
   antDeltaEnu: readonly [number, number, number] = [0, 0, 0]
 ): number {
   const total: [number, number, number] = [
-    off.pco[0] + antDeltaEnu[0],
-    off.pco[1] + antDeltaEnu[1],
+    // PCO is ANTEX North/East/Up; the delta and enuToEcef are ENU.
+    off.pco[1] + antDeltaEnu[0],
+    off.pco[0] + antDeltaEnu[1],
     off.pco[2] + antDeltaEnu[2],
   ];
   const ecef = enuToEcef(total, latRad, lonRad);
