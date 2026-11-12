@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.45.0
+
+### Fixed — receiver antenna offsets were applied with North and East swapped
+
+- ANTEX gives receiver phase-centre offsets as North/East/Up, but PPP (`createPppCorrections`) and RTK (`rcvAntennaRangeM`) added them to an East/North/Up vector. Every receiver antenna's horizontal offset was applied mirrored across the NE diagonal: a few mm for most antennas, about 2 cm for some (`JAVRINGANT_G5T`). Height was not affected. Static PPP and campaign coordinates move by that amount; RTK between two different antenna types too.
+- Found with an EPN benchmark (40 EUREF stations, one week, against the EUREF combination): NYA2 from 20 mm to 3 mm; median |North| 1.1 → 0.6 mm and |East| 2.2 → 1.3 mm (float PPP, GPS+Galileo).
+- A regression test pins the ANTEX order.
+
+### Added — opt-in, off by default
+
+- `PppOptions.estimateGradients`: north and east tropospheric gradients (Chen & Herring mapping, random walk; `true` or `{ sigmaM, randomWalkMPerSqrtH }`, defaults 3 mm and 0.3 mm/√h). On the benchmark, North RMS 3.2 → 2.5 mm.
+- Azimuth-dependent receiver PCV, when the ANTEX has the grids (`AntennaOffset.pcvAzi`, `pcvDaziDeg`; `interpPcv` takes an azimuth). Under 1 mm on the benchmark; models built from the compact antenna binary have no grids and are unchanged.
+
 ## 2.44.0
 
 ### Added — start PPP from a known position
