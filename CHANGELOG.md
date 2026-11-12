@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added — PPP diagnostics for processing reports
+
+- `PppOptions.diagnostics`: each epoch of the series gets `diagnostics`, with the receiver clock per constellation (`clockM`), the position's formal 1σ East/North/Up (`positionSigmaEnu`) and, per satellite above the mask, elevation, azimuth, the post-fit ionosphere-free code and phase residuals (constellation mean removed), whether code and phase entered the filter, and whether the ambiguity was reset.
+- Read-only: the solution is identical with it on. Off by default (one small object per satellite and epoch).
+- New types `PppEpochDiagnostics` and `PppSatDiagnostics`.
+
+### Fixed
+
+- An epoch without usable satellites reported a zenith hydrostatic delay of 0, so its ZTD dropped to the wet part alone (about 0.2 m instead of 2.5 m). It is now the station's zenith delay from the same troposphere model.
+
 ## 2.41.0
 
 ### Added — Ireland, Portugal and Spain grids

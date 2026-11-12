@@ -284,6 +284,23 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     expect(phase.length / sats.length).toBeGreaterThan(0.9);
   });
 
+  it('reports the hydrostatic delay on an epoch without satellites', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    const part = [
+      ...epochs.slice(0, 50),
+      { timeMs: epochs[50]!.timeMs, obs: [] },
+    ];
+    const sol = solvePpp(part, sp3, { aprioriPos: truth });
+    const last = sol.series.at(-1)!;
+    expect(last.nSats).toBe(0);
+    // Same model, same station: the previous epoch's value to < 1 mm.
+    expect(last.ztdHydrostatic).toBeGreaterThan(2);
+    expect(
+      Math.abs(last.ztdHydrostatic - sol.series.at(-2)!.ztdHydrostatic)
+    ).toBeLessThan(0.001);
+  });
+
   it('kinematic mode tracks a (static) rover epoch-by-epoch near truth', async () => {
     const { epochs, truth } = await load();
     const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));

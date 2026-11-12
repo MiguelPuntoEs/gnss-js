@@ -1001,6 +1001,20 @@ export class PppEngine {
       });
     }
 
+    // No satellite this epoch: the hydrostatic delay is still the
+    // station's (zenith, from the same model), not 0.
+    if (!vis.length && (opts.troposphere ?? true))
+      epochZhd = opts.troposphereModel
+        ? opts.troposphereModel.delays(
+            epoch.timeMs,
+            latRad,
+            lonRad,
+            heightM,
+            Math.PI / 2,
+            0
+          ).zhd
+        : niellMapping(Math.PI / 2, latRad, heightM, epoch.timeMs).zhd;
+
     // ── Time-differenced carrier-phase slip test (static) ──
     // Between consecutive epochs the iono-free phase changes by the
     // geometric range change (both epochs evaluated at the current receiver
