@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.44.0
 
 ### Added — start PPP from a known position
 
