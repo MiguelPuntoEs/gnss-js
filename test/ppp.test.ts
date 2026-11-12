@@ -243,6 +243,64 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     expect(prRms).toBeLessThan(0.15);
   });
 
+  it('diagnostics: per-satellite residuals and clocks, solution unchanged', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    const part = epochs.slice(0, 600);
+    const opts = { aprioriPos: truth, elevationMaskDeg: 10 };
+    const plain = solvePpp(part, sp3, opts);
+    const diag = solvePpp(part, sp3, { ...opts, diagnostics: true });
+    // Recording is read-only: same filter, same answer.
+    expect(diag.position).toEqual(plain.position);
+    expect(plain.series[0]!.diagnostics).toBeUndefined();
+    const tail = diag.series.slice(-200);
+    for (const s of tail) {
+      const d = s.diagnostics!;
+      expect(Object.keys(d.clockM).sort()).toEqual(['C', 'E', 'G']);
+      // Converged static position: millimetres to centimetres, Up the largest.
+      const [se, sn, su] = d.positionSigmaEnu;
+      expect(Math.max(se, sn)).toBeLessThan(0.05);
+      expect(su).toBeGreaterThan(Math.min(se, sn));
+      expect(su).toBeLessThan(0.1);
+      // Every satellite the filter counted appears, above the mask.
+      expect(d.sats.length).toBeGreaterThanOrEqual(s.nSats);
+      expect(
+        d.sats.every((x) => x.elevDeg >= 10 && x.azDeg >= 0 && x.azDeg < 360)
+      ).toBe(true);
+    }
+    const sats = tail.flatMap((s) => s.diagnostics!.sats);
+    const rms = (v: number[]) =>
+      Math.sqrt(v.reduce((a, x) => a + x * x, 0) / v.length);
+    const code = sats.filter((x) => x.codeUsed).map((x) => x.codeRes);
+    const phase = sats
+      .filter((x) => x.phaseUsed && x.phaseRes !== null)
+      .map((x) => x.phaseRes!);
+    // Ionosphere-free code: decimetres to a metre; phase: centimetre.
+    expect(rms(code)).toBeGreaterThan(0.1);
+    expect(rms(code)).toBeLessThan(2);
+    expect(rms(phase)).toBeLessThan(0.03);
+    // Almost everything is used once converged.
+    expect(code.length / sats.length).toBeGreaterThan(0.9);
+    expect(phase.length / sats.length).toBeGreaterThan(0.9);
+  });
+
+  it('reports the hydrostatic delay on an epoch without satellites', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    const part = [
+      ...epochs.slice(0, 50),
+      { timeMs: epochs[50]!.timeMs, obs: [] },
+    ];
+    const sol = solvePpp(part, sp3, { aprioriPos: truth });
+    const last = sol.series.at(-1)!;
+    expect(last.nSats).toBe(0);
+    // Same model, same station: the previous epoch's value to < 1 mm.
+    expect(last.ztdHydrostatic).toBeGreaterThan(2);
+    expect(
+      Math.abs(last.ztdHydrostatic - sol.series.at(-2)!.ztdHydrostatic)
+    ).toBeLessThan(0.001);
+  });
+
   it('kinematic mode tracks a (static) rover epoch-by-epoch near truth', async () => {
     const { epochs, truth } = await load();
     const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));

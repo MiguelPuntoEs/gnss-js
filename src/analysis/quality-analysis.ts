@@ -89,11 +89,24 @@ export interface MultipathSky {
     toEl: number;
     rms: number;
   } | null;
+  /** The same RMS on a finer grid (10° azimuth × 5° elevation, cells with
+   *  fewer than `minSamples` null) — for drawing the sky; the statistics
+   *  above stay on the coarse cells, which hold more samples each. */
+  fine?: {
+    azBinDeg: number;
+    elBinDeg: number;
+    rms: (number | null)[][];
+    n: number[][];
+    minSamples: number;
+  };
 }
 
 const MP_AZ_BIN = 30;
 const MP_EL_BIN = 10;
 const MP_MIN_SAMPLES = 50;
+const MP_FINE_AZ_BIN = 10;
+const MP_FINE_EL_BIN = 5;
+const MP_FINE_MIN_SAMPLES = 20;
 
 function multipathSky(
   mp: MultipathResult,
@@ -105,6 +118,14 @@ function multipathSky(
     new Array<number>(nEl).fill(0)
   );
   const n = Array.from({ length: nAz }, () => new Array<number>(nEl).fill(0));
+  const nAzF = 360 / MP_FINE_AZ_BIN;
+  const nElF = 90 / MP_FINE_EL_BIN;
+  const sum2F = Array.from({ length: nAzF }, () =>
+    new Array<number>(nElF).fill(0)
+  );
+  const nF = Array.from({ length: nAzF }, () =>
+    new Array<number>(nElF).fill(0)
+  );
   for (const s of mp.series) {
     // SBAS GEOs sit in one cell all day: they don't map a reflector, and an
     // anomalous GEO signal (S28 on 2026/313: 19 m code "multipath" at BIK0
@@ -117,6 +138,10 @@ function multipathSky(
       const ie = Math.min(nEl - 1, Math.floor(ae.el / MP_EL_BIN));
       sum2[ia]![ie]! += p.mp * p.mp;
       n[ia]![ie]!++;
+      const fa = Math.min(nAzF - 1, Math.floor(ae.az / MP_FINE_AZ_BIN));
+      const fe = Math.min(nElF - 1, Math.floor(ae.el / MP_FINE_EL_BIN));
+      sum2F[fa]![fe]! += p.mp * p.mp;
+      nF[fa]![fe]!++;
     }
   }
   let worst: MultipathSky['worst'] = null;
@@ -151,6 +176,18 @@ function multipathSky(
     n,
     minSamples: MP_MIN_SAMPLES,
     worst,
+    fine: {
+      azBinDeg: MP_FINE_AZ_BIN,
+      elBinDeg: MP_FINE_EL_BIN,
+      rms: sum2F.map((col, ia) =>
+        col.map((x, ie) => {
+          const k = nF[ia]![ie]!;
+          return k < MP_FINE_MIN_SAMPLES ? null : Math.sqrt(x / k);
+        })
+      ),
+      n: nF,
+      minSamples: MP_FINE_MIN_SAMPLES,
+    },
   };
 }
 
