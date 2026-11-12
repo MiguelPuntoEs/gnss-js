@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.43.0
 
 ### Added — PPP cycle-slip repair (kinematic re-convergence)
 
