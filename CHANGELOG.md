@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.42.0
 
 ### Added — PPP diagnostics for processing reports
 
