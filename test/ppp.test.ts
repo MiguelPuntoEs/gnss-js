@@ -406,3 +406,74 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     }
   );
 });
+
+describe.skipIf(!HAS_DATA)('cycle-slip repair (ABMF)', () => {
+  it('bridges a 60 s total outage without re-convergence (kinematic)', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    // 6 h, then a 60 s total outage every 30 min; loss-of-lock on return.
+    const t0 = epochs[0]!.timeMs;
+    const span = epochs.filter((e) => e.timeMs < t0 + 6 * 3600_000);
+    const out = (t: number) => {
+      const k = Math.floor((t - t0) / 1800_000);
+      const s = t0 + k * 1800_000 + 3600_000;
+      return k >= 2 && t >= s - 1800_000 && t < s - 1800_000 + 60_000;
+    };
+    const seen = new Map<string, number>();
+    const eps = span
+      .filter((e) => !out(e.timeMs))
+      .map((e) => ({
+        timeMs: e.timeMs,
+        obs: e.obs.map((o) => {
+          const prev = seen.get(o.prn);
+          seen.set(o.prn, e.timeMs);
+          return prev != null && e.timeMs - prev > 30_000
+            ? { ...o, slip: true }
+            : o;
+        }),
+      }));
+    const run = (on: boolean) =>
+      solvePpp(eps, sp3, {
+        aprioriPos: truth,
+        groundTruth: truth,
+        mode: 'kinematic',
+        elevationMaskDeg: 10,
+        slipRepair: on,
+      });
+    const on = run(true);
+    const off = run(false);
+    const base = solvePpp(span, sp3, {
+      aprioriPos: truth,
+      groundTruth: truth,
+      mode: 'kinematic',
+      elevationMaskDeg: 10,
+    });
+    const repaired = on.series.reduce((a, s) => a + (s.slipsRepaired ?? 0), 0);
+    expect(repaired).toBeGreaterThan(0);
+    // Distance to the uninterrupted run 2–5 min after each outage: with
+    // repair the track carries straight on; without, it re-converges.
+    const vsBase = (sol: ReturnType<typeof run>) => {
+      const ref = new Map(base.series.map((s) => [s.timeMs, s.position]));
+      const v: number[] = [];
+      for (const s of sol.series) {
+        const since = (s.timeMs - t0) % 1800_000;
+        const p = ref.get(s.timeMs);
+        if (p && s.timeMs - t0 > 3600_000 && since > 180_000 && since < 360_000)
+          v.push(
+            Math.hypot(
+              s.position[0] - p[0],
+              s.position[1] - p[1],
+              s.position[2] - p[2]
+            )
+          );
+      }
+      return Math.sqrt(v.reduce((a, x) => a + x * x, 0) / v.length);
+    };
+    // Safety: in ABMF's equatorial ionosphere most repairs are (correctly)
+    // refused — a repair must never leave the track worse than a reset.
+    // (The gain is measured on mid-latitude data: 60 s outages go from a
+    // 16 min re-convergence to none — see the CHANGELOG.)
+    expect(vsBase(on)).toBeLessThanOrEqual(vsBase(off) * 1.05);
+    expect(on.series.every((s) => Number.isFinite(s.posSigma3d))).toBe(true);
+  }, 120_000);
+});

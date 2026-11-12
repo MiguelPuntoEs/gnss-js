@@ -116,6 +116,26 @@ export interface PppOptions {
    *  whether each observation was used — for processing reports. Default
    *  false (one small object per satellite and epoch). */
   diagnostics?: boolean;
+  /**
+   * Cycle-slip repair. When a satellite comes back after a short gap (or with
+   * its loss-of-lock flag set) its carrier jumps are estimated instead of
+   * re-initialising the ambiguity: the wide-lane jump from the
+   * Melbourne–Wübbena combination, the L1 jump from the geometry-free phase
+   * with the ionosphere extrapolated across the gap. Only integer-consistent
+   * repairs are accepted; otherwise the ambiguity resets as before. Turns a
+   * full re-convergence (~15 min) after a short outage into none. Default
+   * on, gaps up to 120 s; `false` disables.
+   */
+  slipRepair?:
+    | boolean
+    | {
+        /** Longest gap bridged (s). Default 120. */
+        maxGapS?: number;
+        /** Max distance of the wide-lane / L1 jump from an integer (cycles). Default 0.15. */
+        maxFrac?: number;
+        /** Extra σ (m) given to a repaired ambiguity. Default 0. */
+        softSigmaM?: number;
+      };
   /** High-rate precise satellite clocks (RINEX CLOCK, typically 30 s). When
    * given, satellite clock offsets come from this by linear interpolation
    * instead of the SP3 5-minute clocks — the dominant PPP accuracy term.
@@ -188,6 +208,11 @@ export interface PppEpochResult {
   ztdHydrostatic: number;
   /** RMS of post-fit phase residuals this epoch (m). */
   phaseResRms: number;
+  /** Formal 3D position σ after this epoch's update (m) — large when few
+   *  satellites or fresh ambiguities carry the solution (kinematic). */
+  posSigma3d: number;
+  /** Satellites whose cycle slip was repaired this epoch. */
+  slipsRepaired?: number;
   /** PPP-AR: between-satellite ambiguities fixed (0 = float only). */
   nFixed: number;
   /** PPP-AR: the ambiguity-fixed position, when the latest attempt fixed. */
@@ -690,6 +715,19 @@ export class PppEngine {
   >;
   /** Consecutive gated-out phase updates per satellite. */
   private phaseRejects!: Map<string, number>;
+  /** Per satellite: last good epoch's phases + a geometry-free history (for
+   *  the ionosphere trend) and the integer offsets applied after repairs. */
+  private repairState!: Map<
+    string,
+    {
+      tMs: number;
+      mw: number;
+      gf: { t: number; v: number }[];
+      dn1: number;
+      dn2: number;
+    }
+  >;
+  private lastSeenMs!: Map<string, number>;
   /** PPP-AR: the latest accepted fix (null: float). */
   /** The most recent accepted fix (static sessions fall back to it when
    *  the final attempt fails). */
@@ -747,6 +785,8 @@ export class PppEngine {
     this.mwState = new Map();
     this.tdPrev = new Map();
     this.phaseRejects = new Map();
+    this.repairState = new Map();
+    this.lastSeenMs = new Map();
     this.lastFix = null;
     this.lastArMs = -Infinity;
     this.firstFixMs = null;
@@ -773,6 +813,112 @@ export class PppEngine {
       startMs: s.startMs,
       endMs: s.endMs,
     });
+  }
+
+  /**
+   * Apply the integer offsets of earlier repairs to an observation, and if it
+   * comes back from a gap / with a slip flag, try to repair it. Returns the
+   * (possibly corrected) observation and whether it was repaired now.
+   */
+  private repairSlip(
+    o: PppSatObs,
+    tMs: number
+  ): { o: PppSatObs; repaired: boolean } {
+    const cfg = this.opts.slipRepair ?? true;
+    const st = this.repairState.get(o.prn);
+    const lam1 = C_LIGHT / o.f1;
+    const lam2 = C_LIGHT / o.f2;
+    const lamW = C_LIGHT / (o.f1 - o.f2);
+    const fix = (dn1: number, dn2: number): PppSatObs => ({
+      ...o,
+      l1: o.l1 - dn1,
+      l2: o.l2 - dn2,
+    });
+    const gfOf = (q: PppSatObs) => q.l1 * lam1 - q.l2 * lam2;
+    const mwOf = (q: PppSatObs) =>
+      q.l1 - q.l2 - (q.f1 * q.c1 + q.f2 * q.c2) / (q.f1 + q.f2) / lamW;
+    if (!cfg || !st) return { o, repaired: false };
+    const maxGapMs = ((cfg === true ? undefined : cfg.maxGapS) ?? 120) * 1000;
+    const maxFrac = (cfg === true ? undefined : cfg.maxFrac) ?? 0.15;
+    let q = fix(st.dn1, st.dn2);
+    const gapMs = tMs - st.tMs;
+    if (gapMs > maxGapMs) return { o: q, repaired: false }; // too long: reset (offsets kept)
+    // Was there a break? (flag, or more than ~2 nominal epochs missing)
+    const broke = o.slip || gapMs > 3 * this.nominalStepMs();
+    // Only repair a real break (flag or gap). Unflagged slips are left to
+    // the MW / time-differenced detectors: between sparse epochs a moving
+    // ionosphere alone shifts the geometry-free phase by several cm, and
+    // "repairing" that inserts wrong integers.
+    if (!broke) return { o: q, repaired: false };
+    const gfPred = this.predictGf(st.gf, tMs);
+    const gfNow = gfOf(q);
+    // Wide-lane jump from MW, L1 jump from GF (ionosphere extrapolated).
+    if (gfPred == null) return { o: q, repaired: false };
+    const dWl = mwOf(q) - st.mw;
+    const nWl = Math.round(dWl);
+    if (Math.abs(dWl - nWl) > maxFrac * 1.5) return { o: q, repaired: false };
+    const dGf = gfNow - gfPred;
+    const n1f = (dGf - lam2 * nWl) / (lam1 - lam2);
+    const n1 = Math.round(n1f);
+    if (Math.abs(n1f - n1) > maxFrac) return { o: q, repaired: false };
+    const n2 = n1 - nWl;
+    st.dn1 += n1;
+    st.dn2 += n2;
+    q = fix(st.dn1, st.dn2);
+    this.repairedNow.add(o.prn);
+    return { o: { ...q, slip: false }, repaired: true };
+  }
+
+  /** Linear extrapolation of the geometry-free history to t; null with < 3
+   *  points or when the ionosphere isn't behaving linearly (fit scatter
+   *  > 1 cm) — then the extrapolation can't resolve a 5 cm cycle. */
+  private predictGf(h: { t: number; v: number }[], t: number): number | null {
+    if (h.length < 3) return null;
+    const pts = h.slice(-6);
+    const n = pts.length;
+    const mt = pts.reduce((a, p) => a + p.t, 0) / n;
+    const mv = pts.reduce((a, p) => a + p.v, 0) / n;
+    let sxy = 0;
+    let sxx = 0;
+    for (const p of pts) {
+      sxy += (p.t - mt) * (p.v - mv);
+      sxx += (p.t - mt) ** 2;
+    }
+    const slope = sxx > 0 ? sxy / sxx : 0;
+    const rms = Math.sqrt(
+      pts.reduce((a, p) => a + (p.v - (mv + slope * (p.t - mt))) ** 2, 0) / n
+    );
+    if (rms > 0.01) return null;
+    return mv + slope * (t - mt);
+  }
+
+  /** Satellites repaired in the current epoch (soft-repair variance bump). */
+  private repairedNow = new Set<string>();
+  private stepMs = 0;
+  private prevEpochMs = 0;
+  /** The receiver's nominal epoch interval (smallest seen). */
+  private nominalStepMs(): number {
+    return this.stepMs || 30_000;
+  }
+
+  /** Remember a satellite's good observation for later repairs. */
+  private rememberForRepair(o: PppSatObs, tMs: number, mwMean: number): void {
+    const lam1 = C_LIGHT / o.f1;
+    const lam2 = C_LIGHT / o.f2;
+    const st = this.repairState.get(o.prn) ?? {
+      tMs,
+      mw: mwMean,
+      gf: [],
+      dn1: 0,
+      dn2: 0,
+    };
+    st.tMs = tMs;
+    st.mw = mwMean;
+    st.gf.push({ t: tMs, v: o.l1 * lam1 - o.l2 * lam2 });
+    // Keep ~5 minutes of history.
+    while (st.gf.length > 2 && st.gf[0]!.t < tMs - 300_000) st.gf.shift();
+    if (st.gf.length > 30) st.gf.splice(0, st.gf.length - 30);
+    this.repairState.set(o.prn, st);
   }
 
   /** Detect a cycle slip via the Melbourne–Wübbena wide-lane ambiguity. */
@@ -911,15 +1057,40 @@ export class PppEngine {
       sat: [number, number, number];
     }
     const vis: Vis[] = [];
+    let repairedNow = 0;
+    this.repairedNow.clear();
+    if (this.prevEpochMs) {
+      const d = epoch.timeMs - this.prevEpochMs;
+      if (d > 0 && (!this.stepMs || d < this.stepMs)) this.stepMs = d;
+    }
+    this.prevEpochMs = epoch.timeMs;
     // Zenith hydrostatic delay is station-level (same for every satellite this
     // epoch); capture it so ZTD = ZHD + ZWD can be reported.
     let epochZhd = 0;
     for (const raw of epoch.obs) {
       if (raw.c1 === 0 || raw.c2 === 0 || raw.l1 === 0 || raw.l2 === 0)
         continue;
-      const o = applySatBiases(source, raw, epoch.timeMs);
-      if (!o) continue;
+      const ob = applySatBiases(source, raw, epoch.timeMs);
+      if (!ob) continue;
+      const rep = this.repairSlip(ob, epoch.timeMs);
+      const o = rep.o;
+      if (rep.repaired) {
+        repairedNow++;
+        // Continue the MW average as if nothing happened (phases corrected).
+        const m = this.mwState.get(o.prn);
+        if (m) m.lastEi = ei - 1;
+      }
       const slip = detectSlip(o, ei);
+      if (!slip)
+        this.rememberForRepair(o, epoch.timeMs, this.mwState.get(o.prn)!.mean);
+      else if (!rep.repaired) {
+        // A real reset: the ambiguity restarts on these (offset-corrected)
+        // phases, so keep applying the offsets; only the geometry-free
+        // history restarts.
+        const st = this.repairState.get(o.prn);
+        if (st) st.gf = [];
+        this.rememberForRepair(o, epoch.timeMs, this.mwState.get(o.prn)!.mean);
+      }
       const sat = satStateAtEmission(source, o.prn, epoch.timeMs, rcv, o.c1);
       if (!sat) continue;
       const [elRad, azRad] = getAer(
@@ -1154,6 +1325,15 @@ export class PppEngine {
       // A flagged/detected slip ends the current arc before re-init.
       if (v.slip) flushArc(v.prn);
       let ai = ambIdx.get(v.prn);
+      // Optional soft repair: let a repaired ambiguity move by `softSigmaM`.
+      // Default 0 — the strict acceptance (linear ionosphere, near-integer
+      // jumps) already keeps wrong integers out, and any bump accumulates
+      // under frequent slips (urban: 94 % → 38 % of epochs within 10 cm).
+      if (ai !== undefined && !v.slip && this.repairedNow.has(v.prn)) {
+        const rc = opts.slipRepair;
+        const soft = (rc && rc !== true ? rc.softSigmaM : undefined) ?? 0;
+        P[ai]![ai]! += soft * soft;
+      }
       if (ai === undefined || v.slip) {
         const bInit = v.lIf - (common + v.windupM);
         if (ai === undefined) {
@@ -1258,6 +1438,7 @@ export class PppEngine {
         });
       }
       lastSeen.set(v.prn, ei);
+      this.lastSeenMs.set(v.prn, epoch.timeMs);
       nSats++;
     };
 
@@ -1388,9 +1569,16 @@ export class PppEngine {
       };
     }
 
-    // Drop ambiguities of satellites unseen for > 20 epochs.
+    // Drop ambiguities of satellites unseen for > 20 epochs — but keep them
+    // through a gap that slip repair could still bridge.
+    const repairCfg = opts.slipRepair ?? true;
+    const keepMs = repairCfg
+      ? ((repairCfg === true ? undefined : repairCfg.maxGapS) ?? 120) * 1000
+      : 0;
     for (const [prn, seen] of [...lastSeen]) {
-      if (ei - seen > 20) {
+      const seenMs = this.lastSeenMs.get(prn) ?? 0;
+      if (ei - seen > 20 && epoch.timeMs - seenMs > keepMs) {
+        this.lastSeenMs.delete(prn);
         const idx = ambIdx.get(prn);
         if (idx !== undefined) dropState(idx);
         lastSeen.delete(prn);
@@ -1438,6 +1626,10 @@ export class PppEngine {
       ztdWet: x[IDX_ZWD]!,
       ztdHydrostatic: epochZhd,
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
+      posSigma3d: Math.sqrt(
+        P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
+      ),
+      ...(repairedNow ? { slipsRepaired: repairedNow } : {}),
       nFixed: this.lastFix?.nFixed ?? 0,
       fixedPosition: this.lastFix?.position ?? null,
       ...(diagnostics ? { diagnostics } : {}),

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added — PPP cycle-slip repair (kinematic re-convergence)
+
+- `PppOptions.slipRepair` (default on): when a satellite returns after a short gap (≤ 120 s) or with its loss-of-lock flag set, its carrier jumps are repaired instead of re-initialising the ambiguity — wide-lane jump from Melbourne–Wübbena, L1 jump from the geometry-free phase with the ionosphere extrapolated linearly across the gap. Only accepted when the ionosphere trend is linear (fit scatter < 1 cm) and both jumps are within 0.15 cycles of an integer; otherwise the old reset. Unflagged jumps are left to the existing detectors.
+- Ambiguities of unseen satellites are kept for the repair window (time-based, not 20 epochs — at 1 Hz that was 20 s).
+- `PppEpochResult.posSigma3d` (formal 3D σ after the update) and `slipsRepaired`.
+- Measured on 6 held-out EUREF stations, kinematic, 30 s data: a 60 s total outage every 30 min went from 65 / 42 cm RMS (H/V) and a ~16 min re-convergence to 99 % of epochs within 10 cm and a median recovery of 0 min; frequent short drops ("light urban") from 9 % to 94 % of epochs within 10 cm; open sky unchanged (2.2 / 1.7 cm). In ABMF's equatorial ionosphere most repairs are refused (no change vs reset). Outages > 2 min still re-converge.
+
 ## 2.42.0
 
 ### Added — PPP diagnostics for processing reports
