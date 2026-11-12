@@ -65,6 +65,10 @@ function freqOf(entry: AntennaEntry, code: string): FrequencyData | undefined {
   return entry.frequencies.find((f) => f.frequency === code);
 }
 
+/** A pattern value, with a missing one (ANTEX 2.0 blank, NaN) as 0. */
+const pv = (v: number | undefined) =>
+  v !== undefined && Number.isFinite(v) ? v : 0;
+
 /** IF-combine two antenna frequencies into PCO (m) + no-azi PCV (m). */
 function combineIf(
   fA: FrequencyData,
@@ -82,7 +86,7 @@ function combineIf(
   const nz = Math.min(fA.pcvNoazi.length, fB.pcvNoazi.length);
   const pcvNoazi = new Array<number>(nz);
   for (let i = 0; i < nz; i++) {
-    pcvNoazi[i] = (g * fA.pcvNoazi[i]! - (g - 1) * fB.pcvNoazi[i]!) * mm;
+    pcvNoazi[i] = (g * pv(fA.pcvNoazi[i]) - (g - 1) * pv(fB.pcvNoazi[i])) * mm;
   }
   const rows = Math.min(fA.pcv.length, fB.pcv.length);
   const pcvAzi = rows
@@ -92,7 +96,7 @@ function combineIf(
         const n = Math.min(a.length, b.length, nz);
         return Array.from(
           { length: n },
-          (_, i) => (g * a[i]! - (g - 1) * b[i]!) * mm
+          (_, i) => (g * pv(a[i]) - (g - 1) * pv(b[i])) * mm
         );
       })
     : undefined;
@@ -114,7 +118,11 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
       const list = sats.get(a.serialNo) ?? [];
       list.push(a);
       sats.set(a.serialNo, list);
-    } else if (!rcvs.has(a.type)) {
+    } else if (
+      !rcvs.has(a.type) ||
+      (!a.serialNo && rcvs.get(a.type)!.serialNo)
+    ) {
+      // The type mean (blank serial number) over individual calibrations.
       rcvs.set(a.type, a);
     }
   }

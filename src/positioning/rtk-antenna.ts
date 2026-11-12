@@ -40,7 +40,12 @@ function freqOf(entry: AntennaEntry, code: string): FrequencyData | undefined {
 export function buildRtkAntenna(antex: AntexFile): RtkAntennaModel {
   const rcvs = new Map<string, AntennaEntry>();
   for (const a of antex.antennas) {
-    if (!a.isSatellite && !rcvs.has(a.type)) rcvs.set(a.type, a);
+    // The type mean (blank serial number) over individual calibrations.
+    if (
+      !a.isSatellite &&
+      (!rcvs.has(a.type) || (!a.serialNo && rcvs.get(a.type)!.serialNo))
+    )
+      rcvs.set(a.type, a);
   }
   const mm = 1e-3;
   return {
@@ -53,7 +58,8 @@ export function buildRtkAntenna(antex: AntexFile): RtkAntennaModel {
         pco: [f.pcoN * mm, f.pcoE * mm, f.pcoU * mm],
         pcvZen1Deg: entry.zen1,
         pcvDzenDeg: entry.dzen,
-        pcvNoazi: f.pcvNoazi.map((v) => v * mm),
+        // A missing pattern value (ANTEX 2.0 blank, NaN) counts as 0.
+        pcvNoazi: f.pcvNoazi.map((v) => (Number.isFinite(v) ? v * mm : 0)),
       };
     },
   };

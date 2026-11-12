@@ -407,7 +407,9 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
       });
       expect(sol.series.length).toBe(720);
       expect(sol.finalError3d!).toBeLessThan(1.0);
-    }
+    },
+    // Parses the full igs20.atx (61 MB) before a 720-epoch solve.
+    30_000
   );
 
   it.skipIf(!HAS_CLK)(

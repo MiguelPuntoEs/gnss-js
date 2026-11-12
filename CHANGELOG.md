@@ -8,6 +8,17 @@
 - Found with an EPN benchmark (40 EUREF stations, one week, against the EUREF combination): NYA2 from 20 mm to 3 mm; median |North| 1.1 → 0.6 mm and |East| 2.2 → 1.3 mm (float PPP, GPS+Galileo).
 - A regression test pins the ANTEX order.
 
+### Added — ANTEX 2.0
+
+- `parseAntex` reads ANTEX 2.0 (Montenbruck, Steigenberger & Villiger 2026; IGS publishes `igs20_rcv.atx2` / `igs20_sat.atx2`) as well as 1.4, detected from the first record, into the same `AntexFile`:
+  - Receiver offsets are always North/East/Up in `pcoN`/`pcoE`/`pcoU`. 2.0 writes "X / Y / Z" with x = East and y = North — the reverse of 1.4's "NORTH / EAST / UP" — and is converted. Satellite offsets stay body X/Y/Z.
+  - A record shared by several bands ("G01 S01 E01 C01 J01 I01") becomes one `FrequencyData` per band (`bands` lists them).
+  - 2.0 has no NOAZI row: `pcvNoazi` is the azimuth mean of the grid (`pcvNoaziDerived`); DAZI 360 reads as `dazi` 0. Blank (missing) pattern values are NaN; the PPP/RTK antenna models use 0 for them, as the spec allows.
+  - Calibration records: one `AntennaEntry` per phase calibration (validity interval); group delay and gain patterns in `codeCalibrations` / `gainCalibrations` (`AntexCalibration`); satellite `origin` (COM/ARP); header `antennaTypes`, `referenceFrame`, `release`.
+- 2.0 identifies satellite antennas by SVN. `parseSatellitePrns` reads the SATELLITE/PRN block of the IGS satellite metadata SINEX and `antexWithPrns` repeats each SVN entry per PRN period, so `buildPppAntenna` looks them up by PRN as with 1.4.
+- Checked against IGS's current files (release 2026:312): all 512 receiver antennas (4,681 bands) and all 422 satellite PRN periods give identical offsets and azimuth grids from 1.4 and 2.0; the 2.0 azimuth mean is within 0.03 mm (median) of 1.4's NOAZI rows.
+- The PPP and RTK receiver models prefer an antenna type's mean calibration over an individual (serial-number) one.
+
 ### Added — opt-in, off by default
 
 - `PppOptions.estimateGradients`: north and east tropospheric gradients (Chen & Herring mapping, random walk; `true` or `{ sigmaM, randomWalkMPerSqrtH }`, defaults 3 mm and 0.3 mm/√h). On the benchmark, North RMS 3.2 → 2.5 mm.

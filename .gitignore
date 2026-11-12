@@ -32,6 +32,9 @@
 !/test-fixtures/anmg_crx_slice.crx.Z
 !/test-fixtures/igs20-velocities.json
 !/test-fixtures/antex_ppp_slice.atx
+!/test-fixtures/antex14_slice.atx
+!/test-fixtures/antex20_slice.atx2
+!/test-fixtures/sat_metadata_prn_slice.snx
 !/test-fixtures/dlf500_sbf_setup_slice.sbf
 !/test-fixtures/f9p_rawnav_slice.ubx
 !/test-fixtures/oem719_rtk_base.gps
