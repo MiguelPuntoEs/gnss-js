@@ -7,6 +7,7 @@ import {
   type OceanLoadingCoefficients,
 } from '../src/positioning/ocean-loading';
 import { parseBlqFile, writeBlq } from '../src/positioning/blq';
+import { oceanLoadingEnuIers } from '../src/positioning/ocean-loading-iers';
 
 // Onsala-service BLQ (FES2004, 2013) for ONSA, REYK and WTZR, sliced from
 // DSOlab/iers2010 data/NTUA.BLQ (header kept whole).
@@ -237,5 +238,52 @@ describe('BLQ — convention locks', () => {
     expect(
       out.slice(at + 1, at + 7).map((l) => l.trim().split(/\s+/)[0])
     ).toEqual(['.00100', '.00200', '.00300', '10.0', '20.0', '30.0']);
+  });
+});
+
+describe('oceanLoadingEnuIers — nodal modulation + minor tides (IERS 7.1.2)', () => {
+  const onsa = parseBlqFile(text).stations[0]!.coefficients;
+  const rey = parseBlq(REYKJAVIK_BLQ).get('REYKJAVIK')!;
+  const run = (
+    c: OceanLoadingCoefficients,
+    exp: string,
+    opts?: Parameters<typeof oceanLoadingEnuIers>[2]
+  ) => {
+    const d: number[][] = [[], [], []];
+    table(exp).forEach((row, i) => {
+      const ours = oceanLoadingEnuIers(c, T0 + i * 3600e3, opts);
+      const ref = SPEC(...row);
+      for (let k = 0; k < 3; k++) d[k]!.push(ours[k]! - ref[k]!);
+    });
+    return { max: d.map((x) => Math.max(...x.map(Math.abs))), rms: d.map(rms) };
+  };
+
+  it('without nodal/minor terms it is the 11-constituent model (Doodson arguments = ARG)', () => {
+    for (let h = 0; h < 48; h += 3) {
+      const t = T0 + h * 3600e3;
+      const a = oceanLoadingEnu(rey, t);
+      const b = oceanLoadingEnuIers(rey, t, {
+        nodal: false,
+        minorTides: false,
+      });
+      for (let k = 0; k < 3; k++)
+        expect(Math.abs(a[k]! - b[k]!)).toBeLessThan(2e-5);
+    }
+  });
+
+  it('Reykjavik: 4.1 mm → < 1 mm max (0.54 mm RMS) against HARDISP', () => {
+    const r = run(rey, HARDISP_REYKJAVIK);
+    expect(r.max[2]).toBeLessThan(0.001);
+    expect(r.rms[2]).toBeLessThan(0.0006);
+    expect(Math.max(r.max[0]!, r.max[1]!)).toBeLessThan(0.00025);
+    // Nodal modulation alone is only part of the gap; the minor tides are most of it.
+    expect(
+      run(rey, HARDISP_REYKJAVIK, { minorTides: false }).max[2]
+    ).toBeGreaterThan(0.003);
+  });
+
+  it('Onsala: ≤ 0.2 mm against HARDISP', () => {
+    for (const m of run(onsa, HARDISP_ONSALA).max)
+      expect(m).toBeLessThan(0.0002);
   });
 });

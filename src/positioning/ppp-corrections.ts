@@ -93,6 +93,7 @@ import {
   oceanLoadingEnu,
   type OceanLoadingCoefficients,
 } from './ocean-loading';
+import { oceanLoadingEnuIers } from './ocean-loading-iers';
 import {
   type PppAntennaModel,
   satBodyFrame,
@@ -116,6 +117,10 @@ export interface PppCorrectionConfig {
   windup?: boolean;
   /** The station's ocean tide loading coefficients (BLQ), when known. */
   oceanLoading?: OceanLoadingCoefficients;
+  /** Ocean loading synthesis: the IERS 2010 way — nodal modulation plus
+   *  the minor tides by admittance (default) — or the 11 BLQ constituents
+   *  alone (the model before gnss-js 2.46). */
+  oceanLoadingModel?: 'iers' | 'basic';
   /** Solid-earth tide model: the full IERS 2010 Steps 1 + 2 (default), or
    *  the degree-2 in-phase term alone (the model before gnss-js 2.46). */
   tideModel?: 'iers2010' | 'degree2';
@@ -196,7 +201,10 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       }
       if (cfg.oceanLoading) {
         // Ocean loading ENU → ECEF, added to the receiver displacement.
-        const [e, n, u] = oceanLoadingEnu(cfg.oceanLoading, timeMs);
+        const [e, n, u] =
+          cfg.oceanLoadingModel === 'basic'
+            ? oceanLoadingEnu(cfg.oceanLoading, timeMs)
+            : oceanLoadingEnuIers(cfg.oceanLoading, timeMs);
         const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
         const d = enuToEcef([e, n, u], lat, lon);
         tideDisp[0] += d[0];
