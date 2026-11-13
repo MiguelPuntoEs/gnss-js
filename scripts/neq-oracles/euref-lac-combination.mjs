@@ -10,6 +10,9 @@ import { DATA, readText, igs20, c2415, neu, median, rms, stationsOf, eurefDatumS
 
 const week = Number(process.argv[2] ?? 2297);
 const weighting = process.env.WEIGHTING ?? 'vf'; // 'vf' | 'raw'
+// Per-AC Helmert parameters, pre-eliminated: 'none' | 'translation' | 'rigid' | 'similarity'.
+const perAc = process.env.HELMERT ?? 'none';
+const maxIter = Number(process.env.ITER ?? 6);
 const dir = join(DATA, String(week));
 const files = readdirSync(dir).filter((f) => /^[A-Z]{3}0EPNFIN_\d+_07D_07D_SOL\.SNX$/.test(f));
 const weeklyName = readdirSync(dir).find((f) => /^EUR0OPSSNX_\d+_07D_07D_SOL\.SNX$/.test(f));
@@ -29,7 +32,7 @@ const vel = (s) => (v1.get(s) ?? v2.get(s))?.vel;
 const sumText = readText(join(dir, weeklyName.replace('_SOL.SNX', '_SUM.SUM')));
 const datumSites = eurefDatumStations(sumText).map((d) => d.site);
 const datumOpts = {
-  reference: refs, sites: datumSites, position: 'translation',
+  reference: refs, sites: datumSites, position: (process.env.HELMERT ?? 'none') === 'none' ? 'translation' : process.env.HELMERT,
   maxResidualHorizontalM: 0.01, maxResidualVerticalM: 0.015, latestReference: true,
 };
 
@@ -51,11 +54,13 @@ for (const f of files) {
 const scaled = (a) => (weighting === 'vf' ? an.scaleNeq(a.q, 1 / a.vf / a.q.sigma0Apriori ** 2) : a.q);
 const removed = new Map(acs.map((a) => [a.ac, new Set()]));
 let comb;
-for (let it = 0; it < 6; it++) {
+for (let it = 0; it < maxIter; it++) {
   const parts = acs.map((a) => {
     const s = { ...scaled(a), sigma0Apriori: 1 };
     const rm = removed.get(a.ac);
-    return rm.size ? an.preEliminate(s, (p) => rm.has(p.site)) : s;
+    let x = rm.size ? an.preEliminate(s, (p) => rm.has(p.site)) : s;
+    if (perAc !== 'none') x = an.preEliminate(an.withHelmertParameters(x, perAc, a.ac), (p) => p.type.startsWith('HLM'));
+    return x;
   });
   comb = an.solveWithDatum(an.stackNeqs(parts), datumOpts);
   // Compare each AC with the combination (7-parameter Helmert) and drop
@@ -87,8 +92,10 @@ for (const [site, s] of est) {
 const f = (a) => `med ${median(a.map(Math.abs)).toFixed(2)} rms ${rms(a).toFixed(2)}`;
 console.log(`vs EUR0 weekly: ${rows.length} common stations (EUR0 ${W.size}, ours ${est.size}), mm, no Helmert`);
 console.log(`  N ${f(rows.map((x) => x.r[0]))} | E ${f(rows.map((x) => x.r[1]))} | U ${f(rows.map((x) => x.r[2]))}`);
-const h = an.estimateHelmert(rows.map((x) => x.xyz), rows.map((x) => x.w), { model: 'translation', maxResidualM: Infinity, minRefs: 3 });
-const r2 = h.residuals.map((d, i) => neu(rows[i].w, d).map((v) => v * 1000));
-console.log(`  after translation (t mm ${h.t.map((v) => (v * 1000).toFixed(2)).join(' ')}): N ${f(r2.map((x) => x[0]))} | E ${f(r2.map((x) => x[1]))} | U ${f(r2.map((x) => x[2]))}`);
+for (const model of ['translation', 'similarity']) {
+  const h = an.estimateHelmert(rows.map((x) => x.xyz), rows.map((x) => x.w), { model, maxResidualM: Infinity, minRefs: 3 });
+  const r2 = h.residuals.map((d, i) => neu(rows[i].w, d).map((v) => v * 1000));
+  console.log(`  after ${model} (t mm ${h.t.map((v) => (v * 1000).toFixed(2)).join(' ')}, scale ${(h.d * 1e9).toFixed(2)} ppb): N ${f(r2.map((x) => x[0]))} | E ${f(r2.map((x) => x[1]))} | U ${f(r2.map((x) => x[2]))}`);
+}
 const big = rows.filter((x) => Math.abs(x.r[2]) > 3 || Math.hypot(x.r[0], x.r[1]) > 1.5);
 console.log(`  stations > 1.5 mm horizontal or 3 mm up: ${big.length}`, big.slice(0, 12).map((x) => `${x.site}(${x.r.map((v) => v.toFixed(1)).join('/')})`).join(' '));

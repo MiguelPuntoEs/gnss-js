@@ -393,3 +393,51 @@ export function tieVelocities(
   }
   return rows.length ? addObservations(neq, rows) : neq;
 }
+
+/**
+ * Append Helmert transformation parameters (translation [+ rotation
+ * [+ scale]]) of a solution's station coordinates, design at the a-priori
+ * positions: Δx_obs = Δx + B·h. Pre-eliminate them (`preEliminate` on
+ * type 'HLM*' and this `tag`) to combine solutions whose frames differ —
+ * e.g. analysis centres' NEQs with different orbit/scale realisations.
+ */
+export function withHelmertParameters(
+  neq: NormalEquations,
+  model: HelmertModel,
+  tag: string
+): NormalEquations {
+  const n = neq.params.length;
+  const k = helmertParameterCount(model);
+  const params: NeqParameter[] = [
+    ...neq.params,
+    ...Array.from({ length: k }, (_, j) => ({
+      type: `HLM${j + 1}`,
+      site: tag,
+      refEpochMs: neq.dataStartMs,
+      apriori: 0,
+      unit: '',
+    })),
+  ];
+  const map: [number, number][][] = neq.params.map((_, i) => [[i, 1]]);
+  const st = new Map<string, number[]>();
+  neq.params.forEach((p, i) => {
+    const a = AXES.indexOf(p.type.slice(3) as 'X');
+    if (!p.type.startsWith('STA') || a < 0) return;
+    const key = `${p.site}|${p.pointCode ?? 'A'}|${p.solnId ?? '1'}`;
+    if (!st.has(key)) st.set(key, [-1, -1, -1]);
+    st.get(key)![a] = i;
+  });
+  for (const ix of st.values()) {
+    if (ix.some((i) => i < 0)) continue;
+    const rows = helmertDesign(
+      ix.map((i) => neq.params[i]!.apriori / EARTH_RADIUS),
+      model
+    );
+    ix.forEach((i, c) =>
+      rows[c]!.forEach((v, j) => {
+        if (v) map[i]!.push([n + j, v]);
+      })
+    );
+  }
+  return transformNeq(neq, params, map);
+}
