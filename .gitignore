@@ -82,3 +82,8 @@
 # BLQ round trip + HARDISP oracle: header + ONSA/REYK/WTZR of the Onsala
 # FES2004 BLQ in DSOlab/iers2010 data/NTUA.BLQ.
 !/test-fixtures/ntua_blq_slice.blq
+# ERP version 2 round trip: IGS final (week 2390), ESA final (2025/299),
+# CODE MGEX 3-day com22370 — whole files from BKG / ESA navigation office.
+!/test-fixtures/IGS0OPSFIN_20252990000_07D_01D_ERP.ERP
+!/test-fixtures/ESA0OPSFIN_20252990000_01D_01D_ERP.ERP
+!/test-fixtures/com22370.erp
