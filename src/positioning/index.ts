@@ -749,3 +749,4 @@ export * from './pole-tide';
 export * from './atmospheric-tide-loading';
 export * from './igrf';
 export * from './iono-higher-order';
+export * from './blq';

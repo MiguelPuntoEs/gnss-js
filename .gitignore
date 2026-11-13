@@ -79,3 +79,6 @@
 !/test-fixtures/opole-excerpt.txt
 !/test-fixtures/eop20c04-excerpt.txt
 !/test-fixtures/finals2000a-excerpt.txt
+# BLQ round trip + HARDISP oracle: header + ONSA/REYK/WTZR of the Onsala
+# FES2004 BLQ in DSOlab/iers2010 data/NTUA.BLQ.
+!/test-fixtures/ntua_blq_slice.blq
