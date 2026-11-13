@@ -6,6 +6,7 @@ export * from './warnings';
 export * from './nav';
 export * from './nav-writer';
 export * from './nav-writer-v4';
+export * from './nav-writer-v2';
 export * from './ionex';
 export * from './ionex-writer';
 export * from './sp3';

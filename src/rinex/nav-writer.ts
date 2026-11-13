@@ -1,20 +1,36 @@
 /**
- * RINEX 3.04 mixed navigation file writer.
+ * RINEX 3.04 / 3.05 mixed navigation file writer.
  *
- * Produces a standards-compliant RINEX 3.04 nav file from parsed NavResult data.
+ * Produces a standards-compliant RINEX 3 nav file from parsed NavResult
+ * data (RINEX 3.05 Tables A5-A18): every field the reader keeps is
+ * written back to its slot, so write → parse is lossless for files read
+ * from RINEX 2, 3 or 4.
+ *
+ * What RINEX 3 cannot hold, from a RINEX 4 source: CNAV / CNV1-3
+ * ephemerides, EOP records, the A2 term and t_tm of STO records, ION
+ * records other than Klobuchar / NeQuick-G, and all but the first ION
+ * record of each kind (BDS keeps one per broadcasting satellite, the
+ * header's time mark + SV ID). STO records become TIME SYSTEM CORR lines
+ * (first per type).
  */
 
 import { padL, padR, hdrLine } from './format';
-import type {
-  NavResult,
-  Ephemeris,
-  KeplerEphemeris,
-  GlonassEphemeris,
-} from './nav';
+import type { NavResult } from './nav';
+import {
+  fmtEpoch,
+  fmtSci,
+  ionoLines,
+  isKepler,
+  keplerOrbitRows,
+  leapLine,
+  orbitLine,
+  runDate,
+  stateVectorRows,
+  timeCorrs,
+  type NavWriterOptions,
+} from './nav-format';
 
-/* ================================================================== */
-/*  D19.12 formatter                                                   */
-/* ================================================================== */
+export type { NavWriterOptions } from './nav-format';
 
 /**
  * Format a number in RINEX "D19.12" scientific notation.
@@ -26,188 +42,116 @@ import type {
  *   5153.71875→ " 5.153718750000E+03"
  */
 export function fmtD(val: number): string {
-  if (val === 0) return ' 0.000000000000E+00';
-
-  const sign = val < 0 ? '-' : ' ';
-  const abs = Math.abs(val);
-  let exp = Math.floor(Math.log10(abs));
-  const mantissa = abs / 10 ** exp;
-
-  // Format mantissa with 12 decimal digits
-  let mStr = mantissa.toFixed(12);
-  if (mStr.length > 14) {
-    // Rounding pushed the mantissa to 10.000…: renormalize
-    exp += 1;
-    mStr = (mantissa / 10).toFixed(12);
-  }
-
-  // Exponent sign and two-digit magnitude
-  const expSign = exp >= 0 ? '+' : '-';
-  const expStr = String(Math.abs(exp)).padStart(2, '0');
-
-  return `${sign}${mStr}E${expSign}${expStr}`;
+  return fmtSci(val, 19, 12, 'E');
 }
 
-/* ================================================================== */
-/*  Date formatting                                                    */
-/* ================================================================== */
-
-/** Format a Date for the SV epoch line: "YYYY MM DD HH MM SS" (each field 2-char right-aligned). */
-function fmtEpoch(d: Date): string {
-  const Y = padR(String(d.getUTCFullYear()), 4);
-  const M = padR(String(d.getUTCMonth() + 1), 3);
-  const D = padR(String(d.getUTCDate()), 3);
-  const h = padR(String(d.getUTCHours()), 3);
-  const m = padR(String(d.getUTCMinutes()), 3);
-  const s = padR(String(d.getUTCSeconds()), 3);
-  return `${Y}${M}${D}${h}${m}${s}`;
-}
-
-/* ================================================================== */
-/*  Type guard                                                         */
-/* ================================================================== */
-
-function isKepler(eph: Ephemeris): eph is KeplerEphemeris {
-  return 'af0' in eph;
-}
-
-/* ================================================================== */
-/*  Header writer                                                      */
-/* ================================================================== */
-
-function writeHeader(nav: NavResult): string {
+function writeHeader(
+  nav: NavResult,
+  version: string,
+  opts: NavWriterOptions
+): string {
   const lines: string[] = [];
-
-  // Version / Type
   lines.push(
     hdrLine(
-      padL('     3.04', 9) +
+      padR(version, 9) +
         '           ' +
-        padL('NAVIGATION DATA', 20) +
-        padL('M', 20),
+        padL('N: GNSS NAV DATA', 20) +
+        padL('M: MIXED', 20),
       'RINEX VERSION / TYPE'
     )
   );
-
-  // PGM / RUN BY / DATE
-  const now = new Date();
-  const dateStr =
-    now.getUTCFullYear().toString() +
-    String(now.getUTCMonth() + 1).padStart(2, '0') +
-    String(now.getUTCDate()).padStart(2, '0') +
-    ' ' +
-    String(now.getUTCHours()).padStart(2, '0') +
-    String(now.getUTCMinutes()).padStart(2, '0') +
-    String(now.getUTCSeconds()).padStart(2, '0') +
-    ' UTC';
   lines.push(
     hdrLine(
-      padL('GNSSCalc', 20) + padL('', 20) + padL(dateStr, 20),
+      padL(opts.program ?? 'GNSSCalc', 20) +
+        padL(opts.runBy ?? '', 20) +
+        padL(runDate(opts.date ?? new Date()), 20),
       'PGM / RUN BY / DATE'
     )
   );
 
-  // Ionospheric corrections
-  const ionoOrder = ['GPSA', 'GPSB', 'GAL', 'BDSA', 'BDSB'];
-  for (const key of ionoOrder) {
-    const vals = nav.header.ionoCorrections[key];
-    if (!vals) continue;
-    const valStr = vals.map((v) => fmtD(v)).join('');
-    lines.push(hdrLine(padL(key, 5) + valStr, 'IONOSPHERIC CORR'));
-  }
-  // Any remaining correction types not in the standard order
-  for (const key of Object.keys(nav.header.ionoCorrections)) {
-    if (ionoOrder.includes(key)) continue;
-    const vals = nav.header.ionoCorrections[key];
-    if (!vals) continue;
-    const valStr = vals.map((v) => fmtD(v)).join('');
-    lines.push(hdrLine(padL(key, 5) + valStr, 'IONOSPHERIC CORR'));
-  }
-
-  // Leap seconds
-  if (nav.header.leapSeconds != null) {
-    lines.push(
-      hdrLine(padR(String(nav.header.leapSeconds), 6), 'LEAP SECONDS')
-    );
+  // A4,1X,4D12.4,1X,A1,1X,I2 — GAL writes ai0-ai2 and a blank.
+  for (const l of ionoLines(nav.header, nav.ion)) {
+    const vals = [0, 1, 2, 3]
+      .map((k) =>
+        l.values[k] == null ? ' '.repeat(12) : fmtSci(l.values[k]!, 12, 4)
+      )
+      .join('');
+    let s = padL(l.type, 5) + vals;
+    if (l.timeMark || l.sv)
+      s +=
+        ' ' +
+        (l.timeMark ?? ' ') +
+        ' ' +
+        (l.sv ? padR(l.sv.slice(1), 2) : '  ');
+    lines.push(hdrLine(s, 'IONOSPHERIC CORR'));
   }
 
-  // End of header
+  // A4,1X,D17.10,D16.9,1X,I6,1X,I4,1X,A5,1X,I2
+  for (const c of timeCorrs(nav.header, nav.sto)) {
+    let s =
+      padL(c.type, 5) +
+      fmtSci(c.a0, 17, 10) +
+      fmtSci(c.a1, 16, 9) +
+      ' ' +
+      padR(String(c.refTime), 6) +
+      ' ' +
+      padR(String(c.refWeek), 4);
+    if (c.sv || c.utcId != null)
+      s += ' ' + padL(c.sv ?? '', 5) + ' ' + padR(String(c.utcId ?? ''), 2);
+    lines.push(hdrLine(s, 'TIME SYSTEM CORR'));
+  }
+
+  const leap = leapLine(nav.header);
+  if (leap) lines.push(leap);
   lines.push(hdrLine('', 'END OF HEADER'));
-
   return lines.join('\n') + '\n';
-}
-
-/* ================================================================== */
-/*  Ephemeris record writers                                           */
-/* ================================================================== */
-
-/** Build a broadcast orbit line (4-space indent + up to 4 D19.12 values). */
-function orbitLine(values: number[]): string {
-  return '    ' + values.map(fmtD).join('');
-}
-
-function writeKeplerRecord(eph: KeplerEphemeris): string {
-  const lines: string[] = [];
-
-  // SV epoch line
-  lines.push(
-    `${padL(eph.prn, 3)} ${fmtEpoch(eph.tocDate)}${fmtD(eph.af0)}${fmtD(eph.af1)}${fmtD(eph.af2)}`
-  );
-
-  // Broadcast orbit lines 1-7
-  lines.push(orbitLine([eph.iode, eph.crs, eph.deltaN, eph.m0]));
-  lines.push(orbitLine([eph.cuc, eph.e, eph.cus, eph.sqrtA]));
-  lines.push(orbitLine([eph.toe, eph.cic, eph.omega0, eph.cis]));
-  lines.push(orbitLine([eph.i0, eph.crc, eph.omega, eph.omegaDot]));
-  lines.push(orbitLine([eph.idot, eph.dataSources ?? 0, eph.week, 0]));
-  lines.push(
-    orbitLine([eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.tgd2 ?? 0])
-  );
-  lines.push(orbitLine([eph.ttm ?? eph.toe, 0, 0, 0]));
-
-  return lines.join('\n');
-}
-
-function writeGlonassRecord(eph: GlonassEphemeris): string {
-  const lines: string[] = [];
-
-  // SV epoch line: SV clock bias (−TauN), +gammaN, messageFrameTime.
-  // `tauN` already holds the raw RINEX field (= −τ_n, the repo-wide
-  // convention — see positioning/index.ts), so it is written verbatim.
-  lines.push(
-    `${padL(eph.prn, 3)} ${fmtEpoch(eph.tocDate)}${fmtD(eph.tauN)}${fmtD(eph.gammaN)}${fmtD(eph.messageFrameTime)}`
-  );
-
-  // Broadcast orbit lines 1-3
-  lines.push(orbitLine([eph.x, eph.xDot, eph.xAcc, eph.health]));
-  lines.push(orbitLine([eph.y, eph.yDot, eph.yAcc, eph.freqNum]));
-  lines.push(orbitLine([eph.z, eph.zDot, eph.zAcc, 0]));
-
-  return lines.join('\n');
 }
 
 /* ================================================================== */
 /*  Public API                                                         */
 /* ================================================================== */
 
-/**
- * Write a RINEX 3.04 mixed navigation file from parsed navigation data.
- *
- * Ephemerides are sorted by PRN then by tocDate.
- */
-export function writeRinexNav(nav: NavResult): string {
-  const header = writeHeader(nav);
+/** Options for {@link writeRinexNav}. */
+export interface RinexNavOptions extends NavWriterOptions {
+  /** 3.04 (default) or 3.05 — 3.05 adds the fourth GLONASS orbit line. */
+  version?: '3.04' | '3.05';
+}
 
-  // Sort ephemerides: by PRN string, then by tocDate
+/**
+ * Write a RINEX 3.04 (or 3.05) mixed navigation file from parsed
+ * navigation data — RINEX 2, 3 or 4, or receiver-decoded ephemerides.
+ *
+ * Ephemerides are sorted by PRN then by tocDate. Header IONOSPHERIC CORR
+ * and TIME SYSTEM CORR lines come from the header, or from RINEX 4 ION /
+ * STO records (see the module header for what RINEX 3 cannot express).
+ */
+export function writeRinexNav(
+  nav: NavResult,
+  opts: RinexNavOptions = {}
+): string {
+  const version = opts.version ?? '3.04';
+  const header = writeHeader(nav, version, opts);
+
   const sorted = [...nav.ephemerides].sort((a, b) => {
     const prnCmp = a.prn.localeCompare(b.prn);
     if (prnCmp !== 0) return prnCmp;
     return a.tocDate.getTime() - b.tocDate.getTime();
   });
 
-  const records = sorted.map((eph) =>
-    isKepler(eph) ? writeKeplerRecord(eph) : writeGlonassRecord(eph)
-  );
+  const records = sorted.map((eph) => {
+    const clock = isKepler(eph)
+      ? [eph.af0, eph.af1, eph.af2]
+      : // `tauN` already holds the raw RINEX field (= −τ_n, the repo-wide
+        // convention — see positioning/index.ts), so it is written verbatim.
+        [eph.tauN, eph.gammaN, eph.messageFrameTime];
+    const rows = isKepler(eph)
+      ? keplerOrbitRows(eph)
+      : stateVectorRows(eph, version === '3.05');
+    return [
+      `${padL(eph.prn, 3)} ${fmtEpoch(eph.tocDate)}${clock.map(fmtD).join('')}`,
+      ...rows.map(orbitLine),
+    ].join('\n');
+  });
 
-  return header + records.join('\n') + '\n';
+  return header + records.join('\n') + (records.length ? '\n' : '');
 }

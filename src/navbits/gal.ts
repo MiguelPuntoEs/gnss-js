@@ -33,7 +33,8 @@
 
 import type { KeplerEphemeris } from '../rinex/nav';
 import { crc24q } from './cnav';
-import { getBitS, getBitU, GPS_PI } from './index';
+import { sisaMeters } from '../rtcm3/accuracy';
+import { getBitS, getBitU, GPS_PI, navSecondsOfWeek } from './index';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 const SEC_PER_WEEK = 7 * 86400;
@@ -149,7 +150,8 @@ export function decodeGalInavWords(words: Uint8Array): KeplerEphemeris | null {
   const crc = getBitS(b, i, 16) * 2 ** -5;
   i += 16;
   const crs = getBitS(b, i, 16) * 2 ** -5;
-  // + SISA(E1,E5b) index (8 bits): no KeplerEphemeris slot
+  i += 16;
+  const sisa = getBitU(b, i, 8); // SISA(E1,E5b) index
 
   /* word type 4 */
   i = 128 * 4;
@@ -177,7 +179,8 @@ export function decodeGalInavWords(words: Uint8Array): KeplerEphemeris | null {
   i += 6 + 11 + 11 + 14 + 5; // a_i0-2 + iono disturbance flags
   const bgdE5a = getBitS(b, i, 10) * 2 ** -32; // BGD E5a/E1
   i += 10;
-  i += 10; // BGD E5b/E1 — no KeplerEphemeris slot
+  const bgdE5b = getBitS(b, i, 10) * 2 ** -32; // BGD E5b/E1
+  i += 10;
   const e5bHs = getBitU(b, i, 2);
   i += 2;
   const e1bHs = getBitU(b, i, 2);
@@ -202,7 +205,7 @@ export function decodeGalInavWords(words: Uint8Array): KeplerEphemeris | null {
   return {
     system: 'E',
     prn: `E${two(svid)}`,
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     tocDate,
     af0,
     af1,
@@ -227,6 +230,10 @@ export function decodeGalInavWords(words: Uint8Array): KeplerEphemeris | null {
     week,
     svHealth: (e5bHs << 7) | (e5bDvs << 6) | (e1bHs << 1) | e1bDvs,
     tgd: bgdE5a,
+    tgd2: bgdE5b,
+    // RINEX 3.05 Table A8: I/NAV E1-B + E5b-I, clock for E5b,E1
+    dataSources: 0x205,
+    svAccuracy: sisaMeters(sisa),
   };
 }
 
@@ -263,7 +270,8 @@ export function decodeGalFnavPages(pages: Uint8Array): KeplerEphemeris | null {
   i += 21;
   const af2 = getBitS(b, i, 6) * 2 ** -59;
   i += 6;
-  i += 8 + 11 + 11 + 14 + 5; // SISA(E1,E5a) + a_i0-2 + iono flags
+  const sisa = getBitU(b, i, 8); // SISA(E1,E5a) index
+  i += 8 + 11 + 11 + 14 + 5; // SISA + a_i0-2 + iono flags
   const bgdE5a = getBitS(b, i, 10) * 2 ** -32; // BGD E5a/E1
   i += 10;
   const e5aHs = getBitU(b, i, 2);
@@ -335,7 +343,7 @@ export function decodeGalFnavPages(pages: Uint8Array): KeplerEphemeris | null {
   return {
     system: 'E',
     prn: `E${two(svid)}`,
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     tocDate,
     af0,
     af1,
@@ -360,6 +368,10 @@ export function decodeGalFnavPages(pages: Uint8Array): KeplerEphemeris | null {
     week,
     svHealth: (e5aHs << 4) | (e5aDvs << 3),
     tgd: bgdE5a,
+    tgd2: 0, // F/NAV carries no BGD E5b/E1 (Table A8: not valid, 0)
+    // RINEX 3.05 Table A8: F/NAV E5a-I, clock for E5a,E1
+    dataSources: 0x102,
+    svAccuracy: sisaMeters(sisa),
   };
 }
 

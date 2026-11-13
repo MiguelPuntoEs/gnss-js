@@ -22,7 +22,8 @@
  */
 
 import type { KeplerEphemeris } from '../rinex/nav';
-import { getBitS, getBitU, GPS_PI } from './index';
+import { uraMeters } from '../rtcm3/accuracy';
+import { getBitS, getBitU, GPS_PI, navSecondsOfWeek as sowOf } from './index';
 
 // BDT calendar epoch (Jan 1 2006 00:00:00 BDT), naive — RINEX BDS nav
 // records print BDT calendar dates and parseNavFile keeps them as-is.
@@ -31,8 +32,6 @@ const BDT_EPOCH_MS = Date.UTC(2006, 0, 1);
 const SEC_PER_WEEK = 7 * 86400;
 const MS_PER_WEEK = SEC_PER_WEEK * 1000;
 const HALF_WEEK = 302400;
-
-const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 /** Bytes per stored 300-bit subframe (RTKLIB layout: 38-byte stride). */
 export const BDS_SUBFRAME_BYTES = 38;
@@ -145,6 +144,10 @@ interface BdsFields {
   tocSec: number;
   svh: number;
   tgd1: number;
+  tgd2: number;
+  aode: number;
+  aodc: number;
+  ura: number;
   af0: number;
   af1: number;
   af2: number;
@@ -184,9 +187,10 @@ function buildBdsEphemeris(prn: string, f: BdsFields): KeplerEphemeris {
     af0: f.af0,
     af1: f.af1,
     af2: f.af2,
-    // AODE is not in the ephemeris subframes; RTKLIB derives the RINEX
-    // IODE/AODE slot from toc per the BDS ICD update schedule.
-    iode: Math.floor(f.tocSec / 720) % 240,
+    // RINEX 3.05 Table A14 / 4.02 A19: the AODE (0-31) as broadcast —
+    // RTKLIB 2.4.2 and the IGS/DLR merged files print it; RTCM 1042
+    // carries it in 5 bits. (demo5's toc/720 mod 240 is not AODE.)
+    iode: f.aode,
     crs: f.crs,
     deltaN: f.deltaN,
     m0: f.m0,
@@ -205,7 +209,10 @@ function buildBdsEphemeris(prn: string, f: BdsFields): KeplerEphemeris {
     idot: f.idot,
     week, // RINEX BDS week field is the BDT week of toe
     svHealth: f.svh, // SatH1
-    tgd: f.tgd1, // TGD1 (B1) — RINEX slot
+    tgd: f.tgd1, // TGD1 B1/B3
+    tgd2: f.tgd2, // TGD2 B2/B3
+    aodc: f.aodc,
+    svAccuracy: uraMeters(f.ura),
   };
 }
 
@@ -233,15 +240,16 @@ export function decodeBdsD1Frame(
   const frn1 = getBitU(b, i + 15, 3);
   const sow1 = getBitU2(b, i + 18, 8, i + 30, 12);
   const svh = getBitU(b, i + 42, 1); // SatH1
-  // i+43,5: AODC — not part of the emitted record
-  // i+48,4: URA index — not part of the emitted record
+  const aodc = getBitU(b, i + 43, 5); // AODC
+  const ura = getBitU(b, i + 48, 4); // URA index
   const week = getBitU(b, i + 60, 13); // week in BDT
   const tocSec = getBitU2(b, i + 73, 9, i + 90, 8) * 8.0;
   const tgd1 = getBitS(b, i + 98, 10) * 0.1 * 1e-9;
-  // i+108,4 / i+120,6: TGD2 (B2) — not stored (single-tgd record)
+  const tgd2 = getBitS2(b, i + 108, 4, i + 120, 6) * 0.1 * 1e-9;
   const af2 = getBitS(b, i + 214, 11) * 2 ** -66;
   const af0 = getBitS2(b, i + 225, 7, i + 240, 17) * 2 ** -33;
   const af1 = getBitS2(b, i + 257, 5, i + 270, 17) * 2 ** -50;
+  const aode = getBitU(b, i + 287, 5); // AODE
 
   /* subframe 2 */
   i = 8 * 38 * 1;
@@ -283,6 +291,10 @@ export function decodeBdsD1Frame(
     tocSec,
     svh,
     tgd1,
+    tgd2,
+    aode,
+    aodc,
+    ura,
     af0,
     af1,
     af2,
@@ -327,11 +339,12 @@ export function decodeBdsD2Frame(
   const pgn1 = getBitU(b, i + 42, 4);
   const sow1 = getBitU2(b, i + 18, 8, i + 30, 12);
   const svh = getBitU(b, i + 46, 1); // SatH1
-  // i+47,5: AODC, i+60,4: URA index — not part of the emitted record
+  const aodc = getBitU(b, i + 47, 5); // AODC
+  const ura = getBitU(b, i + 60, 4); // URA index
   const week = getBitU(b, i + 64, 13); // week in BDT
   const tocSec = getBitU2(b, i + 77, 5, i + 90, 12) * 8.0;
   const tgd1 = getBitS(b, i + 102, 10) * 0.1 * 1e-9;
-  // i+120,10: TGD2 (B2) — not stored (single-tgd record)
+  const tgd2 = getBitS(b, i + 120, 10) * 0.1 * 1e-9;
 
   /* page 3 */
   i = 8 * 38 * 2;
@@ -346,6 +359,7 @@ export function decodeBdsD2Frame(
   const sow4 = getBitU2(b, i + 18, 8, i + 30, 12);
   const af1p4 = getBitU2(b, i + 46, 6, i + 60, 12);
   const af2 = getBitS2(b, i + 72, 10, i + 90, 1) * 2 ** -66;
+  const aode = getBitU(b, i + 91, 5); // AODE
   const deltaN = getBitS(b, i + 96, 16) * 2 ** -43 * GPS_PI;
   const cucp4 = getBitS(b, i + 120, 14);
 
@@ -435,6 +449,10 @@ export function decodeBdsD2Frame(
     tocSec,
     svh,
     tgd1,
+    tgd2,
+    aode,
+    aodc,
+    ura,
     af0,
     af1: mergeS(af1p3, af1p4, 18) * 2 ** -50,
     af2,

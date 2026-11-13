@@ -32,7 +32,7 @@ import type {
   GlonassEphemeris,
   KeplerEphemeris,
 } from '../rinex/nav';
-import { GPS_PI } from '../navbits/index';
+import { GPS_PI, navSecondsOfWeek as sowOf } from '../navbits/index';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 // GLONASS `day` is a 1-based day-of-4-year-era number (1…1461); era 0
@@ -48,8 +48,6 @@ const SC2RAD = GPS_PI;
 
 const gpsMs = (week: number, sec: number) =>
   GPS_EPOCH_MS + week * MS_PER_WEEK + sec * 1000;
-const sowOf = (dateMs: number) =>
-  (((dateMs / 1000) % SEC_PER_WEEK) + SEC_PER_WEEK) % SEC_PER_WEEK;
 const two = (n: number) => String(n).padStart(2, '0');
 
 /** Little-/big-endian field reader over a record body. */

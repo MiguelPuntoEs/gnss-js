@@ -104,3 +104,5 @@
 !/test-fixtures/borj_met_v305_slice.rnx
 !/test-fixtures/tubo_met_v303_slice.rnx
 !/test-fixtures/tuc2_met_v305_slice.rnx
+# RTKLIB 2.4.2p13 convbin RINEX nav of the raw fixtures (nav oracle)
+!/test-fixtures/convbin
