@@ -716,7 +716,11 @@ export type {
   PppCorrectionConfig,
 } from './ppp-corrections';
 export { buildPppAntenna, withSatelliteAntennas } from './ppp-antenna';
-export type { PppAntennaModel, AntennaOffset } from './ppp-antenna';
+export type {
+  PppAntennaModel,
+  AntennaOffset,
+  PppAntennaBuildOptions,
+} from './ppp-antenna';
 export { sunEcef, moonEcef, solidEarthTide, gmst } from './ppp-astro';
 export {
   resolvePppAmbiguities,

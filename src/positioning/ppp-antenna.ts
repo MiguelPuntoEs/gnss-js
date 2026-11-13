@@ -109,7 +109,21 @@ function combineIf(
   };
 }
 
-export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
+export interface PppAntennaBuildOptions {
+  /**
+   * Receiver antennas calibrated for GPS only, used on another
+   * constellation: 'gps-bands' (default, as RTKLIB) takes the GPS L1/L2
+   * patterns as the two bands and combines them with that constellation's
+   * frequencies; 'gps-if' uses the GPS L1/L2 ionosphere-free phase centre
+   * unchanged — the combination the calibration describes.
+   */
+  missingBands?: 'gps-bands' | 'gps-if';
+}
+
+export function buildPppAntenna(
+  antex: AntexFile,
+  options: PppAntennaBuildOptions = {}
+): PppAntennaModel {
   // Index satellites by PRN (multiple validity windows) and receivers by type.
   const sats = new Map<string, AntennaEntry[]>();
   const rcvs = new Map<string, AntennaEntry>();
@@ -176,12 +190,18 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
       let b = freqOf(entry, band2);
       // Calibrations for Galileo/BeiDou bands are missing for many antennas:
       // fall back to GPS L1/L2, as RTKLIB does.
+      let fa = f1;
+      let fb = f2;
       if (!a || !b) {
         a = freqOf(entry, 'G01');
         b = freqOf(entry, 'G02');
+        if (options.missingBands === 'gps-if') {
+          fa = 1575.42e6;
+          fb = 1227.6e6;
+        }
       }
       if (!a || !b) return null;
-      return withZen(entry, combineIf(a, b, f1, f2));
+      return withZen(entry, combineIf(a, b, fa, fb));
     },
   };
 }
