@@ -13,6 +13,7 @@
 !/test-fixtures/anmg_obs_slice.rnx
 !/test-fixtures/inab_obs_slice.25o
 !/test-fixtures/README.rinex-obs
+!/test-fixtures/f9p_rawx_convbin.obs
 !/test-fixtures/f9p_sfrbx_slice.ubx
 !/test-fixtures/tudb_meas3_slice.sbf
 !/test-fixtures/f9p_iono_slice.ubx

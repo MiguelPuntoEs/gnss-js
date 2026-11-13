@@ -5,3 +5,8 @@ anmg_obs_slice.rnx   crx2rnx (RNXCMP 4.2.0) of anmg_crx_slice.crx, first 3 epoch
 inab_obs_slice.25o   crx2rnx (RNXCMP 4.2.0) of inab_lli_slice.25d, epochs 117-121
                      (holds the flag-3 event at 01:00:00)
   produced with: crx2rnx - < X.crx > X.rnx, then header + N epoch records kept.
+
+f9p_rawx_convbin.obs RTKLIB 2.4.2 p13 convbin of f9p_rawx_slice.ubx (u-blox F9P RXM-RAWX):
+  convbin -r ubx -v 3.04 -od -os -oi -ot -ol f9p_rawx_slice.ubx -o f9p_rawx_convbin.obs
+          -n f9p.nav -g f9p.g -h f9p.h -q f9p.q -l f9p.l -s f9p.sbs
+  (every output named: p13 leaves unnamed outputs uninitialised -> "file open error")
