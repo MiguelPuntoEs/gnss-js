@@ -12,6 +12,9 @@
 export interface SatGeom {
   prn: string;
   satEcef: [number, number, number];
+  /** Satellite ECEF velocity (m/s), when the ephemeris source gives one —
+   *  the eclipse attitude models need the orbital plane. */
+  satVel?: [number, number, number];
   rcvEcef: [number, number, number];
   /** Unit line of sight, receiver → satellite. */
   los: [number, number, number];
@@ -42,6 +45,8 @@ export interface CorrectionResult {
   rangeM: number;
   /** Additional phase-only correction (wind-up), metres. */
   phaseWindupM: number;
+  /** Leave the satellite out at this epoch (attitude unknown). */
+  exclude?: boolean;
 }
 
 /** Correction configuration + hooks. Supplied by the caller. */
@@ -84,6 +89,7 @@ import {
   vdot,
   phaseWindup,
 } from './ppp-antenna';
+import type { SatAttitudeProvider } from './sat-attitude';
 
 export interface PppCorrectionConfig {
   antenna: PppAntennaModel;
@@ -98,6 +104,10 @@ export interface PppCorrectionConfig {
   windup?: boolean;
   /** The station's ocean tide loading coefficients (BLQ), when known. */
   oceanLoading?: OceanLoadingCoefficients;
+  /** Satellite attitude for the PCO direction and the wind-up (eclipse
+   *  models or the analysis centre's ORBEX quaternions — see
+   *  `createSatAttitude`). Default: nominal yaw steering. */
+  attitude?: SatAttitudeProvider;
 }
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
@@ -147,7 +157,18 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       );
 
       // Satellite body frame (needed for PCO + wind-up).
-      const frame = ctx ? satBodyFrame(geom.satEcef, ctx.sun) : null;
+      const att = cfg.attitude;
+      if (att && ctx && geom.satVel) {
+        if (
+          att.exclude(geom.prn, ctx.timeMs, geom.satEcef, geom.satVel, ctx.sun)
+        )
+          return { rangeM: 0, phaseWindupM: 0, exclude: true };
+      }
+      const frame = !ctx
+        ? null
+        : att && geom.satVel
+          ? att.frame(geom.prn, ctx.timeMs, geom.satEcef, geom.satVel, ctx.sun)
+          : satBodyFrame(geom.satEcef, ctx.sun);
 
       // ── Satellite antenna PCO + PCV ──
       if (useSat && frame && geom.band1 && geom.band2) {

@@ -17,3 +17,4 @@ export * from './obs-writer-v4';
 export * from './obs-writer-common';
 export * from './sinex';
 export * from './unlzw';
+export * from './orbex';

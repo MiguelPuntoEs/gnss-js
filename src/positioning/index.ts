@@ -743,3 +743,27 @@ export type {
   NetworkFcbSummary,
 } from './ppp-fcb';
 export * from './ocean-loading';
+export {
+  createSatAttitude,
+  modelAttitude,
+  attitudeLaw,
+  orbitGeometry,
+  frameFromYaw,
+  yawOfFrame,
+  blockFromTypeName,
+  blockTableFromAntex,
+  blockTableFromOrbex,
+  builtinBlockTable,
+  ATTITUDE_PARAMS,
+} from './sat-attitude';
+export type {
+  SatBlock,
+  SatBlockTable,
+  SatFrame,
+  OrbitGeometry,
+  AttitudeMode,
+  AttitudeState,
+  SatAttitudeSource,
+  SatAttitudeOptions,
+  SatAttitudeProvider,
+} from './sat-attitude';
