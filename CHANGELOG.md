@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.46.0
+## 2.47.0
 
 ### Changed — IERS Conventions station displacements are the default
 
@@ -8,7 +8,7 @@
 - Ocean tide loading adds nodal modulation and 16 minor tides by admittance (IERS 2010 7.1.2), checked against the IERS HARDISP test case (Reykjavik was up to 4.1 mm off). `oceanLoadingModel: 'basic'` keeps the 11 constituents without nodal terms.
 - The Moon position for the tides dropped a J2000 precession term while the rotation assumed equinox of date: a 0.3° direction error in 2024, up to 1.7 mm of solid tide (checked against JPL DE421 now). Leap seconds come from the table instead of a hard-coded 18 s.
 - New, on when the caller passes the data: solid pole tide with the 2018 secular pole (`eop`), ocean pole tide (`oceanPoleTide`, Desai 2002), S1/S2 atmospheric tide loading (`atmosphericTides`), 2nd + 3rd order ionosphere from a GIM and IGRF-14 (`higherOrderIono`).
-- EOP: `parseFinals2000A`, `parseEopC04`, `interpolateEop`; IGS ERP 2 read/write (`parseErp`, `writeErp`, `erpAt`).
+- EOP: `parseFinals2000A`, `parseEopC04`, `interpolateEop`; IGS ERP records (`parseErp`, 2.46.0) are accepted as they are.
 - On the EPN benchmark (40 stations, one week) each model is below 1 mm; together they are in the Conventions, so they are the defaults.
 
 ### Added — normal equations (`gnss-js/analysis`)
@@ -29,7 +29,6 @@
 - Troposphere SINEX 2.00: `parseTroSinex` (also 0.01/1.00), `writeTroSinex`, `troSeries`; `PppEpochResult` carries `ztdSigma` and `gradients`. ZTD against EUREF's combination: 4.8 mm median RMS (40 stations).
 - Regional ionosphere and DCBs from a station network: `estimateRegionalIonosphere`, `regionalIonoToIonex`, `regionalDcbToBiasSinex`. VTEC against ESA's GIM: 2.8 TECU RMS.
 - Network satellite clocks: `estimateNetworkClocks` (batch, epoch clocks pre-eliminated), `clockSolutionToClk`. GPS, 40 EPN stations, 30 s: 0.065 ns STD per pass, 0.49 ns RMS against IGS (per-satellite offsets of ±0.5 ns unexplained).
-- Writers: SP3-c/d, RINEX CLOCK 3.04, IONEX, Bias-SINEX 1.00, BLQ, IGS ERP 2, RINEX MET, NMEA 0183, RINEX nav 2.11 ↔ 3.04/3.05 ↔ 4.01; each with round-trip and spec-oracle tests.
 
 ### Added — troposphere, attitude, antennas (opt-in)
 
@@ -40,8 +39,19 @@
 
 ### Fixed
 
-- PPP: the antenna height was dropped for an uncalibrated antenna.
 - PPP: time-differenced slip candidates are confirmed with a clock-free jump.
+
+## 2.46.0
+
+### Added — format round trips and writers
+
+- Every format the library reads has a round-trip test, a check against its spec, RTKLIB convbin or IGS products, and a convention lock with asymmetric values (so a North/East swap like 2.45.0's cannot pass).
+- New writers: SP3-c/d, RINEX CLOCK 3.04, IONEX, Bias-SINEX 1.00, BLQ, IGS ERP 2, RINEX MET, NMEA 0183, RINEX nav 2.11 ↔ 3.04/3.05 ↔ 4.01; each with round-trip and spec-oracle tests.
+- IGS ERP 2 read/write (`parseErp`, `writeErp`, `erpAt`); RINEX MET read/write.
+
+### Fixed
+
+- PPP: the antenna height was dropped for an uncalibrated antenna.
 - u-blox RAWX: trkStat bit 2 is "half cycle valid" — live PPP dropped F9P phases.
 - RTCM ephemerides lost TGD/BGD, IODC, URA, fit and health; Galileo 1045/1046 week is GPS-aligned; Trimble RT27 Galileo toe/toc were the transmission time.
 - Navigation time: toc was Unix seconds mod 604800 (days off); BeiDou clock 14 s and GLONASS 18 s late; RINEX 2 GLONASS frame time.
