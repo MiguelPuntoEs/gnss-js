@@ -266,7 +266,13 @@ export function sinexToNeq(
   );
   const ep = (p: SinexParameterLine) =>
     epochOf.get(`${p.site}|${p.pointCode}|${p.solnId}`);
-  const aprioriByIndex = new Map(file.apriori.map((p) => [p.index, p]));
+  // APRIORI lines match the ESTIMATE / NEQ lines by parameter (type, site,
+  // point, solution, epoch-independent) — not necessarily by INDEX (GIPSY
+  // conversions order them differently).
+  const pkey = (p: SinexParameterLine) =>
+    `${p.type}|${p.site}|${p.pointCode}|${p.solnId}`;
+  const aprioriByKey = new Map(file.apriori.map((p) => [pkey(p), p]));
+  const aprioriOf = (p: SinexParameterLine) => aprioriByKey.get(pkey(p));
   const span = {
     dataStartMs: file.startMs ?? 0,
     dataEndMs: file.endMs ?? 0,
@@ -284,7 +290,7 @@ export function sinexToNeq(
         N[i * n + j] =
           M.data[(lines[i]!.index - 1) * M.n + lines[j]!.index - 1]!;
     const params = lines.map((p) =>
-      toParam(p, aprioriByIndex.get(p.index)?.value ?? 0, ep(p))
+      toParam(p, aprioriOf(p)?.value ?? 0, ep(p))
     );
     neq = {
       params,
@@ -305,32 +311,45 @@ export function sinexToNeq(
     if (!C || !lines.length)
       throw new Error('sinexToNeq: neither NEQ blocks nor a covariance');
     const n = lines.length;
-    const pick = (m: SinexMatrix, info: boolean) => {
+    const pick = (m: SinexMatrix, info: boolean, idx: number[]) => {
       const out = new Float64Array(n * n);
       for (let i = 0; i < n; i++)
         for (let j = 0; j < n; j++)
-          out[i * n + j] =
-            m.data[(lines[i]!.index - 1) * m.n + lines[j]!.index - 1]!;
+          out[i * n + j] = m.data[(idx[i]! - 1) * m.n + idx[j]! - 1]!;
       if (!info) return out;
       // INFO = C⁻¹: hand over its inverse.
       const inv = invert(out, n);
       if (!inv) throw new Error('sinexToNeq: INFO matrix singular');
       return inv;
     };
-    const cov = pick(C, C.kind === 'INFO');
+    const cov = pick(
+      C,
+      C.kind === 'INFO',
+      lines.map((p) => p.index)
+    );
     // Constraints: the MATRIX_APRIORI, or the APRIORI std devs.
     let aprioriCov: Float64Array | undefined;
     const A = file.matrixApriori;
-    if (A) aprioriCov = pick(A, A.kind === 'INFO');
+    if (A)
+      aprioriCov = pick(
+        A,
+        A.kind === 'INFO',
+        lines.map((p) => aprioriOf(p)?.index ?? p.index)
+      );
     else if (file.apriori.some((p) => p.sigma > 0))
       aprioriCov = Float64Array.from(lines, (p) => {
-        const s = aprioriByIndex.get(p.index)?.sigma ?? 0;
+        const s = aprioriOf(p)?.sigma ?? 0;
         return s > 0 ? s * s : 0;
       });
     neq = neqFromCovariance({
-      params: lines.map((p) =>
-        toParam(p, aprioriByIndex.get(p.index)?.value ?? p.value, ep(p))
-      ),
+      params: lines.map((p) => {
+        // A-priori values more than 1 km from the estimate are a writer's
+        // error (seen: ASI 2297 APRIORI with a wrong exponent); under loose
+        // constraints the estimate itself is as good a linearisation point.
+        const a = aprioriOf(p)?.value;
+        const ok = a !== undefined && Math.abs(a - p.value) < 1000;
+        return toParam(p, ok ? a : p.value, ep(p));
+      }),
       estimate: lines.map((p) => p.value),
       cov,
       aprioriCov,

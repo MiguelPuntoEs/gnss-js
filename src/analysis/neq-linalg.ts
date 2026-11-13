@@ -177,3 +177,88 @@ export function schurComplement(
   for (let k = 0; k < ne; k++) dLtpl += z[k]! * z[k]!;
   return { N: outN, b: outB, dLtpl };
 }
+
+/**
+ * Eigen-decomposition of a symmetric matrix (cyclic Jacobi): values and
+ * row-major eigenvectors (column k = vector k). O(n³) per sweep — for the
+ * few hundred parameters of a solution whose covariance is singular.
+ */
+export function symmetricEigen(
+  a: ArrayLike<number>,
+  n: number
+): { values: Float64Array; vectors: Float64Array } {
+  const A = Float64Array.from(a as ArrayLike<number>);
+  const V = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) V[i * n + i] = 1;
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    let diag = 0;
+    for (let i = 0; i < n; i++) {
+      diag += A[i * n + i]! ** 2;
+      for (let j = i + 1; j < n; j++) off += A[i * n + j]! ** 2;
+    }
+    if (off <= 1e-30 * diag) break;
+    for (let p = 0; p < n; p++)
+      for (let q = p + 1; q < n; q++) {
+        const apq = A[p * n + q]!;
+        if (Math.abs(apq) < 1e-300) continue;
+        const app = A[p * n + p]!;
+        const aqq = A[q * n + q]!;
+        const theta = (aqq - app) / (2 * apq);
+        const t =
+          Math.sign(theta || 1) /
+          (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+        const c = 1 / Math.sqrt(t * t + 1);
+        const s = t * c;
+        for (let k = 0; k < n; k++) {
+          const akp = A[k * n + p]!;
+          const akq = A[k * n + q]!;
+          A[k * n + p] = c * akp - s * akq;
+          A[k * n + q] = s * akp + c * akq;
+        }
+        for (let k = 0; k < n; k++) {
+          const apk = A[p * n + k]!;
+          const aqk = A[q * n + k]!;
+          A[p * n + k] = c * apk - s * aqk;
+          A[q * n + k] = s * apk + c * aqk;
+        }
+        for (let k = 0; k < n; k++) {
+          const vkp = V[k * n + p]!;
+          const vkq = V[k * n + q]!;
+          V[k * n + p] = c * vkp - s * vkq;
+          V[k * n + q] = s * vkp + c * vkq;
+        }
+      }
+  }
+  const values = new Float64Array(n);
+  for (let i = 0; i < n; i++) values[i] = A[i * n + i]!;
+  return { values, vectors: V };
+}
+
+/**
+ * Pseudo-inverse of a symmetric positive semi-definite matrix: eigenvalues
+ * below `relTol` × the largest are treated as zero (directions the matrix
+ * carries no information on). Returns the rank too.
+ */
+export function pseudoInverseSymmetric(
+  a: ArrayLike<number>,
+  n: number,
+  relTol = 1e-9
+): { inverse: Float64Array; rank: number } {
+  const { values, vectors: V } = symmetricEigen(a, n);
+  const max = Math.max(...values);
+  const inv = new Float64Array(n * n);
+  let rank = 0;
+  for (let k = 0; k < n; k++) {
+    const l = values[k]!;
+    if (!(l > relTol * max)) continue;
+    rank++;
+    const f = 1 / l;
+    for (let i = 0; i < n; i++) {
+      const vi = V[i * n + k]! * f;
+      if (vi === 0) continue;
+      for (let j = 0; j < n; j++) inv[i * n + j] += vi * V[j * n + k]!;
+    }
+  }
+  return { inverse: inv, rank };
+}

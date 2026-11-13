@@ -14,6 +14,7 @@ import {
   choleskyInverse,
   choleskySolve,
   invertSymmetric,
+  pseudoInverseSymmetric,
   schurComplement,
 } from './neq-linalg';
 
@@ -349,8 +350,22 @@ export function neqFromCovariance(opts: {
 }): NormalEquations {
   const { params } = opts;
   const n = params.length;
-  const Ci = invertSymmetric(opts.cov, n);
-  if (!Ci) throw new Error('neqFromCovariance: covariance not invertible');
+  // A covariance projected onto a frame (e.g. JPL stacov after a Helmert
+  // alignment) is singular in the transformation's directions: invert it
+  // only where it carries information.
+  let Ci = invertSymmetric(opts.cov, n);
+  let conditioned = false;
+  if (Ci) {
+    let maxDiag = 0;
+    let maxInfo = 0;
+    for (let i = 0; i < n; i++) {
+      maxDiag = Math.max(maxDiag, opts.cov[i * n + i]!);
+      maxInfo = Math.max(maxInfo, Ci[i * n + i]!);
+    }
+    conditioned = maxInfo * maxDiag < 1e9;
+  }
+  if (!Ci || !conditioned)
+    Ci = pseudoInverseSymmetric(opts.cov, n, 1e-9).inverse;
   const dx = new Float64Array(n);
   for (let i = 0; i < n; i++) dx[i] = opts.estimate[i]! - params[i]!.apriori;
   const b = new Float64Array(n);
