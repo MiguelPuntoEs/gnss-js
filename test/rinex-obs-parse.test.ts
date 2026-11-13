@@ -75,3 +75,32 @@ G01  20000100.000   105000500.000
     }
   });
 });
+
+describe('RINEX 2 epoch with a receiver clock offset', () => {
+  // RINEX 2.11 Table A2: satellite list 12(A1,I2) in columns 33–68, then the
+  // optional receiver clock offset F12.9 in columns 69–80. Read as more
+  // satellites ("  -", "0.0", …) it threw the whole epoch out of step.
+  const sats = 'G01G02G03G04G05G06G07G08G09G10G11G12';
+  const lines = Array.from(
+    { length: 12 },
+    (_, i) => `  ${20000000 + i}.000   ${105000000 + i}.000`
+  ).join('\n');
+  const text = `${V2_HEADER} 24  1  1  0  0  0.0000000  0 12${sats}  -0.000123456
+${lines}
+ 24  1  1  0  0 30.0000000  0  1G05
+  20000100.000   105000500.000
+`;
+
+  it('reads every satellite of both epochs', async () => {
+    const obs = await collect(text);
+    expect(obs).toHaveLength(13);
+    expect(obs[11]).toMatchObject({
+      prn: 'G12',
+      values: [20000011, 105000011],
+    });
+    expect(obs[12]).toMatchObject({
+      prn: 'G05',
+      values: [20000100, 105000500],
+    });
+  });
+});

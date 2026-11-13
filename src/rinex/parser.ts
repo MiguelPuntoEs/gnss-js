@@ -402,7 +402,9 @@ function parseEpochLine2(line: string): EpochLineInfo | null {
   const time = Date.UTC(yr, mo - 1, dy, hr, mn, wholeSec, ms);
 
   const satIds: string[] = [];
-  const satPart = line.substring(32);
+  // 12(A1,I2) in columns 33–68: the receiver clock offset (F12.9) follows
+  // in columns 69–80 and must not be read as satellites.
+  const satPart = line.substring(32, 68);
   for (let i = 0; i + 3 <= satPart.length; i += 3) {
     const id = satPart.substring(i, i + 3).trim();
     if (id) satIds.push(id);
@@ -919,7 +921,7 @@ export async function parseRinexStream(
       }
     } else {
       if (v2ContinuationSatsRemaining > 0) {
-        const satPart = line.substring(32);
+        const satPart = line.substring(32, 68);
         for (let i = 0; i + 3 <= satPart.length; i += 3) {
           const id = satPart.substring(i, i + 3).trim();
           if (id) v2SatIds.push(id);
