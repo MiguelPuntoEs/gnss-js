@@ -15,3 +15,4 @@ E6 slot, Galileo PRN ≤ 30, BeiDou B1I named `1I` (RINEX 3.02).
 | ---------------- | ----- | ------------------------- | ---------------------------------------------------------------------------------------- |
 | dlf100_rtcm3.obs | rtcm3 | dlf100_rtcm_rtk_base.rtcm | `-tr 2026/11/06 9:00:00 -ts 2026/11/06 09:13:51 -te 2026/11/06 09:14:00`                 |
 | rtcm2_avl12.obs  | rtcm2 | rtcm2_avl12_slice.bin     | `-tr 2026/11/13 0:30:00` (RTCM 2 has no date: only the time within the hour is compared) |
+| f9p_rawx.obs     | ubx   | f9p_rawx_slice.ubx        | (RTKLIB 2.4.2 ignores RAWX sigId: every record is an L1 row)                             |
