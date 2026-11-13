@@ -19,8 +19,9 @@ import {
 } from '../src/rtcm3/ephemeris-encode';
 import { decodeEphemeris } from '../src/rtcm3/ephemeris';
 import { Rtcm3Decoder } from '../src/rtcm3/decoder';
-import { ephInfoToEphemeris } from '../src/orbit';
+import { computeSatPosition, ephInfoToEphemeris } from '../src/orbit';
 import { hasFixture, rawSources, readText, rinexSources } from './nav-sources';
+import { gpsInstant } from './nav-compare';
 
 const isKepler = (e: Ephemeris): e is KeplerEphemeris => 'toe' in e;
 
@@ -243,5 +244,70 @@ describe('satellite clock: tocDate time scale (BDT, UTC) vs GPS-scale t', () => 
     };
     const tocGps = Date.UTC(2026, 10, 6, 9, 15, 18);
     expect(satClockCorrection(glo, tocGps)).toBe(glo.tauN);
+  });
+});
+
+describe('broadcast clock sign and unit vs ESA MGEX SP3 clocks', () => {
+  // SP3 clock column: satellite clock − GPST in µs (sp3d §5). The
+  // broadcast correction must match it to tens of ns — an af0 / −τn sign
+  // flip is off by 2|af0| (tens to hundreds of µs), a unit slip by 10^6.
+  const has = hasFixture('ESA_MGEX.sp3') && hasFixture('BRDC.nav');
+  const T = Date.UTC(2024, 0, 1, 12); // GPST
+  const sp3 = new Map<string, { pos: number[]; clk: number }>();
+  if (has) {
+    let on = false;
+    for (const l of readText('ESA_MGEX.sp3').split('\n')) {
+      if (l.startsWith('*')) on = l.startsWith('*  2024  1  1 12  0 ');
+      else if (on && l.startsWith('P')) {
+        const clk = Number(l.substring(46, 60));
+        const pos = [4, 18, 32].map(
+          (c) => Number(l.substring(c, c + 14)) * 1e3
+        );
+        if (Math.abs(clk) < 999999)
+          sp3.set(l.slice(1, 4), { pos, clk: clk * 1e-6 });
+      }
+    }
+  }
+  const nav = has ? parseNavFile(readText('BRDC.nav')) : null!;
+
+  it.skipIf(!has).each([
+    ['G', 100e-9],
+    ['E', 100e-9],
+    ['C', 100e-9],
+    // GLONASS: −τn is relative to GLONASS time; SP3 to GPST, so the
+    // GLONASS−GPS time offset (≲ 1 µs) remains — still 100× smaller
+    // than a sign flip of τn.
+    ['R', 1e-6],
+  ] as const)('%s', (sys, tol) => {
+    let big = 0;
+    for (const [prn, truth] of sp3) {
+      if (prn[0] !== sys) continue;
+      if (sys === 'C' && Number(prn.slice(1)) < 19) continue; // BDS-3 only
+      // The ephemeris of this satellite nearest in time whose orbit
+      // matches the SP3 position (the merged BRDC.nav has GLONASS
+      // records filed under the wrong slot, e.g. R16/R18 at 11:15).
+      let best: { e: Ephemeris; dt: number } | null = null;
+      for (const e of nav.ephemerides) {
+        if (e.prn !== prn) continue;
+        const dt = Math.abs(gpsInstant(e) - T);
+        if (dt > 3600_000 || ('svHealth' in e ? e.svHealth : e.health) !== 0)
+          continue;
+        const p = computeSatPosition(e, T);
+        const d = Math.hypot(
+          p.x - truth.pos[0]!,
+          p.y - truth.pos[1]!,
+          p.z - truth.pos[2]!
+        );
+        if (d < 100 && (!best || dt < best.dt)) best = { e, dt };
+      }
+      if (!best) continue;
+      const bc = satClockCorrection(best.e, T);
+      expect(
+        Math.abs(bc - truth.clk),
+        `${prn} ${bc} vs ${truth.clk}`
+      ).toBeLessThan(tol);
+      if (Math.abs(truth.clk) > 20 * tol) big++;
+    }
+    expect(big).toBeGreaterThan(3); // a sign flip would show
   });
 });

@@ -2,22 +2,34 @@
  * RINEX 4.01 mixed navigation file writer.
  *
  * Produces `> EPH` data records for the classic ephemeris types
- * (GPS/QZSS/NavIC LNAV, Galileo INAV, BeiDou D1/D2, GLONASS FDMA,
+ * (GPS/QZSS/NavIC LNAV, Galileo INAV/FNAV, BeiDou D1/D2, GLONASS FDMA,
  * SBAS), `> EPH ... CNAV` records for GPS/QZSS CNAV ephemerides, BeiDou-3
- * `CNV1`/`CNV2`/`CNV3` records for B-CNAV ephemerides, and
- * `> ION` records for the header's Klobuchar/NeQuick-G coefficients,
- * per the RINEX 4.01 record tables (A9-A18, A21, A26, A32, A33).
+ * `CNV1`/`CNV2`/`CNV3` records for B-CNAV ephemerides, and `> STO`,
+ * `> EOP`, `> ION` records — read from a RINEX 4 file, or rebuilt from a
+ * RINEX 2/3 header (TIME SYSTEM CORR, IONOSPHERIC CORR) — per the RINEX
+ * 4.02 record tables (A9-A15, A19-A26, A30, A33-A40).
  */
 
-import { padL, padR, hdrLine } from './format';
+import { padL, hdrLine } from './format';
 import { fmtD } from './nav-writer';
+import {
+  isKepler,
+  keplerOrbitRows,
+  leapLine,
+  runDate,
+  stateVectorRows,
+  type NavWriterOptions,
+} from './nav-format';
 import type {
   NavHeader,
   Ephemeris,
-  KeplerEphemeris,
   GlonassEphemeris,
+  KeplerEphemeris,
   RinexCnavEphemeris,
   BdsCnavEphemeris,
+  NavEopRecord,
+  NavIonRecord,
+  NavStoRecord,
 } from './nav';
 
 /** Input for {@link writeRinexNav4}: a NavResult, optionally with CNAV. */
@@ -26,6 +38,9 @@ export interface Nav4Input {
   ephemerides: Ephemeris[];
   cnav?: RinexCnavEphemeris[];
   bdsCnav?: BdsCnavEphemeris[];
+  sto?: NavStoRecord[];
+  eop?: NavEopRecord[];
+  ion?: NavIonRecord[];
 }
 
 /* ================================================================== */
@@ -82,14 +97,13 @@ const BDS_GEO = new Set([
 
 /**
  * RINEX 4 navigation message label for a classic ephemeris (Table 20).
- * Galileo: FNAV when the data-sources field says F/NAV E5a-I (bit 1;
- * RINEX 3.05 Table A8), else INAV — the layouts are identical but the
- * clock set and BGD validity differ.
+ * Galileo: FNAV when the data-sources field says F/NAV E5a-I (bit 1),
+ * else INAV (the layouts are identical; the clock set differs).
  */
 function msgLabel(eph: Ephemeris): string {
   switch (eph.system) {
     case 'E':
-      return (((eph as KeplerEphemeris).dataSources ?? 0) & 2) !== 0
+      return isKepler(eph) && ((eph.dataSources ?? 0) & 2) !== 0
         ? 'FNAV'
         : 'INAV';
     case 'C':
@@ -107,52 +121,31 @@ function msgLabel(eph: Ephemeris): string {
 /*  Record writers                                                     */
 /* ================================================================== */
 
-function isKepler(eph: Ephemeris): eph is KeplerEphemeris {
-  return 'af0' in eph;
-}
-
-/**
- * Classic Keplerian record body (LNAV/INAV/D1/D2): epoch + 7 orbit
- * lines, mirroring the RINEX 3 writer's field placement so a
- * write→parse round trip reproduces the parsed record exactly.
- */
+/** Classic Keplerian record body (LNAV/INAV/FNAV/D1/D2): epoch + 7 orbit lines. */
 function keplerRecord(eph: KeplerEphemeris): string {
   return [
     epochLine4(eph.prn, eph.tocDate, [eph.af0, eph.af1, eph.af2]),
-    orbitLine4([eph.iode, eph.crs, eph.deltaN, eph.m0]),
-    orbitLine4([eph.cuc, eph.e, eph.cus, eph.sqrtA]),
-    orbitLine4([eph.toe, eph.cic, eph.omega0, eph.cis]),
-    orbitLine4([eph.i0, eph.crc, eph.omega, eph.omegaDot]),
-    orbitLine4([eph.idot, eph.dataSources ?? 0, eph.week, 0]),
-    orbitLine4([eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.tgd2 ?? 0]),
-    orbitLine4([eph.ttm ?? eph.toe, 0, 0, 0]),
+    ...keplerOrbitRows(eph).map(orbitLine4),
   ].join('\n');
 }
 
 /**
- * GLONASS FDMA / SBAS record body. RINEX 4 FDMA adds a fourth orbit
+ * GLONASS FDMA / SBAS record body. RINEX 4 FDMA has a fourth orbit
  * line (status flags / L1-L2 group delay / URAI / health flags, Table
- * A15); GlonassEphemeris does not carry those, so the flags are left
- * blank (BNK) and the group delay and URAI take the table's
- * "unknown" sentinels (.999999999999E+09 and 15).
+ * A15): fields the ephemeris does not carry are left blank (BNK) or
+ * take the table's "unknown" sentinels (.999999999999E+09 and 15).
  */
 function stateVectorRecord(eph: GlonassEphemeris): string {
   // `tauN` holds the raw RINEX SV-clock field (= −τ_n, the repo-wide
   // convention — see positioning/index.ts): written verbatim.
-  const lines = [
+  return [
     epochLine4(eph.prn, eph.tocDate, [
       eph.tauN,
       eph.gammaN,
       eph.messageFrameTime,
     ]),
-    orbitLine4([eph.x, eph.xDot, eph.xAcc, eph.health]),
-    orbitLine4([eph.y, eph.yDot, eph.yAcc, eph.freqNum]),
-    orbitLine4([eph.z, eph.zDot, eph.zAcc, 0]),
-  ];
-  if (eph.system === 'R') {
-    lines.push(orbitLine4([null, 999999999.999, 15, null]));
-  }
-  return lines.join('\n');
+    ...stateVectorRows(eph, true).map(orbitLine4),
+  ].join('\n');
 }
 
 /**
@@ -212,102 +205,221 @@ function bdsCnavRecord(eph: BdsCnavEphemeris): string {
 }
 
 /* ================================================================== */
-/*  ION records                                                        */
+/*  STO / EOP / ION records                                            */
 /* ================================================================== */
 
-/** Header iono key → ION record satellite system and message label. */
-const KLOBUCHAR_SOURCES: [
-  alpha: string,
-  beta: string,
-  sys: string,
-  msg: string,
-][] = [
-  ['GPSA', 'GPSB', 'G', 'LNAV'],
-  ['QZSA', 'QZSB', 'J', 'LNAV'],
-  ['BDSA', 'BDSB', 'C', 'D1D2'],
-  ['IRNA', 'IRNB', 'I', 'LNAV'],
-];
+/** `> TYP` record header: A1,1X,A3,1X,A1,A2,1X,A4[,1X,A4] (Tables A33-A40). */
+function recordHeader(
+  type: string,
+  system: string,
+  sv: string | undefined,
+  message: string,
+  subtype?: string
+): string {
+  const num = sv && sv.length > 1 ? sv.slice(1, 3) : '  ';
+  return `> ${type} ${system}${padL(num, 2)} ${padL(message, 4)}${subtype ? ' ' + subtype : ''}`.trimEnd();
+}
+
+/** Epoch line of STO/EOP/ION records: 4X,I4,5(1X,I2.2) + values. */
+function recordEpoch(epoch: Date, values: (number | null)[]): string {
+  return (
+    '    ' +
+    fmtEpoch4(epoch) +
+    values
+      .map((v) => (v == null ? BLANK19 : fmtD(v)))
+      .join('')
+      .trimEnd()
+  );
+}
+
+function stoRecord(r: NavStoRecord): string {
+  const ids = [r.type, r.sbasId ?? '', r.utcId ?? ''];
+  return [
+    recordHeader('STO', r.system, r.sv, r.message, r.subtype),
+    (
+      `    ${fmtEpoch4(r.epoch)} ` + ids.map((x) => padL(x, 18)).join(' ')
+    ).trimEnd(),
+    orbitLine4([r.ttm, r.a0, r.a1, r.a2]),
+  ].join('\n');
+}
+
+function eopRecord(r: NavEopRecord): string {
+  return [
+    recordHeader('EOP', r.system, r.sv, r.message, r.subtype),
+    recordEpoch(r.epoch, [r.xp, r.xpDot, r.xpDotDot]),
+    orbitLine4([null, r.yp, r.ypDot, r.ypDotDot]),
+    orbitLine4([r.ttm, r.dUt1, r.dUt1Dot, r.dUt1DotDot]),
+  ].join('\n');
+}
+
+function ionRecord(r: NavIonRecord): string {
+  const [first = [], ...rest] = r.rows;
+  return [
+    recordHeader('ION', r.system, r.sv, r.message, r.subtype),
+    recordEpoch(r.epoch, first),
+    ...rest.map(orbitLine4),
+  ].join('\n');
+}
+
+/** IONOSPHERIC CORR type → ION record system and message label. */
+const KLOBUCHAR_SOURCES: Record<string, [sys: string, msg: string]> = {
+  GPS: ['G', 'LNAV'],
+  QZS: ['J', 'LNAV'],
+  BDS: ['C', 'D1D2'],
+  IRN: ['I', 'LNAV'],
+};
 
 /**
- * `> ION` records from the header's ionospheric corrections
- * (Klobuchar per Table A32, NeQuick-G per Table A33). RINEX 3 headers
- * carry no transmit time for the coefficients, so `epoch` (the
- * earliest record epoch in the file) stands in for t_tm.
+ * `> ION` records from a RINEX 2/3 header's ionospheric corrections
+ * (Klobuchar, Table A35; NeQuick-G, Table A36): one per IONOSPHERIC
+ * CORR α/β pair — BDS one per broadcasting satellite. RINEX 3 headers
+ * carry no transmit time; the BDS time mark gives the hour on the day of
+ * `epoch` (the earliest record epoch), otherwise `epoch` itself stands
+ * in for t_tm.
  */
-function ionRecords(header: NavHeader, epoch: Date): string[] {
-  const records: string[] = [];
-  const iono = header.ionoCorrections;
-
-  for (const [alphaKey, betaKey, sys, msg] of KLOBUCHAR_SOURCES) {
-    const alpha = iono[alphaKey];
-    if (!alpha) continue;
-    const beta = iono[betaKey] ?? [0, 0, 0, 0];
-    records.push(
-      [
-        `> ION ${sys}   ${msg}`,
-        `    ${fmtEpoch4(epoch)}${[alpha[0] ?? 0, alpha[1] ?? 0, alpha[2] ?? 0].map(fmtD).join('')}`,
-        orbitLine4([alpha[3] ?? 0, beta[0] ?? 0, beta[1] ?? 0, beta[2] ?? 0]),
-        orbitLine4([beta[3] ?? 0, null]),
-      ].join('\n')
-    );
+function headerIonRecords(header: NavHeader, epoch: Date): NavIonRecord[] {
+  const lines = header.ionoCorrectionLines?.length
+    ? header.ionoCorrectionLines
+    : Object.entries(header.ionoCorrections).map(([type, values]) => ({
+        type,
+        values,
+        timeMark: undefined as string | undefined,
+        sv: undefined as string | undefined,
+      }));
+  const day = Date.UTC(
+    epoch.getUTCFullYear(),
+    epoch.getUTCMonth(),
+    epoch.getUTCDate()
+  );
+  const at = (mark?: string) =>
+    mark && /^[A-X]$/.test(mark)
+      ? new Date(day + (mark.charCodeAt(0) - 65) * 3600_000)
+      : epoch;
+  const out: NavIonRecord[] = [];
+  for (const l of lines) {
+    const v = (k: number) => l.values[k] ?? 0;
+    if (l.type === 'GAL') {
+      const ai = [v(0), v(1), v(2)];
+      out.push({
+        system: 'E',
+        message: 'IFNV',
+        epoch: at(l.timeMark),
+        rows: [ai, [v(3)]],
+        nequickG: { ai, disturbanceFlags: v(3) },
+      });
+      continue;
+    }
+    const src = KLOBUCHAR_SOURCES[l.type.slice(0, 3)];
+    if (!src || !l.type.endsWith('A')) continue;
+    const beta = lines.find(
+      (b) =>
+        b.type === l.type.slice(0, 3) + 'B' &&
+        b.sv === l.sv &&
+        b.timeMark === l.timeMark
+    )?.values ?? [0, 0, 0, 0];
+    const alpha = [v(0), v(1), v(2), v(3)];
+    const b = (k: number) => beta[k] ?? 0;
+    out.push({
+      system: src[0],
+      message: src[1],
+      ...(l.sv && { sv: l.sv }),
+      epoch: at(l.timeMark),
+      rows: [
+        [alpha[0]!, alpha[1]!, alpha[2]!],
+        [alpha[3]!, b(0), b(1), b(2)],
+        [b(3)],
+      ],
+      klobuchar: { alpha, beta: [b(0), b(1), b(2), b(3)] },
+    });
   }
+  return out;
+}
 
-  const gal = iono['GAL'];
-  if (gal) {
-    records.push(
-      [
-        '> ION E   IFNV',
-        `    ${fmtEpoch4(epoch)}${[gal[0] ?? 0, gal[1] ?? 0, gal[2] ?? 0].map(fmtD).join('')}`,
-        orbitLine4([gal[3] ?? 0]),
-      ].join('\n')
-    );
-  }
+/** TIME SYSTEM CORR system code → providing system and STO message type. */
+const STO_SOURCES: Record<string, [sys: string, msg: string]> = {
+  GP: ['G', 'LNAV'],
+  GL: ['R', 'FDMA'],
+  GA: ['E', 'IFNV'],
+  BD: ['C', 'D1D2'],
+  QZ: ['J', 'LNAV'],
+  IR: ['I', 'LNAV'],
+  SB: ['S', 'SBAS'],
+};
 
-  return records;
+/** RINEX 3 UTC identifier → RINEX 4 UTC ID (RINEX 4.02 Table 27). */
+const UTC_IDS: Record<number, string> = {
+  1: 'UTC(NIST)',
+  2: 'UTC(USNO)',
+  3: 'UTC(SU)',
+  4: 'UTC(BIPM)',
+  5: 'UTCGAL',
+  6: 'UTC(NICT)',
+  7: 'UTC(NTSC)',
+};
+
+/**
+ * `> STO` records from RINEX 2/3 TIME SYSTEM CORR lines. t_ot is the
+ * line's reference week + seconds (BDT week for BDUT); GLONASS lines
+ * have none and take the RINEX 2 reference date or `epoch`. RINEX 3
+ * keeps no transmission time: t_tm is written as t_ref.
+ */
+function headerStoRecords(header: NavHeader, epoch: Date): NavStoRecord[] {
+  return (header.timeSystemCorr ?? []).map((c) => {
+    const [system, message] = STO_SOURCES[c.type.slice(0, 2)] ?? ['G', 'LNAV'];
+    const weekEpoch = c.type.startsWith('BD')
+      ? Date.UTC(2006, 0, 1)
+      : Date.UTC(1980, 0, 6);
+    const t =
+      c.refWeek > 0 || c.refTime > 0
+        ? new Date(weekEpoch + (c.refWeek * 604800 + c.refTime) * 1000)
+        : (c.refDate ?? epoch);
+    const sbas = c.type.slice(0, 2) === 'SB' && c.sv && !/^S\d/.test(c.sv);
+    const utcId =
+      c.type.endsWith('UT') && c.utcId != null ? UTC_IDS[c.utcId] : undefined;
+    return {
+      system,
+      message,
+      ...(c.sv && !sbas && { sv: c.sv }),
+      epoch: t,
+      type: c.type,
+      ...(sbas && { sbasId: c.sv }),
+      ...(utcId && { utcId }),
+      ttm: c.refTime,
+      a0: c.a0,
+      a1: c.a1,
+      a2: 0,
+    };
+  });
 }
 
 /* ================================================================== */
 /*  Header writer                                                      */
 /* ================================================================== */
 
-function writeHeader4(header: NavHeader): string {
+function writeHeader4(header: NavHeader, opts: NavWriterOptions): string {
   const lines: string[] = [];
-
   lines.push(
     hdrLine(
       padL('     4.01', 9) +
         '           ' +
-        padL('NAVIGATION DATA', 20) +
-        padL('M', 20),
+        padL('N: GNSS NAV DATA', 20) +
+        padL('M: MIXED', 20),
       'RINEX VERSION / TYPE'
     )
   );
-
-  const now = new Date();
-  const dateStr =
-    now.getUTCFullYear().toString() +
-    String(now.getUTCMonth() + 1).padStart(2, '0') +
-    String(now.getUTCDate()).padStart(2, '0') +
-    ' ' +
-    String(now.getUTCHours()).padStart(2, '0') +
-    String(now.getUTCMinutes()).padStart(2, '0') +
-    String(now.getUTCSeconds()).padStart(2, '0') +
-    ' UTC';
   lines.push(
     hdrLine(
-      padL('GNSSCalc', 20) + padL('', 20) + padL(dateStr, 20),
+      padL(opts.program ?? 'GNSSCalc', 20) +
+        padL(opts.runBy ?? '', 20) +
+        padL(runDate(opts.date ?? new Date()), 20),
       'PGM / RUN BY / DATE'
     )
   );
-
   // RINEX 4 headers carry no IONOSPHERIC CORR / TIME SYSTEM CORR lines
   // (Table A7) — that data moves to ION/STO data records.
-  if (header.leapSeconds != null) {
-    lines.push(hdrLine(padR(String(header.leapSeconds), 6), 'LEAP SECONDS'));
-  }
-
+  const leap = leapLine(header);
+  if (leap) lines.push(leap);
   lines.push(hdrLine('', 'END OF HEADER'));
-
   return lines.join('\n') + '\n';
 }
 
@@ -319,18 +431,19 @@ function writeHeader4(header: NavHeader): string {
  * Write a RINEX 4.01 mixed navigation file.
  *
  * Emits `> EPH` records for every classic ephemeris (message labels
- * per constellation: LNAV, INAV, D1/D2, FDMA, SBAS), every GPS/QZSS
+ * per constellation: LNAV, INAV/FNAV, D1/D2, FDMA, SBAS), every GPS/QZSS
  * CNAV ephemeris (`CNAV`) and every BeiDou-3 B-CNAV ephemeris (`CNV1`/
- * `CNV2`/`CNV3`), sorted by PRN, epoch, then label; followed by
- * `> ION` records when the header carries Klobuchar (GPSA/GPSB,
- * QZSA/QZSB, BDSA/BDSB, IRNA/IRNB) or NeQuick-G (GAL) coefficients.
- * ION records need a transmit-time epoch, which RINEX 3-style headers
- * do not store — the earliest record epoch is used, so a file with no
- * ephemerides gets no ION records. There is no source for system
- * time offsets in NavHeader, so no `> STO` records are produced; leap
- * seconds go in the LEAP SECONDS header line.
+ * `CNV2`/`CNV3`), sorted by PRN, epoch, then label; then the `> STO`,
+ * `> EOP` and `> ION` records — the input's own (from a RINEX 4 file),
+ * else STO/ION records rebuilt from a RINEX 2/3 header's TIME SYSTEM
+ * CORR / IONOSPHERIC CORR lines (see {@link headerIonRecords} and
+ * {@link headerStoRecords} for the transmit times RINEX 3 lacks; with no
+ * ephemeris to date them, none are written).
  */
-export function writeRinexNav4(nav: Nav4Input): string {
+export function writeRinexNav4(
+  nav: Nav4Input,
+  opts: NavWriterOptions = {}
+): string {
   interface Rec {
     prn: string;
     time: number;
@@ -376,13 +489,20 @@ export function writeRinexNav4(nav: Nav4Input): string {
 
   const bodies = records.map((r) => r.body);
 
-  if (records.length > 0) {
-    const earliest = new Date(Math.min(...records.map((r) => r.time)));
-    bodies.push(...ionRecords(nav.header, earliest));
-  }
+  const earliest =
+    records.length > 0
+      ? new Date(Math.min(...records.map((r) => r.time)))
+      : null;
+  const sto =
+    nav.sto ?? (earliest ? headerStoRecords(nav.header, earliest) : []);
+  const ion =
+    nav.ion ?? (earliest ? headerIonRecords(nav.header, earliest) : []);
+  bodies.push(...sto.map(stoRecord));
+  bodies.push(...(nav.eop ?? []).map(eopRecord));
+  bodies.push(...ion.map(ionRecord));
 
   return (
-    writeHeader4(nav.header) +
+    writeHeader4(nav.header, opts) +
     (bodies.length > 0 ? bodies.join('\n') + '\n' : '')
   );
 }

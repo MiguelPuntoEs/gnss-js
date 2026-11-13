@@ -27,7 +27,58 @@ export interface NavHeader {
   version: number;
   type: string;
   leapSeconds: number | null;
+  /** Coefficients per IONOSPHERIC CORR type (GPSA, GAL, BDSB, …); RINEX
+   *  2 ION ALPHA/BETA as GPSA/GPSB. Several lines of one type (BDS, one
+   *  per broadcasting satellite): the last. */
   ionoCorrections: Record<string, number[]>;
+  /** Every IONOSPHERIC CORR line in file order, with the transmission
+   *  time mark and SV that RINEX 3.04+ requires for BDS (Table A5). */
+  ionoCorrectionLines?: IonoCorrectionLine[];
+  /** TIME SYSTEM CORR lines (RINEX 3); RINEX 2 DELTA-UTC (GPUT) and
+   *  GLONASS CORR TO SYSTEM TIME (GLUT, a0 = −τc). */
+  timeSystemCorr?: TimeSystemCorr[];
+  /** LEAP SECONDS fields after the current ΔtLS (RINEX 3/4): future ΔtLSF,
+   *  its week WN_LSF and day DN, and the time-system identifier. */
+  leapSecondsFuture?: number;
+  leapSecondsWeek?: number;
+  leapSecondsDay?: number;
+  leapSecondsSystem?: string;
+}
+
+/** One RINEX 3 IONOSPHERIC CORR header line (RINEX 3.05 Table A5). */
+export interface IonoCorrectionLine {
+  /** GAL, GPSA, GPSB, QZSA, QZSB, BDSA, BDSB, IRNA, IRNB. */
+  type: string;
+  /** α0-α3 / β0-β3 (s, s/semicircle^n), or Galileo ai0-ai2. */
+  values: number[];
+  /** Transmission hour of day as a letter A (00h-01h) … X (23h-24h). */
+  timeMark?: string;
+  /** Broadcasting satellite, e.g. "C02". */
+  sv?: string;
+}
+
+/**
+ * A GNSS-to-UTC/GNSS time offset Δt = a0 + a1·(t − t_ref) (RINEX 3.05
+ * Table A5 TIME SYSTEM CORR; RINEX 2 DELTA-UTC / CORR TO SYSTEM TIME).
+ */
+export interface TimeSystemCorr {
+  /** GPUT, GLUT, GAUT, BDUT, QZUT, IRUT, SBUT, GLGP, GAGP, QZGP, IRGP. */
+  type: string;
+  /** s */
+  a0: number;
+  /** s/s */
+  a1: number;
+  /** Reference time t_ref, seconds of the GPS week (BDT week for BDUT);
+   *  0 for GLUT. */
+  refTime: number;
+  /** Continuous reference week (BDT week for BDUT); 0 for GLUT. */
+  refWeek: number;
+  /** Broadcasting satellite (snn) or SBAS network name. */
+  sv?: string;
+  /** UTC identifier (1 NIST, 2 USNO, 3 SU, 4 BIPM, 5 Europe, 6 CRL, 7 NTSC). */
+  utcId?: number;
+  /** RINEX 2 GLONASS only: the reference date (year, month, day). */
+  refDate?: Date;
 }
 
 /** GPS / Galileo / BeiDou / QZSS / NavIC Keplerian ephemeris. */
@@ -99,6 +150,17 @@ export interface KeplerEphemeris {
   /** Galileo data-sources bitfield (bit 0 I/NAV E1-B, 1 F/NAV E5a-I,
    *  2 I/NAV E5b-I, 8 clock for E5a/E1, 9 clock for E5b/E1). */
   dataSources?: number;
+  /** GPS/QZSS codes on L2 (orbit-5 slot 2). RINEX only. */
+  l2Codes?: number;
+  /** GPS L2 P data flag (QZSS: fixed 1) (orbit-5 slot 4). RINEX only. */
+  l2pFlag?: number;
+  /** GPS/QZSS issue of data, clock (orbit-6 slot 4). RINEX only. */
+  iodc?: number;
+  /** GPS fit interval (hours) / QZSS fit-interval flag (0/1) (orbit-7
+   *  slot 2); absent when blank. RINEX only. */
+  fitInterval?: number;
+  /** BeiDou AODC, age of data clock (orbit-7 slot 2). RINEX only. */
+  aodc?: number;
 }
 
 /** GLONASS / SBAS state-vector ephemeris. Positions in km, velocities in km/s, accelerations in km/s². */
@@ -134,8 +196,22 @@ export interface GlonassEphemeris {
   zAcc: number;
   /** Health flag (0 = healthy). */
   health: number;
-  /** GLONASS frequency channel number (-7 to +6). */
+  /** GLONASS frequency channel number (-7 to +6). SBAS: this slot of the
+   *  record holds the accuracy code URA (m). */
   freqNum: number;
+  /** GLONASS age of operational information E_n (days), orbit-3 slot 4.
+   *  RINEX only. */
+  ageOfOperation?: number;
+  /** SBAS IODN, orbit-3 slot 4. RINEX only. */
+  iodn?: number;
+  /** RINEX 3.05 / 4 GLONASS orbit-4 (Table A10 / 4.02 Table A15), each
+   *  absent when blank or at its "unknown" value: 9-bit status flags
+   *  (M, P4, P3, P2, P1, P), L1/L2 group delay difference (s), URAI
+   *  (FT), 3-bit health flags (l3, AC, C). */
+  statusFlags?: number;
+  l1l2GroupDelay?: number;
+  urai?: number;
+  healthFlags?: number;
 }
 
 export type Ephemeris = KeplerEphemeris | GlonassEphemeris;
@@ -164,6 +240,88 @@ export interface NavResult {
   cnav?: RinexCnavEphemeris[];
   /** BeiDou-3 CNV1/CNV2/CNV3 ephemerides (RINEX 4 only), when any were read. */
   bdsCnav?: BdsCnavEphemeris[];
+  /** RINEX 4 `> STO` system time offset records, when any were read. */
+  sto?: NavStoRecord[];
+  /** RINEX 4 `> EOP` earth orientation records, when any were read. */
+  eop?: NavEopRecord[];
+  /** RINEX 4 `> ION` ionosphere model records, when any were read. */
+  ion?: NavIonRecord[];
+}
+
+/** Fields of a RINEX 4 `> STO/EOP/ION` record header line. */
+interface NavRecordSource {
+  /** Constellation providing the data (G, R, E, C, J, I, S). */
+  system: string;
+  /** Broadcasting satellite (e.g. "G24"), when given. */
+  sv?: string;
+  /** Navigation message type the data came from: LNAV, CNVX, IFNV, … */
+  message: string;
+  /** Message subtype (QZSS WIDE/JAPN, NavIC KLOB/NEQN), when given. */
+  subtype?: string;
+}
+
+/**
+ * RINEX 4 system time offset (RINEX 4.02 Table A33):
+ * Δt = a0 + a1·(t − t_ot) + a2·(t − t_ot)² between the two time scales
+ * named by `type` (GPUT = GPS − UTC, BDGA = BDT − GST, …).
+ */
+export interface NavStoRecord extends NavRecordSource {
+  /** t_ot, reference epoch (clock face of the providing system). */
+  epoch: Date;
+  /** Time-offset type, two 2-letter system codes: GPUT, GAGP, BDGA, … */
+  type: string;
+  /** SBAS network for SBUT offsets (WAAS, EGNOS, …). */
+  sbasId?: string;
+  /** UTC realisation for xxUT offsets: UTC(USNO), UTCGAL, … */
+  utcId?: string;
+  /** Transmission time, seconds since the start of the epoch's week. */
+  ttm: number;
+  /** s */
+  a0: number;
+  /** s/s */
+  a1: number;
+  /** s/s² */
+  a2: number;
+}
+
+/** RINEX 4 earth orientation parameters (RINEX 4.02 Table A34). */
+export interface NavEopRecord extends NavRecordSource {
+  /** t_EOP, reference epoch. */
+  epoch: Date;
+  /** Pole x (arc-sec), rate (arc-sec/day), acceleration (arc-sec/day²). */
+  xp: number;
+  xpDot: number;
+  xpDotDot: number;
+  /** Pole y (arc-sec), rate, acceleration. */
+  yp: number;
+  ypDot: number;
+  ypDotDot: number;
+  /** Transmission time, seconds since the start of the epoch's week. */
+  ttm: number;
+  /** ΔUT1 (s; UT1−UTC or, per ICD, UT1−GPST), rate (s/day), accel (s/day²). */
+  dUt1: number;
+  dUt1Dot: number;
+  dUt1DotDot: number;
+}
+
+/**
+ * RINEX 4 ionosphere record (RINEX 4.02 Tables A35-A40). `rows` holds
+ * every value as written — row 0 the three on the epoch line, then four
+ * per continuation line, blanks null — so any model round-trips; the
+ * Klobuchar / NeQuick-G / BDGIM coefficients are also decoded.
+ */
+export interface NavIonRecord extends NavRecordSource {
+  /** t_tm, transmission time of the ionosphere data. */
+  epoch: Date;
+  rows: (number | null)[][];
+  /** GPS/QZSS/BDS D1D2/NavIC LNAV Klobuchar: α0-α3 (s, s/semicircle^n)
+   *  and β0-β3 (s, s/semicircle^n) (Table A35). */
+  klobuchar?: { alpha: number[]; beta: number[] };
+  /** Galileo NeQuick-G: ai0 (sfu), ai1 (sfu/deg), ai2 (sfu/deg²) and the
+   *  5-bit disturbance flags (Table A36). */
+  nequickG?: { ai: number[]; disturbanceFlags: number };
+  /** BeiDou BDGIM: α1-α9 (TECu) (Table A37). */
+  bdgim?: number[];
 }
 
 /* ================================================================== */
@@ -392,6 +550,13 @@ function buildKeplerEphemeris(
     ...(Math.abs(raw[24] ?? NaN) < 1e6 && { ttm: d[24] }),
     ...(d[20] != null && d[20] > 0 && { svAccuracy: d[20] }),
     ...(sys === 'E' && { dataSources: d[17] ?? 0 }),
+    ...((sys === 'G' || sys === 'J') && {
+      l2Codes: d[17],
+      l2pFlag: d[19],
+      iodc: d[23],
+      ...(Number.isFinite(raw[25]) && { fitInterval: d[25] }),
+    }),
+    ...(sys === 'C' && Number.isFinite(raw[25]) && { aodc: d[25] }),
   };
 }
 
@@ -402,12 +567,10 @@ function buildStateVectorEphemeris(
   epochVals: number[],
   data: number[][]
 ): GlonassEphemeris {
-  const d = data.flatMap((line) =>
-    [0, 1, 2, 3].map((i) => {
-      const v = line[i] ?? NaN;
-      return Number.isFinite(v) ? v : 0;
-    })
-  );
+  const raw = data.flatMap((line) => [0, 1, 2, 3].map((i) => line[i] ?? NaN));
+  const d = raw.map((v) => (Number.isFinite(v) ? v : 0));
+  const known = (k: number, unknown?: number) =>
+    Number.isFinite(raw[k]) && raw[k] !== unknown;
   return {
     system: sys,
     prn,
@@ -426,8 +589,20 @@ function buildStateVectorEphemeris(
     z: d[8] ?? 0,
     zDot: d[9] ?? 0,
     zAcc: d[10] ?? 0,
+    ...(sys === 'R' ? { ageOfOperation: d[11] } : { iodn: d[11] }),
+    // RINEX 3.05 / 4 GLONASS orbit-4; unknown = blank, .999999999999E+09
+    // (group delay) or 15 (URAI).
+    ...(known(12) && { statusFlags: d[12] }),
+    ...(known(13, GLO_UNKNOWN_DELAY) && { l1l2GroupDelay: d[13] }),
+    ...(known(14, GLO_UNKNOWN_URAI) && { urai: d[14] }),
+    ...(known(15) && { healthFlags: d[15] }),
   };
 }
+
+/** RINEX "not known" value of the GLONASS L1/L2 group delay (s). */
+export const GLO_UNKNOWN_DELAY = 999999999.999;
+/** RINEX "not known" GLONASS URAI. */
+export const GLO_UNKNOWN_URAI = 15;
 
 /**
  * GLONASS message frame time in seconds of the UTC week (the RINEX 3/4
@@ -532,6 +707,25 @@ function buildCnavEphemeris(
 
 const BDT_EPOCH_MS = Date.UTC(2006, 0, 1);
 
+/** IONOSPHERIC CORR type → system letter of its SV ID field. */
+const IONO_SYSTEM: Record<string, string> = {
+  GAL: 'E',
+  GPSA: 'G',
+  GPSB: 'G',
+  QZSA: 'J',
+  QZSB: 'J',
+  BDSA: 'C',
+  BDSB: 'C',
+  IRNA: 'I',
+  IRNB: 'I',
+};
+
+/** "R 3" (RTKLIB 2.4.2) or "R03" → "R03". */
+function normalizePrn(sys: string, num: string): string {
+  const n = parseInt(num, 10);
+  return Number.isFinite(n) ? `${sys}${String(n).padStart(2, '0')}` : sys + num;
+}
+
 /**
  * Build a `BdsCnavEphemeris` from a RINEX 4 BeiDou CNV1/CNV2/CNV3 record
  * (RINEX 4.02 Tables A24-A26; epochs naive BDT):
@@ -625,6 +819,92 @@ function buildBdsCnavEphemeris(
   };
 }
 
+/* ================================================================== */
+/*  RINEX 4 STO / EOP / ION records                                    */
+/* ================================================================== */
+
+const nn = (v: number | null | undefined): number =>
+  v == null || !Number.isFinite(v) ? 0 : v;
+
+/** `> STO` body: epoch + offset type line, then t_tm, A0, A1, A2. */
+function buildSto(src: NavRecordSource, body: string[]): NavStoRecord | null {
+  if (body.length < 2) return null;
+  const head = body[0]!;
+  const { date } = parseNavEpochV3(head.substring(0, 23));
+  const field = (a: number) => head.substring(a, a + 18).trim();
+  const v = parseDataLineSlots(body[1]!);
+  const sbasId = field(43);
+  const utcId = field(62);
+  return {
+    ...src,
+    epoch: date,
+    type: field(24),
+    ...(sbasId && { sbasId }),
+    ...(utcId && { utcId }),
+    ttm: nn(v[0]),
+    a0: nn(v[1]),
+    a1: nn(v[2]),
+    a2: nn(v[3]),
+  };
+}
+
+/** `> EOP` body: epoch + Xp terms, spare + Yp terms, t_tm + ΔUT1 terms. */
+function buildEop(src: NavRecordSource, body: string[]): NavEopRecord | null {
+  if (body.length < 3) return null;
+  const { date, values: x } = parseNavEpochV3(body[0]!);
+  const y = parseDataLineSlots(body[1]!);
+  const u = parseDataLineSlots(body[2]!);
+  return {
+    ...src,
+    epoch: date,
+    xp: nn(x[0]),
+    xpDot: nn(x[1]),
+    xpDotDot: nn(x[2]),
+    yp: nn(y[1]),
+    ypDot: nn(y[2]),
+    ypDotDot: nn(y[3]),
+    ttm: nn(u[0]),
+    dUt1: nn(u[1]),
+    dUt1Dot: nn(u[2]),
+    dUt1DotDot: nn(u[3]),
+  };
+}
+
+/** `> ION` body: every value kept by row; the common models decoded. */
+function buildIon(src: NavRecordSource, body: string[]): NavIonRecord {
+  const { date, values } = parseNavEpochV3(body[0]!);
+  const rows: (number | null)[][] = [
+    values.map((v) => (Number.isFinite(v) ? v : null)),
+    ...body.slice(1).map(parseDataLineSlots),
+  ];
+  const at = (r: number, c: number) => nn(rows[r]?.[c]);
+  const rec: NavIonRecord = { ...src, epoch: date, rows };
+  if (src.system === 'E') {
+    rec.nequickG = {
+      ai: [at(0, 0), at(0, 1), at(0, 2)],
+      disturbanceFlags: at(1, 0),
+    };
+  } else if (src.system === 'C' && src.message === 'CNVX') {
+    rec.bdgim = [
+      at(0, 0),
+      at(0, 1),
+      at(0, 2),
+      at(1, 0),
+      at(1, 1),
+      at(1, 2),
+      at(1, 3),
+      at(2, 0),
+      at(2, 1),
+    ];
+  } else if (src.system !== 'R' && src.message !== 'L1NV') {
+    rec.klobuchar = {
+      alpha: [at(0, 0), at(0, 1), at(0, 2), at(1, 0)],
+      beta: [at(1, 1), at(1, 2), at(1, 3), at(2, 0)],
+    };
+  }
+  return rec;
+}
+
 export function parseNavFile(text: string): NavResult {
   const lines = text.split('\n');
   const header: NavHeader = {
@@ -655,8 +935,18 @@ export function parseNavFile(text: string): NavResult {
       header.version = parseFloat(line.substring(0, 9));
       header.type = line.substring(20, 40).trim();
     } else if (label === 'LEAP SECONDS') {
+      // I6 ΔtLS [, I6 ΔtLSF, I6 WN_LSF, I6 DN, A3 system] (RINEX 3/4)
       header.leapSeconds = parseInt(line.substring(0, 6));
+      const future = line.substring(6, 12).trim();
+      if (future) {
+        header.leapSecondsFuture = parseInt(future);
+        header.leapSecondsWeek = parseInt(line.substring(12, 18));
+        header.leapSecondsDay = parseInt(line.substring(18, 24));
+      }
+      const sys = line.substring(24, 27).trim();
+      if (sys) header.leapSecondsSystem = sys;
     } else if (label === 'IONOSPHERIC CORR') {
+      // A4,1X,4D12.4,1X,A1,1X,I2 (RINEX 3.05 Table A5)
       const corrType = line.substring(0, 4).trim();
       const vals: number[] = [];
       for (let j = 0; j < 4; j++) {
@@ -664,6 +954,55 @@ export function parseNavFile(text: string): NavResult {
         if (s) vals.push(parseFloat19(s));
       }
       header.ionoCorrections[corrType] = vals;
+      const entry: IonoCorrectionLine = { type: corrType, values: vals };
+      const mark = line.charAt(54).trim();
+      if (mark) entry.timeMark = mark;
+      const sv = line.substring(56, 58).trim();
+      if (sv)
+        entry.sv = `${IONO_SYSTEM[corrType] ?? '?'}${sv.padStart(2, '0')}`;
+      (header.ionoCorrectionLines ??= []).push(entry);
+    } else if (label === 'TIME SYSTEM CORR') {
+      // A4,1X,D17.10,D16.9,1X,I6,1X,I4,1X,A5,1X,I2
+      const corr: TimeSystemCorr = {
+        type: line.substring(0, 4).trim(),
+        a0: parseFloat19(line.substring(5, 22)),
+        a1: parseFloat19(line.substring(22, 38)),
+        refTime: parseInt(line.substring(38, 45)) || 0,
+        refWeek: parseInt(line.substring(45, 50)) || 0,
+      };
+      const sv = line.substring(51, 56).trim();
+      if (sv) corr.sv = sv;
+      const utc = line.substring(57, 59).trim();
+      if (utc) corr.utcId = parseInt(utc);
+      (header.timeSystemCorr ??= []).push(corr);
+    } else if (label === 'DELTA-UTC: A0,A1,T,W') {
+      // RINEX 2 GPS: 3X,2D19.12,2I9 (Table A3)
+      (header.timeSystemCorr ??= []).push({
+        type: 'GPUT',
+        a0: parseFloat19(line.substring(3, 22)),
+        a1: parseFloat19(line.substring(22, 41)),
+        refTime: parseInt(line.substring(41, 50)),
+        refWeek: parseInt(line.substring(50, 59)),
+      });
+    } else if (
+      label === 'CORR TO SYSTEM TIME' &&
+      header.type.toUpperCase().includes('GLONASS')
+    ) {
+      // RINEX 2 GLONASS: 3I6,3X,D19.12 — reference date, −τc (Table A10)
+      (header.timeSystemCorr ??= []).push({
+        type: 'GLUT',
+        a0: parseFloat19(line.substring(21, 40)),
+        a1: 0,
+        refTime: 0,
+        refWeek: 0,
+        refDate: new Date(
+          Date.UTC(
+            parseInt(line.substring(0, 6)),
+            parseInt(line.substring(6, 12)) - 1,
+            parseInt(line.substring(12, 18))
+          )
+        ),
+      });
     } else if (label === 'ION ALPHA') {
       // RINEX 2 GPS iono alpha
       const vals: number[] = [];
@@ -701,6 +1040,9 @@ export function parseNavFile(text: string): NavResult {
 
   // Parse records
   const isV4 = header.version >= 4;
+  const sto: NavStoRecord[] = [];
+  const eop: NavEopRecord[] = [];
+  const ion: NavIonRecord[] = [];
 
   while (i < lines.length) {
     const line = lines[i]!;
@@ -717,22 +1059,32 @@ export function parseNavFile(text: string): NavResult {
       const msgType = parts[2] ?? recType; // LNAV, CNAV, FDMA, etc.
 
       if (recType !== 'EPH') {
-        // STO/EOP/ION records have fixed shapes (RINEX 4.01 Tables
-        // A30-A34); their msgType field (LNAV/CNVX/IFNV/...) names the
-        // source navigation message, not the record length, so it must
-        // not drive the skip. ION is 3 lines for Klobuchar/BDGIM but
-        // 2 for the Galileo NeQuick-G record.
-        const totalLines =
-          recType === 'STO'
-            ? 2
-            : recType === 'EOP'
-              ? 3
-              : recType === 'ION'
-                ? svSys === 'E'
-                  ? 2
-                  : 3
-                : 2;
-        i += totalLines + 1; // +1 for the `>` line itself
+        // STO/EOP/ION: a record runs to the next `>` line (the ION
+        // models differ in length: NeQuick-G 2 lines, Klobuchar 3,
+        // NavIC NeQuick-N 7, Tables A33-A40).
+        const body: string[] = [];
+        i++;
+        while (i < lines.length && lines[i]!.charAt(0) !== '>') {
+          if (lines[i]!.trim().length > 0) body.push(lines[i]!);
+          i++;
+        }
+        const src: NavRecordSource = {
+          system: svSys,
+          message: msgType,
+          ...((parts[1] ?? '').length > 1 && { sv: parts[1] }),
+          ...(parts[3] && { subtype: parts[3] }),
+        };
+        if (body.length > 0) {
+          if (recType === 'STO') {
+            const rec = buildSto(src, body);
+            if (rec) sto.push(rec);
+          } else if (recType === 'EOP') {
+            const rec = buildEop(src, body);
+            if (rec) eop.push(rec);
+          } else if (recType === 'ION') {
+            ion.push(buildIon(src, body));
+          }
+        }
         continue;
       }
 
@@ -741,9 +1093,9 @@ export function parseNavFile(text: string): NavResult {
         svSys === 'C' &&
         (msgType === 'CNV1' || msgType === 'CNV2' || msgType === 'CNV3');
       if (!SUPPORTED_EPH_MSGS.has(msgType) && !isCnav && !isBdsCnav) {
-        // Skip unsupported EPH record: advance past all its lines
-        const totalLines = R4_MSG_LINES[msgType] ?? 2;
-        i += totalLines + 1; // +1 for the `>` line itself
+        // Skip an unsupported EPH record: everything up to the next `>`
+        i++;
+        while (i < lines.length && lines[i]!.charAt(0) !== '>') i++;
         continue;
       }
 
@@ -756,7 +1108,7 @@ export function parseNavFile(text: string): NavResult {
       const epochLine = lines[i]!;
       const sys = epochLine.charAt(0);
       const parsed = parseNavEpochV3(epochLine);
-      const prn = `${sys}${parsed.prn.substring(1)}`;
+      const prn = normalizePrn(sys, parsed.prn.substring(1));
 
       if (isCnav || isBdsCnav) {
         // CNAV records: position-aware fields (blanks = unavailable)
@@ -849,17 +1201,26 @@ export function parseNavFile(text: string): NavResult {
     } else {
       sys = line.charAt(0);
       const parsed = parseNavEpochV3(line);
-      prn = `${sys}${parsed.prn.substring(1)}`;
+      prn = normalizePrn(sys, parsed.prn.substring(1));
       date = parsed.date;
       epochVals = parsed.values;
     }
 
-    const numDataLines = DATA_LINES[sys];
+    let numDataLines = DATA_LINES[sys];
     if (numDataLines == null) {
       // Unknown system, try to skip
       i++;
       continue;
     }
+    // RINEX 3.05 adds a fourth GLONASS orbit line (status flags, group
+    // delay, URAI, health flags; Table A10) — present when the line
+    // after orbit-3 is a continuation line, not the next SV epoch.
+    if (
+      sys === 'R' &&
+      !isV2 &&
+      (lines[i + numDataLines + 1] ?? '').startsWith('    ')
+    )
+      numDataLines += 1;
 
     // Read data lines
     const dataLines: number[][] = [];
@@ -907,5 +1268,8 @@ export function parseNavFile(text: string): NavResult {
     ephemerides,
     ...(cnav.length > 0 && { cnav }),
     ...(bdsCnav.length > 0 && { bdsCnav }),
+    ...(sto.length > 0 && { sto }),
+    ...(eop.length > 0 && { eop }),
+    ...(ion.length > 0 && { ion }),
   };
 }
