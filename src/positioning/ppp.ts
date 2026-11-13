@@ -773,6 +773,8 @@ export class PppEngine {
       gf: { t: number; v: number }[];
       dn1: number;
       dn2: number;
+      /** MW samples since a break whose wide-lane was still uncertain. */
+      pendingMw?: number[];
     }
   >;
   private lastSeenMs!: Map<string, number>;
@@ -886,7 +888,13 @@ export class PppEngine {
   private repairSlip(
     o: PppSatObs,
     tMs: number
-  ): { o: PppSatObs; repaired: boolean } {
+  ): {
+    o: PppSatObs;
+    repaired: boolean;
+    defer?: boolean;
+    /** GF-blind: integer candidates for the filter to choose between. */
+    candidates?: { n1: number; n2: number }[];
+  } {
     const cfg = this.opts.slipRepair ?? true;
     const st = this.repairState.get(o.prn);
     const lam1 = C_LIGHT / o.f1;
@@ -912,18 +920,46 @@ export class PppEngine {
     // the MW / time-differenced detectors: between sparse epochs a moving
     // ionosphere alone shifts the geometry-free phase by several cm, and
     // "repairing" that inserts wrong integers.
-    if (!broke) return { o: q, repaired: false };
-    const gfPred = this.predictGf(st.gf, tMs);
+    if (!broke && !st.pendingMw) return { o: q, repaired: false };
+    const gfPred = this.predictGf(st.gf, tMs, Math.abs(lam1 - lam2));
     const gfNow = gfOf(q);
+    const refuse = () => {
+      st.pendingMw = undefined;
+      return { o: q, repaired: false };
+    };
     // Wide-lane jump from MW, L1 jump from GF (ionosphere extrapolated).
-    if (gfPred == null) return { o: q, repaired: false };
-    const dWl = mwOf(q) - st.mw;
+    if (gfPred == null) return refuse();
+    const mw = [...(st.pendingMw ?? []), mwOf(q)];
+    const dWl = mw.reduce((s, v) => s + v, 0) / mw.length - st.mw;
     const nWl = Math.round(dWl);
-    if (Math.abs(dWl - nWl) > maxFrac * 1.5) return { o: q, repaired: false };
     const dGf = gfNow - gfPred;
-    const n1f = (dGf - lam2 * nWl) / (lam1 - lam2);
-    const n1 = Math.round(n1f);
-    if (Math.abs(n1f - n1) > maxFrac) return { o: q, repaired: false };
+    const n1Of = (w: number) => (dGf - lam2 * w) / (lam1 - lam2);
+    const frac = (v: number) => Math.abs(v - Math.round(v));
+    // GF-blind pairs: on Galileo E1/E5a a (ΔWL ±1, ΔN1 ±4) slip moves the
+    // geometry-free phase by only 3 mm, so the GF can't tell nWl from nWl±1
+    // and only the MW is left — whose low-elevation multipath can be off by
+    // a whole cycle for tens of seconds. Hand the GF-consistent candidates
+    // to the filter instead: they differ by ~76 cm in the iono-free phase,
+    // which the other satellites' solution resolves.
+    const cands = [0, -1, 1]
+      .map((k) => nWl + k)
+      .filter((w) => frac(n1Of(w)) <= maxFrac)
+      .map((w) => ({ n1: Math.round(n1Of(w)), n2: Math.round(n1Of(w)) - w }));
+    if (!cands.length) return refuse();
+    if (cands.length > 1) {
+      st.pendingMw = undefined;
+      return { o: { ...q, slip: false }, repaired: false, candidates: cands };
+    }
+    const n1 = cands[0]!.n1;
+    if (cands[0]!.n2 !== n1 - nWl) return refuse(); // only an alternative fits
+    if (Math.abs(dWl - nWl) > maxFrac * 1.5) {
+      // Not sure of the wide-lane yet: hold the satellite out and average
+      // the MW over a few more epochs (at 1 Hz: seconds) before deciding.
+      if (mw.length >= 10) return refuse();
+      st.pendingMw = mw;
+      return { o: q, repaired: false, defer: true };
+    }
+    st.pendingMw = undefined;
     const n2 = n1 - nWl;
     st.dn1 += n1;
     st.dn2 += n2;
@@ -933,12 +969,23 @@ export class PppEngine {
   }
 
   /** Linear extrapolation of the geometry-free history to t; null with < 3
-   *  points or when the ionosphere isn't behaving linearly (fit scatter
-   *  > 1 cm) — then the extrapolation can't resolve a 5 cm cycle. */
-  private predictGf(h: { t: number; v: number }[], t: number): number | null {
+   *  points, when the ionosphere isn't behaving linearly (fit scatter
+   *  > 1 cm), or when the extrapolation itself is too uncertain to resolve a
+   *  cycle of λ1−λ2. The fit window scales with the gap (3×, 30 s–3 min),
+   *  not a fixed number of points: at 1 Hz six points span 5 s, and their
+   *  slope carried across a 60 s gap is off by about one cycle; a long
+   *  window on a short gap is biased by the ionosphere's curvature. */
+  private predictGf(
+    h: { t: number; v: number }[],
+    t: number,
+    cycleM: number
+  ): number | null {
     if (h.length < 3) return null;
-    const pts = h.slice(-6);
+    const last = h.at(-1)!.t;
+    const win = Math.min(180_000, Math.max(30_000, 3 * (t - last)));
+    const pts = h.filter((p) => p.t >= last - win);
     const n = pts.length;
+    if (n < 3) return null;
     const mt = pts.reduce((a, p) => a + p.t, 0) / n;
     const mv = pts.reduce((a, p) => a + p.v, 0) / n;
     let sxy = 0;
@@ -947,11 +994,15 @@ export class PppEngine {
       sxy += (p.t - mt) * (p.v - mv);
       sxx += (p.t - mt) ** 2;
     }
-    const slope = sxx > 0 ? sxy / sxx : 0;
+    if (!(sxx > 0)) return null;
+    const slope = sxy / sxx;
     const rms = Math.sqrt(
       pts.reduce((a, p) => a + (p.v - (mv + slope * (p.t - mt))) ** 2, 0) / n
     );
     if (rms > 0.01) return null;
+    // Prediction σ (scatter floored at 3 mm: a short fit can look too good).
+    const sigma = Math.max(rms, 0.003) * Math.sqrt(1 / n + (t - mt) ** 2 / sxx);
+    if (sigma > 0.1 * cycleM) return null;
     return mv + slope * (t - mt);
   }
 
@@ -978,9 +1029,8 @@ export class PppEngine {
     st.tMs = tMs;
     st.mw = mwMean;
     st.gf.push({ t: tMs, v: o.l1 * lam1 - o.l2 * lam2 });
-    // Keep ~5 minutes of history.
-    while (st.gf.length > 2 && st.gf[0]!.t < tMs - 300_000) st.gf.shift();
-    if (st.gf.length > 30) st.gf.splice(0, st.gf.length - 30);
+    // Keep the 3 minutes the ionosphere fit uses.
+    while (st.gf.length > 2 && st.gf[0]!.t < tMs - 180_000) st.gf.shift();
     this.repairState.set(o.prn, st);
   }
 
@@ -1138,6 +1188,7 @@ export class PppEngine {
       sat: [number, number, number];
     }
     const vis: Vis[] = [];
+    const pendingCands = new Map<string, { n1: number; n2: number }[]>();
     let repairedNow = 0;
     this.repairedNow.clear();
     if (this.prevEpochMs) {
@@ -1154,6 +1205,7 @@ export class PppEngine {
       const ob = applySatBiases(source, raw, epoch.timeMs);
       if (!ob) continue;
       const rep = this.repairSlip(ob, epoch.timeMs);
+      if (rep.defer) continue; // held out while the wide-lane settles
       const o = rep.o;
       if (rep.repaired) {
         repairedNow++;
@@ -1161,8 +1213,11 @@ export class PppEngine {
         const m = this.mwState.get(o.prn);
         if (m) m.lastEi = ei - 1;
       }
-      const slip = detectSlip(o, ei);
-      if (!slip)
+      if (rep.candidates) pendingCands.set(o.prn, rep.candidates);
+      const slip = rep.candidates ? false : detectSlip(o, ei);
+      if (rep.candidates) {
+        // decided after this epoch's update (resolveCandidates)
+      } else if (!slip)
         this.rememberForRepair(o, epoch.timeMs, this.mwState.get(o.prn)!.mean);
       else if (!rep.repaired) {
         // A real reset: the ambiguity restarts on these (offset-corrected)
@@ -1388,7 +1443,9 @@ export class PppEngine {
 
     // ── Pass 2: EKF measurement updates ──
     let nSats = 0;
-    const live = vis.filter((v) => !screened.has(v.prn));
+    const live = vis.filter(
+      (v) => !screened.has(v.prn) && !pendingCands.has(v.prn)
+    );
     /** Geometric range at the CURRENT position estimate: pass 1 evaluated it
      *  at the predicted position, and each sequential update moves the
      *  state — by metres within a kinematic epoch — so linearise about it
@@ -1543,6 +1600,100 @@ export class PppEngine {
         codeUpdate(v);
         phaseUpdate(v, ai);
         snapshot(v, ai);
+      }
+    }
+
+    // GF-blind repairs: pick the candidate whose iono-free phase fits this
+    // epoch's solution (from the other satellites); otherwise reset. The
+    // candidates differ by ~76 cm, so decide only when the prediction's own
+    // σ is far below that. If no satellite of the system updated its clock
+    // this epoch (a total outage: all came back blind), compare the held-out
+    // satellites with each other instead — a choice common to all of them
+    // is absorbed by that clock, so it can't hurt.
+    {
+      type Pend = {
+        prn: string;
+        st: {
+          tMs: number;
+          gf: { t: number; v: number }[];
+          dn1: number;
+          dn2: number;
+        };
+        cands: { n1: number; n2: number }[];
+        innov0?: number;
+        sig?: number;
+        dIf?: (c: { n1: number; n2: number }) => number;
+      };
+      const pend: Pend[] = [];
+      for (const [prn, cands] of pendingCands) {
+        const p: Pend = { prn, st: this.repairState.get(prn)!, cands };
+        pend.push(p);
+        const v = vis.find((u) => u.prn === prn);
+        const ai = ambIdx.get(prn);
+        if (!v || ai === undefined || screened.has(prn)) continue;
+        const ci = clockOf(prn[0]!);
+        p.innov0 =
+          v.lIf -
+          (rangeNow(v) +
+            x[ci]! -
+            v.satClkM +
+            v.tropoFixed +
+            wetSlant(x, v) +
+            v.windupM +
+            x[ai]!);
+        // Prediction σ without the clock (added below when it's used).
+        const idx = [IDX_X, IDX_Y, IDX_Z, IDX_ZWD, ai];
+        const h = [-v.e[0], -v.e[1], -v.e[2], v.mw, 1];
+        let S = 0;
+        for (let i = 0; i < idx.length; i++)
+          for (let j = 0; j < idx.length; j++)
+            S += h[i]! * h[j]! * P[idx[i]!]![idx[j]!]!;
+        p.sig = Math.sqrt(Math.max(S, 0));
+        const { g } = ifCoeffs(v.f1, v.f2);
+        const l1 = C_LIGHT / v.f1;
+        const l2 = C_LIGHT / v.f2;
+        p.dIf = (c) => g * l1 * c.n1 - (g - 1) * l2 * c.n2;
+      }
+      const clockPinned = (sys: string) =>
+        [...phaseUsed].filter((q) => q[0] === sys).length >= 2;
+      const choose = (p: Pend, ref: number, extraVar: number) => {
+        if (p.innov0 == null || p.sig == null || !p.dIf) return null;
+        const sig = Math.sqrt(p.sig ** 2 + extraVar);
+        if (sig > 0.12) return null;
+        const r = p.cands
+          .map((c) => ({ c, res: Math.abs(p.innov0! - ref - p.dIf!(c)) }))
+          .sort((a, b) => a.res - b.res);
+        return r[0]!.res < 0.2 && (r.length < 2 || r[1]!.res > 0.4)
+          ? r[0]!.c
+          : null;
+      };
+      for (const p of pend) {
+        const sys = p.prn[0]!;
+        let best: { n1: number; n2: number } | null = null;
+        if (nSats >= 4 && clockPinned(sys)) {
+          best = choose(p, 0, P[clockOf(sys)]![clockOf(sys)]!);
+        } else {
+          const same = pend.filter((q) => q.prn[0] === sys && q.innov0 != null);
+          if (same.length >= 3) {
+            const med = same.map((q) => q.innov0!).sort((a, b) => a - b)[
+              Math.floor(same.length / 2)
+            ]!;
+            best = choose(p, med, 0);
+          }
+        }
+        const st = p.st;
+        st.tMs = epoch.timeMs;
+        if (best) {
+          st.dn1 += best.n1;
+          st.dn2 += best.n2;
+          const m = mwState.get(p.prn);
+          if (m) m.lastEi = ei; // continue the MW average next epoch
+          repairedNow++;
+          this.repairedNow.add(p.prn);
+        } else {
+          st.gf = [];
+          mwState.delete(p.prn); // next epoch: a fresh arc (reset)
+        }
       }
     }
 

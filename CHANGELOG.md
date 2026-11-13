@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.45.1
+
+### Fixed — PPP slip repair at 1 Hz
+
+- The ionosphere trend for a repair was fitted to the last 6 geometry-free points. At 1 Hz they span 5 s, and their slope carried across a 60 s gap is off by about a cycle, so wrong integers were accepted and held the solution off by decimetres for over an hour. The fit window now scales with the gap (3×, 30 s–3 min), and a repair is refused when the extrapolation's own σ exceeds 0.1 cycle of λ1−λ2.
+- Galileo E1/E5a: a (ΔWL ±1, ΔN1 ±4) slip moves the geometry-free phase by only 3 mm, so the geometry-free check can't tell the candidates apart, and the Melbourne–Wübbena wide-lane — biased by up to a whole cycle by low-elevation multipath — decided alone. Such a satellite now sits out the epoch, and the candidate whose iono-free phase (they differ by ~76 cm) fits the solution from the other satellites is taken; only when that prediction's σ is ≤ 12 cm and one candidate is clearly best (< 20 cm, next > 40 cm), otherwise the ambiguity resets. When no satellite of the system pinned its receiver clock that epoch (all came back at once), the held-out satellites are compared with each other: a choice common to all of them is absorbed by that clock.
+- Real 1 Hz recordings (TU Delft DELF / DLF1, 2 h), kinematic with real-time corrections, % of epochs within 10 cm — DLF1: 60 s outage every 10 min 8 → 100, frequent 5–20 s drops 51 → 100; DELF: 100 → 99 and 100 → 100. Of ~1,300 repairs decided by the solution, none was wrong. 30 s EUREF simulation: open sky and long outages unchanged, frequent drops 94 → 90 % and 60 s outages 99 → 98 % of epochs within 10 cm (more resets instead of uncertain repairs).
+
 ## 2.45.0
 
 ### Fixed — receiver antenna offsets were applied with North and East swapped
