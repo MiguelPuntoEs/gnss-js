@@ -382,3 +382,23 @@ describe('SYS / PHASE SHIFT and GLONASS COD/PHS/BIS', () => {
     expect(t).not.toMatch(/PHASE SHIFT|COD\/PHS\/BIS/);
   });
 });
+
+describe('GLONASS SLOT / FRQ #', () => {
+  // 3.04/4.01 Table A2: I3,1X,8(A1,I2.2,1X,I2,1X) — slot zero-padded
+  // ("R01", not "R 1"); channel k signed, −7…+6.
+  it('writes I2.2 slots and signed channels, 8 per line', async () => {
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const src = subset(sur4, { R: ['C1C'] });
+    const t = await W3(src);
+    const lines = t.split('\n').filter((l) => l.includes('GLONASS SLOT'));
+    expect(lines[0]).toBe(
+      ' 24 R01  1 R02 -4 R03  5 R04  6 R05  1 R06 -4 R07  5 R08  6 GLONASS SLOT / FRQ #'
+    );
+    expect(lines[1]).toBe(
+      '    R09 -2 R10 -7 R11  0 R12 -1 R13 -2 R14 -7 R15  0 R16 -1 GLONASS SLOT / FRQ #'
+    );
+    expect((await reread(t)).header.glonassSlots).toEqual(
+      sur4.header.glonassSlots
+    );
+  });
+});

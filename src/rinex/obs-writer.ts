@@ -192,7 +192,7 @@ export async function writeModernObsBlob(
       const chunk = entries.slice(i, i + 8);
       let content = i === 0 ? padR(String(entries.length), 3) + ' ' : '    ';
       for (const [slot, freq] of chunk) {
-        content += `R${padR(slot, 2)} ${padR(String(freq), 2)} `;
+        content += `R${slot.padStart(2, '0')} ${padR(String(freq), 2)} `;
       }
       sink.push(hdrLine(content, 'GLONASS SLOT / FRQ #'));
     }
