@@ -176,7 +176,7 @@ export async function writeModernObsBlob(
       hdrLine(padL(header.signalStrengthUnit, 20), 'SIGNAL STRENGTH UNIT')
     );
 
-  const timeSys = obsTimeSystem(header, systems);
+  const timeSys = obsTimeSystem(header);
   const tagged = epochs.filter(
     (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );

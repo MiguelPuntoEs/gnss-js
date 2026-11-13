@@ -220,9 +220,8 @@ describe('TIME OF FIRST OBS time system (RINEX 3.04 Table A2)', () => {
   const firstObs = (t: string) =>
     t.split('\n').find((l) => l.slice(60).startsWith('TIME OF FIRST OBS'))!;
 
-  it('single-system data without a stated system get the spec default', async () => {
+  it('a single-system source with a blank record gets the spec default', async () => {
     const sur4 = await fixture('sur4_obs_slice.rnx');
-    const unstated = { ...sur4.header, timeSystem: undefined };
     for (const [sys, code, want] of [
       ['E', 'C1C', 'GAL'],
       ['C', 'C2I', 'BDT'],
@@ -230,12 +229,23 @@ describe('TIME OF FIRST OBS time system (RINEX 3.04 Table A2)', () => {
       ['G', 'C1C', 'GPS'],
     ] as const) {
       const d = subset(sur4, { [sys]: [code] });
-      const t = await W3({ ...d, header: unstated });
+      const header = { ...d.header, timeSystem: '', satSystem: sys };
+      const t = await W3({ ...d, header });
       // 5I6,F13.7,5X,A3: the system sits in columns 49–51
       expect(firstObs(t)).toBe(
         `  2026    11     4     0     0    0.0000000     ${want}         TIME OF FIRST OBS   `
       );
     }
+  });
+
+  it('a header not read from RINEX (receiver decoders) means GPS-scale tags', async () => {
+    // parseUbxRawx & co. tag epochs in GPS time whatever the system: a
+    // BeiDou-only u-blox log must not be labelled BDT.
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const d = subset(sur4, { C: ['C2I'] });
+    const header = { ...d.header, timeSystem: undefined, satSystem: 'C' };
+    for (const w of [W3, W2])
+      expect(firstObs(await w({ ...d, header })).slice(48, 51)).toBe('GPS');
   });
 
   it("a source file's stated system is kept, tags untouched (no 14 s shift)", async () => {

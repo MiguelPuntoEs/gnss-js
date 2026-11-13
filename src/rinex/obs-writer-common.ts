@@ -269,22 +269,17 @@ const DEFAULT_TIME_SYSTEM: Record<string, string> = {
 /**
  * The time system the epochs are tagged in, for TIME OF FIRST / LAST OBS:
  * the header's own (as read from TIME OF FIRST OBS) when stated; a blank
- * record means the default of the source file's system; with no source
- * record at all, the default of the systems written (GPS when mixed). The
+ * source record means the default of the source file's system (RINEX 3.04
+ * Table A2: GAL for pure Galileo, BDT for pure BeiDou, …). A header that
+ * never came from a RINEX file (`timeSystem` undefined: receiver decoders,
+ * RTCM) carries GPS-scale epochs — the library's convention — so GPS. The
  * writers relabel nothing: the epoch tags are written as given.
  */
-export function obsTimeSystem(
-  header: RinexHeader,
-  systems: readonly string[]
-): string {
+export function obsTimeSystem(header: RinexHeader): string {
   if (header.timeSystem) return header.timeSystem;
-  const sys =
-    header.timeSystem === ''
-      ? header.satSystem
-      : systems.length === 1
-        ? systems[0]!
-        : 'M';
-  return DEFAULT_TIME_SYSTEM[sys] ?? 'GPS';
+  if (header.timeSystem === '')
+    return DEFAULT_TIME_SYSTEM[header.satSystem] ?? 'GPS';
+  return 'GPS';
 }
 
 /** TIME OF FIRST / LAST OBS content: 5I6,F13.7,5X,A3. */

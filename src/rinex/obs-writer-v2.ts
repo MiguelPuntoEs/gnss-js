@@ -107,7 +107,7 @@ export async function writeRinex2ObsBlob(
   const tagged = epochs.filter(
     (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
-  const timeSys = obsTimeSystem(header, [...hasSystems]);
+  const timeSys = obsTimeSystem(header);
   const interval = modalIntervalS(tagged);
   if (interval !== null && interval < 3600)
     sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
