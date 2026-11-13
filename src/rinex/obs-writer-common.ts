@@ -119,6 +119,62 @@ export function leapSecondsLine(header: RinexHeader): string[] {
     : [hdrLine(padR(String(header.leapSeconds), 6), 'LEAP SECONDS')];
 }
 
+/**
+ * SYS / PHASE SHIFT records (RINEX 3.04 Table A2, mandatory from 3.01):
+ * A1,1X,A3,1X,F8.5,2X,I2.2,10(1X,A3), continuation 18X,10(1X,A3). The
+ * source's records for the codes written are kept; a system without any
+ * gets the blank record that says "alignment unknown" (section 9.1).
+ */
+export function phaseShiftLines(
+  header: RinexHeader,
+  obsTypes: Map<string, string[]>
+): string[] {
+  const out: string[] = [];
+  for (const [sys, codes] of obsTypes) {
+    const recs = (header.phaseShifts ?? []).filter(
+      (p) => p.sys === sys && p.code !== '' && codes.includes(p.code)
+    );
+    if (recs.length === 0) out.push(hdrLine(sys, 'SYS / PHASE SHIFT'));
+    for (const p of recs) {
+      let head = `${sys} ${padL(p.code, 3)} ${p.correction === null ? ' '.repeat(8) : fmtF(p.correction, 8, 5)}`;
+      if (p.sats.length === 0) {
+        out.push(hdrLine(head, 'SYS / PHASE SHIFT'));
+        continue;
+      }
+      head += `  ${String(p.sats.length).padStart(2, '0')}`;
+      for (let i = 0; i < p.sats.length; i += 10) {
+        const list = p.sats
+          .slice(i, i + 10)
+          .map((s) => ` ${s}`)
+          .join('');
+        out.push(
+          hdrLine((i === 0 ? head : ' '.repeat(18)) + list, 'SYS / PHASE SHIFT')
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * GLONASS COD/PHS/BIS (RINEX 3.04 Table A2, mandatory from 3.02):
+ * 4(1X,A3,1X,F8.3) metres for C1C C1P C2C C2P — all blank when unknown.
+ */
+export function glonassCodPhsBisLine(header: RinexHeader): string {
+  const bis = header.glonassCodPhsBis ?? {};
+  const codes = ['C1C', 'C1P', 'C2C', 'C2P'];
+  const known = codes.some((c) => bis[c] !== undefined);
+  const content = known
+    ? codes
+        .map(
+          (c) =>
+            ` ${c} ${bis[c] === undefined ? ' '.repeat(8) : fmtF(bis[c], 8, 3)}`
+        )
+        .join('')
+    : '';
+  return hdrLine(content, 'GLONASS COD/PHS/BIS');
+}
+
 export function obsField(val: number, lli = 0, ssi = 0): string {
   if (Number.isNaN(val)) return ' '.repeat(16);
   return (

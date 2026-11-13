@@ -301,3 +301,84 @@ describe('station header records survive every writer', () => {
     });
   }
 });
+
+describe('SYS / PHASE SHIFT and GLONASS COD/PHS/BIS', () => {
+  // Mandatory in RINEX 3.01+/3.02+ (3.04 sections 9.1, 9.9, Table A2);
+  // deprecated in RINEX 4 ("should be ignored by RINEX decoders and
+  // encoders", 4.01 Table A2), so not written there.
+  const keep = {
+    G: ['C1C', 'L1C', 'L1L', 'C2W', 'L2W', 'L2S'],
+    R: ['C1C', 'L1C', 'L2P'],
+  };
+
+  it('RINEX 3.04 keeps the records of the codes it writes', async () => {
+    const src = subset(await fixture('sur4_obs_slice.rnx'), keep);
+    const h = (await reread(await W3(src))).header;
+    expect(h.phaseShifts).toEqual([
+      { sys: 'G', code: 'L1C', correction: null, sats: [] },
+      { sys: 'G', code: 'L1L', correction: 0.25, sats: [] },
+      { sys: 'G', code: 'L2S', correction: -0.25, sats: [] },
+      { sys: 'G', code: 'L2W', correction: null, sats: [] },
+      { sys: 'R', code: 'L1C', correction: null, sats: [] },
+      { sys: 'R', code: 'L2P', correction: 0.25, sats: [] },
+    ]);
+    expect(h.glonassCodPhsBis).toEqual({
+      C1C: -71.94,
+      C1P: -71.94,
+      C2C: -71.94,
+      C2P: -71.94,
+    });
+  });
+
+  it('RINEX 3.04 from a source without them: the blank "unknown" records', async () => {
+    // Section 9.1: alignment unknown → code and correction left blank;
+    // 9.9: unknown GLONASS bias → all fields blank.
+    const src = subset(await fixture('inab_obs_slice.25o'), {
+      G: ['C1', 'L1'],
+      R: ['C1', 'L1'],
+    });
+    src.obsTypes = new Map([
+      ['G', ['C1C', 'L1C']],
+      ['R', ['C1C', 'L1C']],
+    ]);
+    const t = await W3(src);
+    const lines = t.split('\n').filter((l) => /PHASE SHIFT|COD\/PHS/.test(l));
+    expect(lines).toEqual([
+      `G${' '.repeat(59)}SYS / PHASE SHIFT   `,
+      `R${' '.repeat(59)}SYS / PHASE SHIFT   `,
+      `${' '.repeat(60)}GLONASS COD/PHS/BIS `,
+    ]);
+    const h = (await reread(t)).header;
+    expect(h.phaseShifts).toEqual([
+      { sys: 'G', code: '', correction: null, sats: [] },
+      { sys: 'R', code: '', correction: null, sats: [] },
+    ]);
+    expect(h.glonassCodPhsBis).toEqual({});
+  });
+
+  it('satellite lists with continuation lines (I2.2 count, 10 per line)', async () => {
+    const src = subset(await fixture('sur4_obs_slice.rnx'), { G: ['L2S'] });
+    const sats = Array.from(
+      { length: 12 },
+      (_, i) => `G${String(i + 1).padStart(2, '0')}`
+    );
+    src.header = {
+      ...src.header,
+      phaseShifts: [{ sys: 'G', code: 'L2S', correction: -0.25, sats }],
+    };
+    const t = await W3(src);
+    expect(t).toContain(
+      'G L2S -0.25000  12 G01 G02 G03 G04 G05 G06 G07 G08 G09 G10  SYS / PHASE SHIFT'
+    );
+    expect(t).toContain(
+      `${' '.repeat(18)} G11 G12${' '.repeat(34)}SYS / PHASE SHIFT`
+    );
+    expect((await reread(t)).header.phaseShifts![0]!.sats).toEqual(sats);
+  });
+
+  it('RINEX 4.01 omits both', async () => {
+    const src = subset(await fixture('sur4_obs_slice.rnx'), keep);
+    const t = await W4(src);
+    expect(t).not.toMatch(/PHASE SHIFT|COD\/PHS\/BIS/);
+  });
+});

@@ -2,8 +2,9 @@
  * RINEX 4.01 observation file writer.
  *
  * RINEX 4 is structurally identical to RINEX 3 for our output — same
- * header layout, same epoch record format. Only the version line and
- * the provenance comment differ, so this delegates to the shared
+ * header layout, same epoch record format. Only the version line, the
+ * provenance comment and the deprecated SYS / PHASE SHIFT and GLONASS
+ * COD/PHS/BIS records differ, so this delegates to the shared
  * implementation in obs-writer.ts.
  */
 

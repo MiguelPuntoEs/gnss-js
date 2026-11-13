@@ -44,7 +44,10 @@ R    2 C1C S1C                                              SYS / # / OBS TYPES
   2024     1     1    10     0    0.0000000     GPS         TIME OF FIRST OBS   
   2024     1     1    10     0   30.0000000     GPS         TIME OF LAST OBS    
     30.000                                                  INTERVAL            
+G                                                           SYS / PHASE SHIFT   
+R                                                           SYS / PHASE SHIFT   
   2 R 5 -1 R12  4                                           GLONASS SLOT / FRQ #
+                                                            GLONASS COD/PHS/BIS 
                                                             END OF HEADER       
 > 2024 01 01 10 00  0.0000000  0  3
 G01  20000123.456   105123456.789          45.200

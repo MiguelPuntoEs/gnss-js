@@ -2,8 +2,9 @@
  * RINEX 3.04 / 4.01 observation file writer.
  *
  * The two formats share the same header layout and epoch record
- * encoding — only the version line and the provenance comment differ
- * (see obs-writer.test.ts, which pins this). RINEX 2.11 lives in
+ * encoding — only the version line, the provenance comment and the two
+ * records RINEX 4 deprecates (SYS / PHASE SHIFT, GLONASS COD/PHS/BIS,
+ * mandatory in 3.04) differ (see obs-writer.test.ts, which pins this). RINEX 2.11 lives in
  * obs-writer-v2.ts (different header records and epoch layout).
  *
  * Streams text through gzip compression so we never hold the full
@@ -17,9 +18,11 @@ import {
   clockOffsApplLine,
   createGzipLineSink,
   epochLine3,
+  glonassCodPhsBisLine,
   leapSecondsLine,
   obsField,
   obsTimeSystem,
+  phaseShiftLines,
   timeOfObs,
   stationHeaderLines,
 } from './obs-writer-common';
@@ -175,6 +178,12 @@ export async function writeModernObsBlob(
   }
   for (const l of clockOffsApplLine(header, tagged)) sink.push(l);
 
+  // Mandatory in RINEX 3.01–3.05 (GLONASS COD/PHS/BIS from 3.02, for
+  // GLONASS data); RINEX 4 deprecates both: "should be ignored by RINEX
+  // decoders and encoders" (4.01 Table A2).
+  const v3 = parseFloat(opts.version) < 4;
+  if (v3) for (const l of phaseShiftLines(header, obsTypes)) sink.push(l);
+
   if (header.glonassSlots && Object.keys(header.glonassSlots).length > 0) {
     const entries = Object.entries(header.glonassSlots).sort(
       ([a], [b]) => Number(a) - Number(b)
@@ -188,6 +197,7 @@ export async function writeModernObsBlob(
       sink.push(hdrLine(content, 'GLONASS SLOT / FRQ #'));
     }
   }
+  if (v3 && obsTypes.has('R')) sink.push(glonassCodPhsBisLine(header));
 
   for (const l of leapSecondsLine(header)) sink.push(l);
   sink.push(hdrLine('', 'END OF HEADER'));
