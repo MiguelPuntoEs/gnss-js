@@ -7,6 +7,8 @@ import {
   writeRinex2ObsBlob,
   writeRinex4ObsBlob,
   writeRinexObsBlob,
+  v2CodeColumns,
+  v2ToV3ObsCode,
   type CompactEpoch,
   type RinexObsData,
 } from '../src/rinex';
@@ -43,18 +45,30 @@ const CRX =
   async (d) =>
     writeCrx(await w(d), { date: '01-Jan-24 00:00' });
 
-/** Epochs as plain data for deep equality (NaN → null, LLI/SSI 0 → absent). */
-function plain(epochs: CompactEpoch[], codes?: (sys: string) => number[]) {
-  return epochs.map((e) => ({
+/**
+ * Epochs as plain data for deep equality (NaN → null, LLI/SSI 0 → 0), each
+ * satellite's arrays in `order`'s code order for its system. Codes are
+ * compared as RINEX 3 signals: a RINEX 2 file's codes are mapped back with
+ * v2ToV3ObsCode, so a code a conversion drops shows as null.
+ */
+function plain(d: RinexObsData, order: Map<string, string[]> = d.obsTypes) {
+  const col = (sys: string) => {
+    const have = (d.obsTypes.get(sys) ?? []).map((c) =>
+      c.length === 2 ? v2ToV3ObsCode(sys, c) : c
+    );
+    return (order.get(sys) ?? []).map((c) => have.indexOf(c));
+  };
+  return d.epochs.map((e) => ({
     time: e.time,
     flag: e.flag ?? 0,
     clock: e.clockOffset ?? null,
     records: e.records ?? null,
     // Satellite order within an epoch is free (the writers sort by PRN).
     sats: [...e.sats]
+      .filter(([prn]) => order.has(prn[0]!))
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([prn, v]) => {
-        const idx = codes?.(prn[0]!) ?? [...v.keys()];
+        const idx = col(prn[0]!);
         const lli = e.lli?.get(prn);
         const ssi = e.ssi?.get(prn);
         return [
@@ -129,9 +143,7 @@ describe('LLI survives every writer', () => {
       });
       const out = await reread(await w(src));
       expect(flagCount(src.epochs, 'lli')).toBe(4);
-      expect(plain(out.epochs).map((e) => e.sats.map((s) => s[2]))).toEqual(
-        plain(src.epochs).map((e) => e.sats.map((s) => s[2]))
-      );
+      expect(plain(out, src.obsTypes)).toEqual(plain(src));
     });
   }
 });
@@ -152,9 +164,7 @@ describe('signal strength indicator survives every writer', () => {
       });
       const out = await reread(await w(src));
       expect(flagCount(src.epochs, 'ssi')).toBeGreaterThan(50);
-      expect(plain(out.epochs).map((e) => e.sats.map((s) => s[3]))).toEqual(
-        plain(src.epochs).map((e) => e.sats.map((s) => s[3]))
-      );
+      expect(plain(out, src.obsTypes)).toEqual(plain(src));
     });
   }
 });
@@ -400,5 +410,111 @@ describe('GLONASS SLOT / FRQ #', () => {
     expect((await reread(t)).header.glonassSlots).toEqual(
       sur4.header.glonassSlots
     );
+  });
+});
+
+describe('RINEX 2.11 ↔ 3 observation codes', () => {
+  // RINEX 2.11 Table A2 "# / TYPES OF OBSERV": "C: Pseudorange GPS: C/A,
+  // L2C; Glonass: C/A; Galileo: All. P: Pseudorange GPS and Glonass: P
+  // code"; section 10.1.1 gives the band numbers per system.
+  it('v3 → v2: one signal per v2 code, C2 is L2C and P2 is P(Y)', async () => {
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const named = (sys: string) => {
+      const codes = sur4.obsTypes.get(sys)!;
+      return Object.fromEntries(
+        [...v2CodeColumns(sys, codes)].map(([v2, i]) => [v2, codes[i]])
+      );
+    };
+    expect(named('G')).toEqual({
+      C1: 'C1C', L1: 'L1C', D1: 'D1C', S1: 'S1C', // C/A, not L1C (C1L)
+      C2: 'C2S', P2: 'C2W', // L2C is C2, P(Y) is P2
+      L2: 'L2W', D2: 'D2W', S2: 'S2W', // the P2 carrier
+      C5: 'C5Q', L5: 'L5Q', D5: 'D5Q', S5: 'S5Q',
+    }); // prettier-ignore
+    expect(named('R')).toEqual({
+      C1: 'C1C', L1: 'L1C', D1: 'D1C', S1: 'S1C',
+      C2: 'C2C', P2: 'C2P', L2: 'L2P', D2: 'D2P', S2: 'S2P',
+    }); // prettier-ignore
+    expect(named('E')).toEqual({
+      C1: 'C1C', L1: 'L1C', D1: 'D1C', S1: 'S1C',
+      C5: 'C5Q', L5: 'L5Q', D5: 'D5Q', S5: 'S5Q',
+      C6: 'C6B', L6: 'L6B', D6: 'D6B', S6: 'S6B',
+      C7: 'C7Q', L7: 'L7Q', D7: 'D7Q', S7: 'S7Q',
+      C8: 'C8Q', L8: 'L8Q', D8: 'D8Q', S8: 'S8Q',
+    }); // prettier-ignore
+    expect(named('C')).toEqual({}); // BeiDou: no RINEX 2.11 codes
+  });
+
+  it('v2 → v3 as RTKLIB convcode (rinex.c) maps RINEX 2.11 codes', () => {
+    const m = (sys: string, codes: string[]) =>
+      codes.map((c) => v2ToV3ObsCode(sys, c));
+    expect(m('G', ['C1', 'P1', 'L1', 'D1', 'S1', 'C2', 'P2', 'L2', 'C5', 'L5'])).toEqual(
+      ['C1C', 'C1W', 'L1C', 'D1C', 'S1C', 'C2X', 'C2W', 'L2W', 'C5X', 'L5X']
+    ); // prettier-ignore
+    expect(m('R', ['C1', 'P1', 'L1', 'C2', 'P2', 'L2', 'S2'])).toEqual(
+      ['C1C', 'C1P', 'L1C', 'C2C', 'C2P', 'L2P', 'S2P']
+    ); // prettier-ignore
+    expect(m('E', ['C1', 'L1', 'C5', 'L7', 'S8', 'C6', 'P1'])).toEqual(
+      ['C1X', 'L1X', 'C5X', 'L7X', 'S8X', 'C6X', null]
+    ); // prettier-ignore
+    expect(m('S', ['C1', 'L1', 'C5', 'L2'])).toEqual([
+      'C1C',
+      'L1C',
+      'C5X',
+      null,
+    ]);
+  });
+
+  it('RINEX 2.11 → 2.11 keeps every observation (G, R and E)', async () => {
+    // INAB: 24 types (C1 C2 C5 C7 C8 L1 … S8), GPS + GLONASS + Galileo.
+    const src = await fixture('inab_obs_slice.25o');
+    for (const w of [W2, CRX(W2)]) {
+      const out = await reread(await w(src));
+      expect(out.obsTypes.get('G')).toEqual(src.obsTypes.get('G'));
+      expect(plain(out)).toEqual(plain(src));
+    }
+  });
+
+  it('RINEX 2.11 → 3.04 / 4.01 writes RINEX 3 codes, values intact', async () => {
+    const src = await fixture('inab_obs_slice.25o');
+    for (const w of [W3, W4, CRX(W3)]) {
+      const out = await reread(await w(src));
+      expect(out.obsTypes.get('G')!.slice(0, 6)).toEqual(
+        src.obsTypes
+          .get('G')!
+          .slice(0, 6)
+          .map((c) => v2ToV3ObsCode('G', c))
+      );
+      for (const c of out.obsTypes.get('E')!)
+        expect(c).toMatch(/^[CLDS][15678]X$/);
+      // every value of a code RINEX 3 can name comes back
+      const v3 = new Map(
+        [...src.obsTypes].map(([sys, codes]) => [
+          sys,
+          codes.map((c) => v2ToV3ObsCode(sys, c) ?? '?'),
+        ])
+      );
+      expect(plain(out, v3)).toEqual(plain(src, v3));
+    }
+  });
+
+  it('RINEX 3.04 → 2.11 → 3.04: the spec mapping, no value moves', async () => {
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const v2 = await reread(await W2(sur4));
+    expect(v2.header.satSystem).toBe('M');
+    expect([...v2.obsTypes.keys()].sort()).toEqual(['E', 'G', 'R']); // no C
+    const back = await reread(await W3(v2));
+    // Each v3 code that comes back carries the source signal it was
+    // chosen from (attribute X where RINEX 2 cannot tell, e.g. L2C, L5).
+    const expected: Record<string, Record<string, string>> = {
+      G: { C1C: 'C1C', L1C: 'L1C', C2X: 'C2S', C2W: 'C2W', L2W: 'L2W', C5X: 'C5Q', L5X: 'L5Q', S1C: 'S1C' },
+      R: { C1C: 'C1C', C2P: 'C2P', L2P: 'L2P', C2C: 'C2C' },
+      E: { C1X: 'C1C', L1X: 'L1C', C7X: 'C7Q', L8X: 'L8Q', S6X: 'S6B' },
+    }; // prettier-ignore
+    for (const [sys, pairs] of Object.entries(expected)) {
+      const order = new Map([[sys, Object.keys(pairs)]]);
+      const srcOrder = new Map([[sys, Object.values(pairs)]]);
+      expect(plain(back, order)).toEqual(plain(sur4, srcOrder));
+    }
   });
 });

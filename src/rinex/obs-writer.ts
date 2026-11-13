@@ -13,6 +13,7 @@
 
 import type { RinexHeader } from './parser';
 import type { SatValues } from './epoch-sats';
+import { v2ToV3ObsCode } from './obs-codes';
 import { padL, padR, fmtF, hdrLine } from './format';
 import {
   clockOffsApplLine,
@@ -105,10 +106,29 @@ export function modalIntervalS(
 export async function writeModernObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
-  obsTypes: Map<string, string[]>,
+  inTypes: Map<string, string[]>,
   opts: { version: string; comment: string }
 ): Promise<Blob> {
   if (epochs.length === 0) return new Blob([], { type: 'application/gzip' });
+
+  // A RINEX 2 source's two-character codes become their RINEX 3 signals
+  // (obs-codes.ts); `cols` maps each written code to its value column.
+  const obsTypes = new Map<string, string[]>();
+  const columns = new Map<string, number[]>();
+  for (const [sys, codes] of inTypes) {
+    const out: string[] = [];
+    const cols: number[] = [];
+    codes.forEach((c, i) => {
+      const v3 = c.length === 2 ? v2ToV3ObsCode(sys, c) : c;
+      if (v3 && !out.includes(v3)) {
+        out.push(v3);
+        cols.push(i);
+      }
+    });
+    if (out.length === 0) continue;
+    obsTypes.set(sys, out);
+    columns.set(sys, cols);
+  }
 
   const sink = createGzipLineSink();
   const BATCH = 200;
@@ -224,15 +244,15 @@ export async function writeModernObsBlob(
 
     for (const prn of prns) {
       const sys = prn[0]!;
-      const sysTypes = obsTypes.get(sys);
-      if (!sysTypes) continue;
+      const cols = columns.get(sys);
+      if (!cols) continue;
 
       const valArr = epoch.sats.get(prn)!;
       const lli = epoch.lli?.get(prn);
       const ssi = epoch.ssi?.get(prn);
       let line = prn;
 
-      for (let i = 0; i < sysTypes.length; i++) {
+      for (const i of cols) {
         const val = i < valArr.length ? valArr[i]! : NaN;
         line += obsField(val, lli?.[i], ssi?.[i]);
       }
