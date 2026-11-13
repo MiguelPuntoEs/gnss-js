@@ -153,3 +153,35 @@ describe('PPP elevation weighting', () => {
     expect(elevationVarianceFactor(e(30), 'rtklib')).toBeCloseTo(2.5, 9);
   });
 });
+
+describe('VMF3 mapping functions — TU Wien reference', () => {
+  // Reference values from TU Wien's own vmf3_ht.py
+  // (vmf.geo.tuwien.ac.at/codes/Python_Tools_Adavi), ah = 0.00121,
+  // aw = 0.00058: [MJD, lat°, lon°, h (m), elevation°, mfh, mfw].
+  const REF: [number, number, number, number, number, number, number][] = [
+    [60323.0, 49.144, 12.879, 666, 3, 14.7350826236666, 16.4006828148785],
+    [60323.0, 49.144, 12.879, 666, 5, 10.1671699303525, 10.7482875666523],
+    [60323.0, 49.144, 12.879, 666, 10, 5.55924343338815, 5.65708641250784],
+    [60323.25, -33.9, 18.4, 50, 5, 10.1575981841275, 10.7499349749394],
+    [60450.5, -33.9, 18.4, 50, 10, 5.55701288079783, 5.65717189871451],
+    [60600.75, 49.144, 12.879, 666, 3, 14.7484766522307, 16.4065941929689],
+    [60600.75, 49.144, 12.879, 666, 5, 10.1697933656261, 10.7491631311562],
+    [60600.75, 0.3, -78.5, 2800, 3, 14.8918395604703, 16.4105570173114],
+  ];
+  it('matches vmf3_ht to 1e-12 (relative)', async () => {
+    const { vmf3 } = await import('../src/troposphere');
+    for (const [mjd, lat, lon, h, el, mfh, mfw] of REF) {
+      const r = vmf3(
+        0.00121,
+        0.00058,
+        (mjd - 40587) * 86_400_000,
+        lat * deg,
+        lon * deg,
+        h,
+        el * deg
+      );
+      expect(Math.abs(r.mfh / mfh - 1)).toBeLessThan(1e-12);
+      expect(Math.abs(r.mfw / mfw - 1)).toBeLessThan(1e-12);
+    }
+  });
+});
