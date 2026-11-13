@@ -18,3 +18,4 @@ E6 slot, Galileo PRN ≤ 30, BeiDou B1I named `1I` (RINEX 3.02).
 | f9p_rawx.obs      | ubx   | f9p_rawx_slice.ubx        | (RTKLIB 2.4.2 ignores RAWX sigId: every record is an L1 row)                                          |
 | oem719_base.obs   | nov   | oem719_rtk_base.gps       | `-ts 2025/03/26 03:55:00 -te 2025/03/26 03:55:09`                                                     |
 | oemv_rangecmp.obs | nov   | oemv_rangecmp.gps         | `-ts 2029/08/03 23:07:00 -te 2029/08/03 23:07:09` (RTKLIB adjgpsweek moves the 2009 file +1024 weeks) |
+| binex_7f05.obs    | binex | binex_obs_7f05.bnx        | (2.4.2 decodes only the first satellites of this record cleanly)                                      |
