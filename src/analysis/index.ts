@@ -23,3 +23,4 @@ export * from './neq-combination';
 export * from './regional-iono';
 export * from './dense-ls';
 export * from './network-clocks';
+export * from './baseline-selection';

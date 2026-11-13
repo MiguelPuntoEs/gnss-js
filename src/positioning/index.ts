@@ -779,3 +779,14 @@ export type {
   SatAttitudeOptions,
   SatAttitudeProvider,
 } from './sat-attitude';
+export { solveDdNetwork, prepareDdStation } from './dd-network';
+export type {
+  DdStationInput,
+  DdNetworkOptions,
+  DdArOptions,
+  DdNetworkResult,
+  DdStationResult,
+  DdBaselineReport,
+  DdSolution,
+  DdStationData,
+} from './dd-network';
