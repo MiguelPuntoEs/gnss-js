@@ -11,8 +11,10 @@ then trailing blanks and the two machine-specific header lines (`log:` comment,
 Known RTKLIB 2.4.2 limitations the tests document: no GPS/QZSS L1C or Galileo
 E6 slot, Galileo PRN ≤ 30, BeiDou B1I named `1I` (RINEX 3.02).
 
-| file             | FMT   | fixture                   | extra                                                                                    |
-| ---------------- | ----- | ------------------------- | ---------------------------------------------------------------------------------------- |
-| dlf100_rtcm3.obs | rtcm3 | dlf100_rtcm_rtk_base.rtcm | `-tr 2026/11/06 9:00:00 -ts 2026/11/06 09:13:51 -te 2026/11/06 09:14:00`                 |
-| rtcm2_avl12.obs  | rtcm2 | rtcm2_avl12_slice.bin     | `-tr 2026/11/13 0:30:00` (RTCM 2 has no date: only the time within the hour is compared) |
-| f9p_rawx.obs     | ubx   | f9p_rawx_slice.ubx        | (RTKLIB 2.4.2 ignores RAWX sigId: every record is an L1 row)                             |
+| file              | FMT   | fixture                   | extra                                                                                                 |
+| ----------------- | ----- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| dlf100_rtcm3.obs  | rtcm3 | dlf100_rtcm_rtk_base.rtcm | `-tr 2026/11/06 9:00:00 -ts 2026/11/06 09:13:51 -te 2026/11/06 09:14:00`                              |
+| rtcm2_avl12.obs   | rtcm2 | rtcm2_avl12_slice.bin     | `-tr 2026/11/13 0:30:00` (RTCM 2 has no date: only the time within the hour is compared)              |
+| f9p_rawx.obs      | ubx   | f9p_rawx_slice.ubx        | (RTKLIB 2.4.2 ignores RAWX sigId: every record is an L1 row)                                          |
+| oem719_base.obs   | nov   | oem719_rtk_base.gps       | `-ts 2025/03/26 03:55:00 -te 2025/03/26 03:55:09`                                                     |
+| oemv_rangecmp.obs | nov   | oemv_rangecmp.gps         | `-ts 2029/08/03 23:07:00 -te 2029/08/03 23:07:09` (RTKLIB adjgpsweek moves the 2009 file +1024 weeks) |
