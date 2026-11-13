@@ -45,12 +45,21 @@ function tecAtMap(
   const j0 = Math.max(0, Math.min(w - 2, Math.floor(fj)));
   const di = Math.max(0, Math.min(1, fi - i0));
   const dj = Math.max(0, Math.min(1, fj - j0));
-  return (
-    m[i0 * w + j0]! * (1 - di) * (1 - dj) +
-    m[i0 * w + j0 + 1]! * (1 - di) * dj +
-    m[(i0 + 1) * w + j0]! * di * (1 - dj) +
-    m[(i0 + 1) * w + j0 + 1]! * di * dj
-  );
+  return blend([
+    [m[i0 * w + j0]!, (1 - di) * (1 - dj)],
+    [m[i0 * w + j0 + 1]!, (1 - di) * dj],
+    [m[(i0 + 1) * w + j0]!, di * (1 - dj)],
+    [m[(i0 + 1) * w + j0 + 1]!, di * dj],
+  ]);
+}
+
+/** Weighted sum skipping zero-weight terms: a no-value (NaN) neighbour
+ *  that carries no weight — e.g. exactly on a grid node — must not poison
+ *  the result (NaN · 0 is NaN). */
+function blend(terms: [value: number, weight: number][]): number {
+  let sum = 0;
+  for (const [v, wt] of terms) if (wt > 0) sum += v * wt;
+  return sum;
 }
 
 /**
@@ -77,8 +86,11 @@ export function gimVerticalTec(
   const f = span > 0 ? (timeMs - e[i]!) / span : 0;
   const a = tecAtMap(grid, i, latDeg, lonDeg);
   const b = tecAtMap(grid, i + 1, latDeg, lonDeg);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return a * (1 - f) + b * f;
+  const v = blend([
+    [a, 1 - f],
+    [b, f],
+  ]);
+  return Number.isFinite(v) ? v : null;
 }
 
 /**

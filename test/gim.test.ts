@@ -55,6 +55,16 @@ describe('gimVerticalTec', () => {
     g.maps[0]!.fill(NaN);
     expect(gimVerticalTec(g, T0, 0, 0)).toBeNull();
   });
+
+  it('is unaffected by a no-value neighbour that carries no weight', () => {
+    const g = uniformGrid(10);
+    // (lat 0, lon 0) is node i=2, j=2; its neighbour j=3 has no value.
+    g.maps[0]![2 * 5 + 3] = NaN;
+    g.maps[1]!.fill(NaN); // the next map, weight 0 at T0
+    expect(gimVerticalTec(g, T0, 0, 0)).toBeCloseTo(10, 6);
+    // Between the nodes the no-value cell does carry weight → null.
+    expect(gimVerticalTec(g, T0, 0, 5)).toBeNull();
+  });
 });
 
 describe('gimSlantIonoDelayL1', () => {
