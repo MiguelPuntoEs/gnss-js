@@ -74,3 +74,8 @@
 !/test-fixtures/state_plane_be_pl_proj.json
 !/test-fixtures/swiss_proj.json
 !/test-fixtures/iberia_ireland_proj.json
+!/test-fixtures/atm-tide-grid-excerpt.dat
+!/test-fixtures/atm-tide-stations-excerpt.dat
+!/test-fixtures/opole-excerpt.txt
+!/test-fixtures/eop20c04-excerpt.txt
+!/test-fixtures/finals2000a-excerpt.txt

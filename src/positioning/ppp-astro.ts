@@ -9,14 +9,15 @@
  * correction accuracy needed).
  */
 
+import { getGpsLeap } from '../time/utc';
+
 const AU = 149597870700; // m
-const GPS_UTC_LEAP = 18; // s, valid 2017-01 … (2024 epoch)
 const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
 const DEG = Math.PI / 180;
 
 /** Days since J2000.0 (UTC ≈ UT1). timeMs is GPS-scale. */
 function daysSinceJ2000(timeMs: number): number {
-  return (timeMs - GPS_UTC_LEAP * 1000 - J2000_MS) / 86400000;
+  return (timeMs - getGpsLeap(new Date(timeMs)) * 1000 - J2000_MS) / 86400000;
 }
 
 /** Greenwich mean sidereal time (rad). */
@@ -54,52 +55,68 @@ export function sunEcef(timeMs: number): [number, number, number] {
   return eciToEcef(eci, gmst(timeMs));
 }
 
-/** Moon position in ECEF (m). Low-precision series (Montenbruck & Gill). */
+/**
+ * Moon position in ECEF (m). The analytical series of Montenbruck & Gill
+ * (Satellite Orbits, §3.3.2), referred to the mean equinox *of date* so it
+ * matches the GMST rotation (no −1.3972°/century precession term: that
+ * would refer it to J2000 and leave a ~0.3° error by 2024). Against JPL
+ * DE421 ≤ 0.03° and ≤ 0.07 % in distance — solid-earth tide error
+ * ≲ 0.2 mm (it was up to 1.7 mm with the earlier truncated series).
+ */
 export function moonEcef(timeMs: number): [number, number, number] {
   const T = daysSinceJ2000(timeMs) / 36525;
-  // Fundamental arguments (deg).
-  const L0 = 218.31617 + 481267.88088 * T - 1.3972 * T;
-  const l = 134.96292 + 477198.86753 * T;
-  const lp = 357.52543 + 35999.04944 * T;
-  const F = 93.27283 + 483202.01873 * T;
-  const D = 297.85027 + 445267.11135 * T;
-  const s = (x: number) => Math.sin(x * DEG);
-  const c = (x: number) => Math.cos(x * DEG);
-  // Ecliptic longitude (deg) — main periodic terms.
+  const AS = DEG / 3600;
+  // Mean arguments (rad).
+  const L0 = (218.31617 + 481267.88088 * T) * DEG;
+  const l = (134.96292 + 477198.86753 * T) * DEG;
+  const lp = (357.52543 + 35999.04944 * T) * DEG;
+  const F = (93.27283 + 483202.01873 * T) * DEG;
+  const D = (297.85027 + 445267.11135 * T) * DEG;
+  const s = Math.sin;
+  const c = Math.cos;
   const lon =
     L0 +
-    6.28875 * s(l) +
-    1.274018 * s(2 * D - l) +
-    0.658309 * s(2 * D) +
-    0.213616 * s(2 * l) -
-    0.185596 * s(lp) -
-    0.114336 * s(2 * F) +
-    0.058793 * s(2 * D - 2 * l) +
-    0.057212 * s(2 * D - lp - l) +
-    0.05332 * s(2 * D + l);
-  // Ecliptic latitude (deg).
+    (22640 * s(l) +
+      769 * s(2 * l) -
+      4586 * s(l - 2 * D) +
+      2370 * s(2 * D) -
+      668 * s(lp) -
+      412 * s(2 * F) -
+      212 * s(2 * l - 2 * D) -
+      206 * s(l + lp - 2 * D) +
+      192 * s(l + 2 * D) -
+      165 * s(lp - 2 * D) +
+      148 * s(l - lp) -
+      125 * s(D) -
+      110 * s(l + lp) -
+      55 * s(2 * F - 2 * D)) *
+      AS;
   const lat =
-    5.128189 * s(F) +
-    0.280606 * s(l + F) +
-    0.277693 * s(l - F) +
-    0.173238 * s(2 * D - F) +
-    0.055413 * s(2 * D + F - l) +
-    0.046272 * s(2 * D - F - l);
-  // Distance (Earth radii → m). ~60.3 ER mean.
+    18520 * AS * s(F + lon - L0 + (412 * s(2 * F) + 541 * s(lp)) * AS) +
+    (-526 * s(F - 2 * D) +
+      44 * s(l + F - 2 * D) -
+      31 * s(-l + F - 2 * D) -
+      25 * s(-2 * l + F) -
+      23 * s(lp + F - 2 * D) +
+      21 * s(-l + F) +
+      11 * s(-lp + F - 2 * D)) *
+      AS;
   const r =
     (385000 -
       20905 * c(l) -
       3699 * c(2 * D - l) -
       2956 * c(2 * D) -
-      570 * c(2 * l)) *
+      570 * c(2 * l) +
+      246 * c(2 * l - 2 * D) -
+      205 * c(lp - 2 * D) -
+      171 * c(l + 2 * D) -
+      152 * c(l + lp - 2 * D)) *
     1000;
   const eps = (23.4393 - 0.0000004 * daysSinceJ2000(timeMs)) * DEG;
-  const lonR = lon * DEG;
-  const latR = lat * DEG;
   // Ecliptic → equatorial (ECI).
-  const xe = r * Math.cos(latR) * Math.cos(lonR);
-  const ye = r * Math.cos(latR) * Math.sin(lonR);
-  const ze = r * Math.sin(latR);
+  const xe = r * Math.cos(lat) * Math.cos(lon);
+  const ye = r * Math.cos(lat) * Math.sin(lon);
+  const ze = r * Math.sin(lat);
   const eci: [number, number, number] = [
     xe,
     ye * Math.cos(eps) - ze * Math.sin(eps),

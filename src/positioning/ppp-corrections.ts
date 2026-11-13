@@ -71,6 +71,18 @@ export function applyCorrections(
 
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { sunEcef, moonEcef, solidEarthTide } from './ppp-astro';
+import { solidEarthTideIers } from './solid-earth-tide';
+import { interpolateEop, gpsMsToUtcMjd, type EopRecord } from './eop';
+import {
+  wobble,
+  solidPoleTideEnu,
+  oceanPoleTideEnu,
+  type OceanPoleTideCoefficients,
+} from './pole-tide';
+import {
+  atmosphericTideEnu,
+  type AtmTideCoefficients,
+} from './atmospheric-tide-loading';
 import {
   oceanLoadingEnu,
   type OceanLoadingCoefficients,
@@ -98,6 +110,20 @@ export interface PppCorrectionConfig {
   windup?: boolean;
   /** The station's ocean tide loading coefficients (BLQ), when known. */
   oceanLoading?: OceanLoadingCoefficients;
+  /** Solid-earth tide model: the full IERS 2010 Steps 1 + 2 (default), or
+   *  the degree-2 in-phase term alone (the model before gnss-js 2.46). */
+  tideModel?: 'iers2010' | 'degree2';
+  /** Polar motion for the pole tides (IERS 2010 7.1.4–7.1.5): an EOP
+   *  series (`parseEopC04`, `parseFinals2000A`, IGS ERP rows) interpolated
+   *  per epoch, or one fixed pole (arcsec). Without it no pole tide. */
+  eop?: readonly EopRecord[] | { xp: number; yp: number };
+  /** Apply the solid-earth pole tide when `eop` is given. Default true. */
+  poleTide?: boolean;
+  /** The station's Desai (2002) ocean pole tide coefficients; applied when
+   *  `eop` is given. */
+  oceanPoleTide?: OceanPoleTideCoefficients;
+  /** The station's S1/S2 atmospheric tide loading coefficients. */
+  atmosphericTides?: AtmTideCoefficients;
 }
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
@@ -113,6 +139,15 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
   const useRcv = cfg.rcvPco ?? true;
   const useTides = cfg.tides ?? true;
   const useWindup = cfg.windup ?? true;
+  const iersTide = (cfg.tideModel ?? 'iers2010') === 'iers2010';
+  const usePoleTide = cfg.poleTide ?? true;
+  const eop = cfg.eop;
+  const poleAt = (timeMs: number) =>
+    !eop
+      ? null
+      : 'xp' in eop
+        ? eop
+        : interpolateEop(eop as readonly EopRecord[], timeMs);
   const antDelta = cfg.antDeltaEnu ?? [0, 0, 0];
   // Phase wind-up accumulator per satellite (unwrapped, cycles).
   const windupState = new Map<string, number>();
@@ -122,8 +157,34 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       const sun = sunEcef(timeMs);
       const moon = moonEcef(timeMs);
       const tideDisp = useTides
-        ? solidEarthTide(rcvEcef, sun, moon)
+        ? iersTide
+          ? solidEarthTideIers(rcvEcef, sun, moon, timeMs)
+          : solidEarthTide(rcvEcef, sun, moon)
         : ([0, 0, 0] as [number, number, number]);
+      // Site displacements given in local East/North/Up.
+      const enu: [number, number, number] = [0, 0, 0];
+      const addEnu = (d: [number, number, number]) => {
+        enu[0] += d[0];
+        enu[1] += d[1];
+        enu[2] += d[2];
+      };
+      const pole = poleAt(timeMs);
+      if (pole) {
+        const { m1, m2 } = wobble(pole.xp, pole.yp, gpsMsToUtcMjd(timeMs));
+        const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
+        if (usePoleTide) addEnu(solidPoleTideEnu(lat, lon, m1, m2));
+        if (cfg.oceanPoleTide)
+          addEnu(oceanPoleTideEnu(cfg.oceanPoleTide, m1, m2));
+      }
+      if (cfg.atmosphericTides)
+        addEnu(atmosphericTideEnu(cfg.atmosphericTides, timeMs));
+      if (enu[0] || enu[1] || enu[2]) {
+        const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
+        const d = enuToEcef(enu, lat, lon);
+        tideDisp[0] += d[0];
+        tideDisp[1] += d[1];
+        tideDisp[2] += d[2];
+      }
       if (cfg.oceanLoading) {
         // Ocean loading ENU → ECEF, added to the receiver displacement.
         const [e, n, u] = oceanLoadingEnu(cfg.oceanLoading, timeMs);

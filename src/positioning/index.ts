@@ -743,3 +743,7 @@ export type {
   NetworkFcbSummary,
 } from './ppp-fcb';
 export * from './ocean-loading';
+export * from './solid-earth-tide';
+export * from './eop';
+export * from './pole-tide';
+export * from './atmospheric-tide-loading';
