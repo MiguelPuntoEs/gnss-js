@@ -65,9 +65,14 @@ export interface NetworkClockOptions {
   /** Constellations (default 'G'). */
   systems?: string;
   elevationMaskDeg?: number;
-  /** Clock epochs every this many seconds (default 300). Arcs are still
-   *  found at the full data rate. */
+  /** The adjustment uses epochs every this many seconds (default 300).
+   *  Arcs are still found at the full data rate. */
   sampleS?: number;
+  /** Output clocks every this many seconds (default `sampleS`; must divide
+   *  it). Epochs between the adjustment's get their clocks with the
+   *  ambiguities and ZWD of the adjustment held fixed — CODE's clock
+   *  densification (30 s from a 300 s solution). */
+  outputS?: number;
   /** Zenith σ of the ionosphere-free code and phase (m). */
   codeSigma?: number;
   phaseSigma?: number;
@@ -143,6 +148,8 @@ export function estimateNetworkClocks(
   const systems = options.systems ?? 'G';
   const mask = ((options.elevationMaskDeg ?? 10) * Math.PI) / 180;
   const stepMs = (options.sampleS ?? 300) * 1000;
+  const outMs = (options.outputS ?? options.sampleS ?? 300) * 1000;
+  if (stepMs % outMs !== 0) throw new Error('outputS must divide sampleS.');
   const sP = options.codeSigma ?? 0.6;
   const sL = options.phaseSigma ?? 0.006;
   const zwdStep = (options.zwdNodeS ?? 7200) * 1000;
@@ -157,14 +164,16 @@ export function estimateNetworkClocks(
   let tEnd = -Infinity;
   for (const s of stations)
     for (const e of s.epochs)
-      if (e.timeMs % stepMs === 0) {
+      if (e.timeMs % outMs === 0) {
         tStart = Math.min(tStart, e.timeMs);
         tEnd = Math.max(tEnd, e.timeMs);
       }
   if (!Number.isFinite(tStart))
     throw new Error('No observations on the clock epochs.');
-  const nEp = Math.round((tEnd - tStart) / stepMs) + 1;
-  const epochs = Array.from({ length: nEp }, (_, i) => tStart + i * stepMs);
+  const nEp = Math.round((tEnd - tStart) / outMs) + 1;
+  const epochs = Array.from({ length: nEp }, (_, i) => tStart + i * outMs);
+  /** Epochs of the adjustment (the others are densified). */
+  const isEst = epochs.map((t) => t % stepMs === 0);
   const z0 = Math.floor(tStart / zwdStep) * zwdStep;
   const nZ = Math.floor((tEnd - z0) / zwdStep) + 2;
 
@@ -188,7 +197,7 @@ export function estimateNetworkClocks(
     const arcs = new Map<string, Arc>();
     for (const ep of st.epochs) {
       const onGrid =
-        ep.timeMs % stepMs === 0 && ep.timeMs >= tStart && ep.timeMs <= tEnd;
+        ep.timeMs % outMs === 0 && ep.timeMs >= tStart && ep.timeMs <= tEnd;
       const ctx = onGrid
         ? (st.corrections?.epochContext?.(ep.timeMs, pos) ?? null)
         : null;
@@ -271,14 +280,14 @@ export function estimateNetworkClocks(
           a.offset = omcL - omcP;
         }
         omcL -= a.offset!;
-        ambEpochs[a.amb]!++;
+        if (ep.timeMs % stepMs === 0) ambEpochs[a.amb]!++;
         let sIdx = satIdx.get(o.prn);
         if (sIdx === undefined) {
           sIdx = sats.length;
           sats.push(o.prn);
           satIdx.set(o.prn, sIdx);
         }
-        const ei = Math.round((ep.timeMs - tStart) / stepMs);
+        const ei = Math.round((ep.timeMs - tStart) / outMs);
         const f = (ep.timeMs - z0) / zwdStep;
         const zk = Math.min(nZ - 2, Math.floor(f));
         rowsByEpoch[ei]!.push({
@@ -352,7 +361,8 @@ export function estimateNetworkClocks(
     const neq = new DenseNeq(nG);
     const N = neq.N;
     const b = neq.b;
-    for (const rows of rowsByEpoch) {
+    for (const [ei, rows] of rowsByEpoch.entries()) {
+      if (!isEst[ei]) continue;
       const { use, local } = epochParams(rows);
       if (!use.length) continue;
       const nE = local.size;
@@ -454,7 +464,7 @@ export function estimateNetworkClocks(
     let sl = 0;
     let np = 0;
     const resid: { r: Row; vP: number; vL: number }[] = [];
-    for (const rows of rowsByEpoch) {
+    for (const [ei, rows] of rowsByEpoch.entries()) {
       const { use, local, ref } = epochParams(rows);
       const nE = local.size;
       const Nee = new Float64Array(nE * nE);
@@ -488,6 +498,7 @@ export function estimateNetworkClocks(
         ? choleskySolve(choleskyDecompose(Nee, nE), nE, be)
         : new Float64Array(0);
       epochX.push({ local, x, ref });
+      if (!isEst[ei]) continue;
       for (const { r, lP, lL } of red) {
         const rk = local.get(`r${r.st}|${r.sys}`);
         const m = (rk !== undefined ? x[rk]! : 0) - x[local.get(`s${r.sat}`)!]!;

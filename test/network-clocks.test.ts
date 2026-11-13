@@ -183,4 +183,29 @@ describe('estimateNetworkClocks', () => {
     const prn = [...sol.satClocks].find(([, a]) => Number.isFinite(a[10]!))![0];
     expect(clkBias(back, prn, t)).toBeCloseTo(sol.satClocks.get(prn)![10]!, 15);
   });
+
+  it('densifies to 30 s with the adjustment held fixed', () => {
+    const dense = estimateNetworkClocks(stations, source, {
+      referenceStations: ['REF0'],
+      minArcEpochs: 2,
+      outputS: 30,
+    });
+    expect(dense.epochs[1]! - dense.epochs[0]!).toBe(30_000);
+    let worst = 0;
+    let n = 0;
+    dense.epochs.forEach((t, ei) => {
+      if (t % 300_000 === 0) return;
+      for (const [prn, arr] of dense.satClocks) {
+        const v = arr[ei]!;
+        if (!Number.isFinite(v)) continue;
+        worst = Math.max(
+          worst,
+          Math.abs(v - (satClk(prn, t) - rcvClk(SITES[0][3], t)))
+        );
+        n++;
+      }
+    });
+    expect(n).toBeGreaterThan(2000);
+    expect(worst * C).toBeLessThan(0.002);
+  });
 });
