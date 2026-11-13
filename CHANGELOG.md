@@ -1,5 +1,57 @@
 # Changelog
 
+## 2.46.0
+
+### Changed — IERS Conventions station displacements are the default
+
+- `createPppCorrections` uses the IERS 2010 solid-earth tide (Steps 1 + 2: degree 3, latitude dependence, out-of-phase and K1/ψ1/P1 resonance terms; checked against the IERS DEHANTTIDEINEL test cases) instead of degree-2 in-phase only. `tideModel: 'degree2'` keeps the previous model. Step 2 alone is up to 13 mm radial.
+- Ocean tide loading adds nodal modulation and 16 minor tides by admittance (IERS 2010 7.1.2), checked against the IERS HARDISP test case (Reykjavik was up to 4.1 mm off). `oceanLoadingModel: 'basic'` keeps the 11 constituents without nodal terms.
+- The Moon position for the tides dropped a J2000 precession term while the rotation assumed equinox of date: a 0.3° direction error in 2024, up to 1.7 mm of solid tide (checked against JPL DE421 now). Leap seconds come from the table instead of a hard-coded 18 s.
+- New, on when the caller passes the data: solid pole tide with the 2018 secular pole (`eop`), ocean pole tide (`oceanPoleTide`, Desai 2002), S1/S2 atmospheric tide loading (`atmosphericTides`), 2nd + 3rd order ionosphere from a GIM and IGRF-14 (`higherOrderIono`).
+- EOP: `parseFinals2000A`, `parseEopC04`, `interpolateEop`; IGS ERP 2 read/write (`parseErp`, `writeErp`, `erpAt`).
+- On the EPN benchmark (40 stations, one week) each model is below 1 mm; together they are in the Conventions, so they are the defaults.
+
+### Added — normal equations (`gnss-js/analysis`)
+
+- `NormalEquations` / `NeqParameter`, stacking with parameter matching (`stackNeqs`), a-priori changes, `moveToEpoch`, pre-elimination (Schur), pseudo-observations, `solveNeq`.
+- Minimum-constraint datum (NNT / NNR / NNS on positions and velocities) with the iterative reference-station check (`solveWithDatum`).
+- `NeqCombination`: multi-year solutions with positions and velocities per segment (`segmentsFromEvents`: equipment change → new position, earthquake → new position and velocity), annual/semi-annual terms, velocity ties, per-solution Helmert parameters.
+- SINEX: `parseSinex` (every ESTIMATE/APRIORI/NEQ/MATRIX block), `sinexToNeq` (un-constrains covariance files), `writeSinexNeq`, `writeSinexCovariance`, discontinuities and SSC files. `writeSinex` can write the full cross-covariance.
+- Oracle: EUREF's 7 daily solutions of week 2297 stacked to a weekly one reproduce EUREF's weekly solution (393 stations) to a median 0.003 / 0.003 / 0.014 mm (N/E/U) after a translation.
+
+### Added — double-difference network solution
+
+- `solveDdNetwork`: baselines by OBS-MAX or shortest tree (`selectBaselines`), zero-difference model shared with PPP, Melbourne–Wübbena wide-lane and LAMBDA narrow-lane fixing, ambiguities pre-eliminated per baseline, full covariance, NEQ output. `prepareDdStation` releases raw observations per station.
+- EPN week 2297, 40 stations, VMF3 at 3°: median 0.8 / 0.8 / 1.9 mm (E/N/U) against EUREF; the EUREF analysis centres' own solutions are at 0.3 / 0.3 / 1.1.
+
+### Added — products
+
+- Troposphere SINEX 2.00: `parseTroSinex` (also 0.01/1.00), `writeTroSinex`, `troSeries`; `PppEpochResult` carries `ztdSigma` and `gradients`. ZTD against EUREF's combination: 4.8 mm median RMS (40 stations).
+- Regional ionosphere and DCBs from a station network: `estimateRegionalIonosphere`, `regionalIonoToIonex`, `regionalDcbToBiasSinex`. VTEC against ESA's GIM: 2.8 TECU RMS.
+- Network satellite clocks: `estimateNetworkClocks` (batch, epoch clocks pre-eliminated), `clockSolutionToClk`. GPS, 40 EPN stations, 30 s: 0.065 ns STD per pass, 0.49 ns RMS against IGS (per-satellite offsets of ±0.5 ns unexplained).
+- Writers: SP3-c/d, RINEX CLOCK 3.04, IONEX, Bias-SINEX 1.00, BLQ, IGS ERP 2, RINEX MET, NMEA 0183, RINEX nav 2.11 ↔ 3.04/3.05 ↔ 4.01; each with round-trip and spec-oracle tests.
+
+### Added — troposphere, attitude, antennas (opt-in)
+
+- Operational VMF3 from TU Wien, gridded (1° / 5°) and site-wise: `parseVmf3Grid`, `parseVmf3Orography`, `vmf3GridAt`, `createVmf3GridTroposphere`; mapping and GPT3 pinned to TU Wien's reference code. The engine default stays standard atmosphere + Niell at 10° (the library does not download). With VMF3 at a 3° cut-off, EPN height RMS 3.2 → 2.1 mm.
+- `PppOptions.elevationWeighting`, `PppOptions.systemSigmaScale` (per-constellation code/phase σ).
+- Satellite attitude: eclipse and noon-turn yaw laws per block (GPS, Galileo, GLONASS-M, BeiDou, QZSS), ORBEX quaternions (`parseOrbex`), `PppCorrectionConfig.attitude`. Within 2° of CODE's attitude; no measurable coordinate change on the benchmark.
+- `withSatelliteAntennas`: take some constellations' satellite antennas from another ANTEX (e.g. the one a product's clocks assume). `SP3` files expose `agency`.
+
+### Fixed
+
+- PPP: the antenna height was dropped for an uncalibrated antenna.
+- PPP: time-differenced slip candidates are confirmed with a clock-free jump.
+- u-blox RAWX: trkStat bit 2 is "half cycle valid" — live PPP dropped F9P phases.
+- RTCM ephemerides lost TGD/BGD, IODC, URA, fit and health; Galileo 1045/1046 week is GPS-aligned; Trimble RT27 Galileo toe/toc were the transmission time.
+- Navigation time: toc was Unix seconds mod 604800 (days off); BeiDou clock 14 s and GLONASS 18 s late; RINEX 2 GLONASS frame time.
+- RINEX observations: epoch-flag-1 epochs were dropped; RINEX 2 receiver clock offset was read as satellites; SYS / SCALE FACTOR ignored; writers dropped LLI, SSI, events, epoch flags, clock offsets and the time system; 2.11 ↔ 3 code tables (L2C was written as P(Y)); mandatory 3.04 header records.
+- SP3: fixed-column P records (a large negative clock touching z made a satellite NaN); any 999999.x is a bad clock.
+- IONEX: in-map EXPONENT applies to the following rows. GIM interpolation no longer nulls VTEC at a zero-weight neighbour.
+- SBF: BeiDou C51–C63 kept; Galileo E6 is 6B when flagged. SBAS GEO frame time.
+- SSR: the radial axis is along × cross.
+- SINEX: APRIORI matched by parameter; two-digit years per SINEX 2.02.
+
 ## 2.45.1
 
 ### Fixed — PPP slip repair at 1 Hz
