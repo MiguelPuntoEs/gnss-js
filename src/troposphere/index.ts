@@ -346,7 +346,14 @@ export interface TroposphereModel {
  * GPT3 + VMF3 troposphere for PPP. GPT3 is evaluated once per station-day
  * position and cached (it changes slowly).
  */
-export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
+export function createGpt3Troposphere(
+  grid: Gpt3Grid,
+  opts: {
+    /** Add GPT3's a-priori horizontal gradients. Default true. */
+    gradients?: boolean;
+  } = {}
+): TroposphereModel {
+  const withGradients = opts.gradients ?? true;
   let cacheKey = '';
   let cached: Gpt3Result | null = null;
   return {
@@ -363,10 +370,11 @@ export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
       // Chen & Herring (1997) gradient mapping.
       const sinEl = Math.sin(elRad);
       const mg = 1 / (sinEl * Math.tan(elRad) + 0.0032);
-      const gradient =
-        mg *
-        ((g.Gn_h + g.Gn_w) * Math.cos(azRad) +
-          (g.Ge_h + g.Ge_w) * Math.sin(azRad));
+      const gradient = !withGradients
+        ? 0
+        : mg *
+          ((g.Gn_h + g.Gn_w) * Math.cos(azRad) +
+            (g.Ge_h + g.Ge_w) * Math.sin(azRad));
       return {
         zhd: saastamoinenZhd(g.p, latRad, hEll),
         mh: mfh,
@@ -376,3 +384,4 @@ export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
     },
   };
 }
+export * from './vmf3-grid';
