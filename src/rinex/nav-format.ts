@@ -90,7 +90,8 @@ export function keplerOrbitRows(eph: KeplerEphemeris): (number | null)[][] {
     );
   } else if (sys === 'E') {
     rows.push(
-      [eph.idot, eph.dataSources ?? 0, eph.week, 0],
+      // orbit-5 slot 4 is spare: left blank, as IGS and DLR write it
+      [eph.idot, eph.dataSources ?? 0, eph.week],
       [eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.tgd2 ?? 0],
       [ttm]
     );

@@ -293,6 +293,36 @@ describe.skipIf(!HAS_V4)('RINEX 4.02 DLR merged file (brdc_v4_dlr.nav)', () => {
     expect(v4.ion!.length).toBe(131);
   });
 
+  it(
+    '4.01 rewrite reproduces every DLR record text (but QZSS CNV2)',
+    { timeout: 60000 },
+    () => {
+      // Allowed: exponent letter (DLR e, we E), trailing blanks. Not read,
+      // so not written: the 96 "> EPH Jxx CNV2" (QZSS L1C CNAV-2) records.
+      const blocks = (t: string) => {
+        const out: string[] = [];
+        let cur: string[] | null = null;
+        for (const l of t
+          .slice(t.indexOf('END OF HEADER'))
+          .split('\n')
+          .slice(1)) {
+          if (l.startsWith('>')) {
+            if (cur) out.push(cur.join('\n'));
+            cur = [l.trimEnd()];
+          } else if (cur && l.trim())
+            cur.push(l.trimEnd().replace(/e([+-])/g, 'E$1'));
+        }
+        if (cur) out.push(cur.join('\n'));
+        return out;
+      };
+      const dlr = blocks(readText('brdc_v4_dlr.nav')).filter(
+        (b) => !/^> EPH J\d\d CNV2/.test(b)
+      );
+      expect(dlr.length).toBe(23437 + 311);
+      expectSameMultiset(dlr, blocks(writeRinexNav4(v4, DATE)));
+    }
+  );
+
   it('4.01 rewrite: STO, EOP and ION records identical', () => {
     expect(again.sto).toEqual(v4.sto);
     expect(again.eop).toEqual(v4.eop);
@@ -628,5 +658,78 @@ describe('writeRinexNav header', () => {
       'GPSA   2.5146E-08  7.4506E-09 -1.1921E-07  5.9605E-08       IONOSPHERIC CORR    '
     );
     expect(parseNavFile(out).header.ionoCorrections).toEqual(iono);
+  });
+});
+
+describe.skipIf(!HAS_V4)('RINEX 4.02 STO / EOP / ION fields and units', () => {
+  const v4 = HAS_V4 ? parseNavFile(readText('brdc_v4_dlr.nav')) : null!;
+
+  it('EOP (Table A34): pole x/y in arc-sec, ΔUT1 in s, rates per day', () => {
+    // > EOP G24 CNVX
+    //     2026 01 03 19 50 24 1.059265136719e-01-1.111507415771e-03 0.0
+    //                         3.335886001587e-01 1.110553741455e-03 0.0
+    //      3.475200000000e+05 7.479327917099e-02 2.355277538300e-04 0.0
+    const e = v4.eop!.find((r) => r.sv === 'G24')!;
+    expect(e).toMatchObject({ system: 'G', message: 'CNVX' });
+    expect(e.epoch.toISOString()).toBe('2026-01-03T19:50:24.000Z');
+    // IERS Bulletin A, early Jan 2026: x ≈ 0.11", y ≈ 0.33", UT1−UTC ≈ +0.07 s
+    expect(e.xp).toBe(1.059265136719e-1);
+    expect(e.yp).toBe(3.335886001587e-1); // line 1 slot 1: slot 0 is spare
+    expect(e.xpDot).toBe(-1.111507415771e-3);
+    expect(e.ypDot).toBe(1.110553741455e-3);
+    expect(e.ttm).toBe(347520);
+    expect(e.dUt1).toBe(7.479327917099e-2);
+    expect(e.dUt1Dot).toBe(2.3552775383e-4);
+    // t_tm may be negative (previous week, note 4*): G08 at −176904 s
+    expect(v4.eop!.find((r) => r.sv === 'G08')!.ttm).toBe(-176904);
+  });
+
+  it('STO (Table A33): type, t_tm and A0/A1/A2 in s, s/s, s/s²', () => {
+    // > STO C37 CNVX / 2025 12 31 23 20 00 BDGA /
+    //  3.456300000000e+05-3.899913281202e-09-3.463895836830e-14-2.168404344971e-19
+    const s = v4.sto![0]!;
+    expect(s).toMatchObject({
+      system: 'C',
+      sv: 'C37',
+      message: 'CNVX',
+      type: 'BDGA',
+      ttm: 345630,
+      a0: -3.899913281202e-9,
+      a1: -3.46389583683e-14,
+      a2: -2.168404344971e-19,
+    });
+    expect(s.epoch.toISOString()).toBe('2025-12-31T23:20:00.000Z');
+    // GPUT from the GPS LNAV: |A0| of a few ns, a UTC ID string
+    const gput = v4.sto!.find(
+      (r) => r.type === 'GPUT' && r.message === 'LNAV'
+    )!;
+    expect(Math.abs(gput.a0)).toBeLessThan(1e-7);
+    expect(gput.utcId).toBe('UTC(USNO)');
+  });
+
+  it('ION (Tables A35/A36/A37): Klobuchar s, NeQuick-G sfu, BDGIM TECu', () => {
+    // > ION G24 LNAV  2026 01 01 00 11 24 2.421438694000e-08
+    //   7.450580596924e-09-1.192092895508e-07 / 5.960464477539e-08
+    //   1.474560000000e+05-1.966080000000e+05 0.0 / 2.621440000000e+05
+    const k = v4.ion!.find((r) => r.sv === 'G24' && r.message === 'LNAV')!;
+    expect(k.klobuchar).toEqual({
+      alpha: [
+        2.421438694e-8, 7.450580596924e-9, -1.192092895508e-7,
+        5.960464477539e-8,
+      ],
+      beta: [147456, -196608, 0, 262144],
+    });
+    const g = v4.ion!.find((r) => r.sv === 'E03')!;
+    expect(g.nequickG).toEqual({
+      ai: [154.5, -0.59375, 2.0751953125e-3],
+      disturbanceFlags: 0,
+    });
+    const qz = v4.ion!.filter((r) => r.system === 'J');
+    expect(new Set(qz.map((r) => r.subtype))).toEqual(
+      new Set(['WIDE', 'JAPN'])
+    );
+    const bd = v4.ion!.find((r) => r.system === 'C' && r.message === 'CNVX')!;
+    expect(bd.bdgim).toHaveLength(9);
+    expect(bd.klobuchar).toBeUndefined();
   });
 });

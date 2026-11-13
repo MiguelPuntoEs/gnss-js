@@ -171,7 +171,12 @@ function cnavRecord(eph: RinexCnavEphemeris): string {
     orbitLine4([eph.i0Dot, eph.deltaN0Dot, eph.uraNed0, eph.uraNed1]),
     orbitLine4([eph.uraEd, eph.health, eph.tgd, eph.uraNed2]),
     orbitLine4([eph.iscL1ca, eph.iscL2c, eph.iscL5i5, eph.iscL5q5]),
-    orbitLine4([eph.tow, resolveWnOp(eph.week, eph.wnOp)]),
+    // 4.02 adds the integer flags: written when read from such a file
+    orbitLine4([
+      eph.tow,
+      resolveWnOp(eph.week, eph.wnOp),
+      eph.cnavFlags ?? null,
+    ]),
   ].join('\n');
 }
 

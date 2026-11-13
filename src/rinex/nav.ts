@@ -224,13 +224,18 @@ export type Ephemeris = KeplerEphemeris | GlonassEphemeris;
  *
  * Fields the RINEX record does not carry are defaulted: `clockMsgType`
  * is 0 (the record does not say which MT3x supplied the clock), and
- * `integrityFlag`/`l2cPhasing` are false. `tow` holds the record's
+ * `integrityFlag`/`l2cPhasing` are false unless the record has the RINEX
+ * 4.02 integer flags. `tow` holds the record's
  * transmission time of message (t_tm) and `wnOp` the ambiguity-resolved
  * data-predict week from the file. `toe` equals `toc` (RINEX 4.01
  * Table A10 note 2: per IS-GPS-705 20.3.4.4 only Toc is provided).
  */
 export type RinexCnavEphemeris = Omit<CnavEphemeris, 'system'> & {
   system: 'G' | 'J';
+  /** RINEX 4.02 orbit-8 integer flags (bit 0 integrity status, bit 1
+   *  L2C phasing, bit 2 alert), when the record gives them; they also
+   *  set `integrityFlag` / `l2cPhasing`. */
+  cnavFlags?: number;
 };
 
 export interface NavResult {
@@ -655,6 +660,7 @@ function buildCnavEphemeris(
   const aRef = sys === 'J' ? QZSS_CNAV_A_REF : CNAV_A_REF;
   const omegaDot = num(3, 3);
   const wnOp = d[7]?.[1];
+  const flags = d[7]?.[2];
 
   return {
     system: sys,
@@ -699,8 +705,10 @@ function buildCnavEphemeris(
     iscL5i5: opt(6, 2),
     iscL5q5: opt(6, 3),
     ...(wnOp != null && { wnOp }),
-    integrityFlag: false, // not recorded in RINEX
-    l2cPhasing: false, // not recorded in RINEX
+    // RINEX 4.02 Table A10 orbit-8 slot 3; absent before 4.02
+    integrityFlag: ((flags ?? 0) & 1) !== 0,
+    l2cPhasing: ((flags ?? 0) & 2) !== 0,
+    ...(flags != null && { cnavFlags: flags }),
     tow: num(7, 0),
   };
 }
