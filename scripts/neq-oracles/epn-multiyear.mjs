@@ -3,7 +3,7 @@
 // parameters and NNT/NNR/NNS on C2415 — velocities vs the EPN cumulative
 // solution C2415.
 import { join } from 'node:path';
-import { readdirSync } from 'node:fs';
+import { readdirSync, existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import * as an from '../../dist/analysis.js';
 import * as rinex from '../../dist/rinex.js';
 import { DATA, readText, c2415, neu, median, rms } from './common.mjs';
@@ -17,31 +17,45 @@ const ssc = c2415();
 const disc = rinex.parseSinexDiscontinuities(readText(join(DATA, 'C2415', 'EPN_discontinuities.snx')));
 const t0 = Date.UTC(2020, 0, 1);
 const T = Date.now();
-// Pass 1: parse, keep the NEQ per week.
-const weeks = [];
-for (const f of files) {
-  const file = rinex.parseSinex(readText(join(wdir, f)));
-  const neq = rinex.sinexToNeq(file, { types: ['STAX', 'STAY', 'STAZ'] });
-  const est = new Map();
-  for (const p of file.estimate) {
-    const k = ['STAX', 'STAY', 'STAZ'].indexOf(p.type);
-    if (k < 0) continue;
-    if (!est.has(p.site)) est.set(p.site, { xyz: [0, 0, 0], t: p.refEpochMs });
-    est.get(p.site).xyz[k] = p.value;
+// Pass 1: parse each week, reduce it (Schur) to the station subset —
+// cached as SINEX NEQ so reruns skip the 1179-parameter un-constraining.
+const cacheDir = join(DATA, 'weekly-reduced');
+mkdirSync(cacheDir, { recursive: true });
+const metaPath = join(cacheDir, 'meta.json');
+let subset, weeks;
+if (existsSync(metaPath)) {
+  const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  subset = meta.subset;
+  weeks = meta.weeks.map((w) => ({ ...w, est: new Map(w.est), neq: rinex.sinexToNeq(rinex.parseSinex(readFileSync(join(cacheDir, w.f), 'utf8'))) }));
+} else {
+  const full = [];
+  for (const f of files) {
+    const file = rinex.parseSinex(readText(join(wdir, f)));
+    const neq = rinex.sinexToNeq(file, { types: ['STAX', 'STAY', 'STAZ'] });
+    const est = new Map();
+    for (const p of file.estimate) {
+      const k = ['STAX', 'STAY', 'STAZ'].indexOf(p.type);
+      if (k < 0) continue;
+      if (!est.has(p.site)) est.set(p.site, { xyz: [0, 0, 0], t: p.refEpochMs });
+      est.get(p.site).xyz[k] = p.value;
+    }
+    full.push({ f, neq, est });
+    process.stdout.write('.');
   }
-  weeks.push({ f, neq, est });
-  process.stdout.write('.');
+  // Station subset: in ≥ 90 % of the weeks and in C2415.
+  const count = new Map();
+  for (const w of full) for (const s of w.est.keys()) count.set(s, (count.get(s) ?? 0) + 1);
+  const inC = new Set(ssc.map((r) => r.site));
+  subset = [...count].filter(([s, c]) => c >= 0.9 * full.length && inC.has(s)).map(([s]) => s).sort();
+  if (subset.length > maxStations) { const k = subset.length / maxStations; subset = subset.filter((_, i) => Math.floor(i % k) === 0).slice(0, maxStations); }
+  const keep0 = new Set(subset);
+  weeks = full.map((w) => ({ ...w, neq: an.preEliminate(w.neq, (p) => !keep0.has(p.site)) }));
+  for (const w of weeks) writeFileSync(join(cacheDir, w.f), rinex.writeSinexNeq(w.neq, { agency: 'EUR' }));
+  writeFileSync(metaPath, JSON.stringify({ subset, weeks: weeks.map((w) => ({ f: w.f, est: [...w.est] })) }));
 }
-console.log(`\nparsed ${weeks.length} weekly solutions in ${((Date.now() - T) / 1000).toFixed(0)} s`);
-// Station subset: in ≥ 90 % of the weeks and in C2415.
-const count = new Map();
-for (const w of weeks) for (const s of w.est.keys()) count.set(s, (count.get(s) ?? 0) + 1);
-const inC = new Set(ssc.map((r) => r.site));
-let subset = [...count].filter(([s, c]) => c >= 0.9 * weeks.length && inC.has(s)).map(([s]) => s).sort();
-if (subset.length > maxStations) { const k = subset.length / maxStations; subset = subset.filter((_, i) => Math.floor(i % k) === 0).slice(0, maxStations); }
+console.log(`\n${weeks.length} weekly solutions, ${subset.length} stations, ${((Date.now() - T) / 1000).toFixed(0)} s`);
 const keep = new Set(subset);
-console.log(`${subset.length} stations`);
-const reduced = weeks.map((w) => ({ ...w, neq: an.preEliminate(w.neq, (p) => !keep.has(p.site)) }));
+const reduced = weeks;
 const refs = ssc.filter((r) => keep.has(r.site));
 // The C2415 solution for each segment as a-priori (else first week's value).
 const segOf = (site, kind, t) => rinex.discontinuitySolution(disc, site, kind, t);

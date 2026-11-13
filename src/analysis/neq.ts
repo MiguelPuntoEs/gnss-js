@@ -294,7 +294,11 @@ export interface NeqSolution {
  * constraints first (see `neq-datum`). Throws naming the first parameter
  * the data do not determine.
  */
-export function solveNeq(neq: NormalEquations): NeqSolution {
+export function solveNeq(
+  neq: NormalEquations,
+  /** false: skip the covariance (an empty array) — for iterations. */
+  covariance = true
+): NeqSolution {
   const n = neq.params.length;
   const L = neq.N.slice();
   const bad = choleskyInPlace(L, n);
@@ -311,7 +315,7 @@ export function solveNeq(neq: NormalEquations): NeqSolution {
   const dof = neq.nObs - n - neq.nPreEliminated;
   const sigma0 = dof > 0 ? Math.sqrt(Math.max(vtpv, 0) / dof) : null;
   const f = (sigma0 ?? neq.sigma0Apriori) ** 2;
-  const cov = choleskyInverse(L, n);
+  const cov = covariance ? choleskyInverse(L, n) : new Float64Array(0);
   for (let i = 0; i < cov.length; i++) cov[i] *= f;
   return {
     params: neq.params,

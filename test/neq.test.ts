@@ -645,3 +645,31 @@ describe('stationNeq (PPP day → NEQ)', () => {
     expect(s.cov[8]).toBeCloseTo(9e-6, 12);
   });
 });
+
+describe('singular covariances', () => {
+  it('a covariance projected onto a frame (rank-deficient) still converts', () => {
+    // Two stations, covariance singular along the common X translation.
+    const P = [
+      [1, 0, -1, 0],
+      [0, 1, 0, 0],
+      [-1, 0, 1, 0],
+      [0, 0, 0, 1],
+    ].map((r) => r.map((v) => v * 1e-6));
+    const params = ['STAX', 'STAY', 'STAX', 'STAY'].map((type, i) => ({
+      type,
+      site: i < 2 ? 'AAAA' : 'BBBB',
+      refEpochMs: 0,
+      apriori: 0,
+      unit: 'm',
+    }));
+    const q = neqFromCovariance({
+      params,
+      estimate: [0.001, 0, -0.001, 0],
+      cov: P.flat(),
+    });
+    expect(q.N.every(Number.isFinite)).toBe(true);
+    // Information only on the X difference: N·[1,0,1,0] = 0.
+    expect(q.N[0]! + q.N[2]!).toBeCloseTo(0, 0);
+    expect(q.N[0]).toBeGreaterThan(1e5);
+  });
+});

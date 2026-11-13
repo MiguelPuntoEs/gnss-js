@@ -382,7 +382,8 @@ export function solveWithDatum(
           )
         );
     }
-    const sol = solveNeq(addObservations(neq, rows));
+    const constrained = addObservations(neq, rows);
+    let sol = solveNeq(constrained, false);
     // The k condition rows count as observations: they remove the k-fold
     // datum defect, so dof = nObs − rank(N) as it should.
     const est = (t: StationTriplet) =>
@@ -454,6 +455,7 @@ export function solveWithDatum(
         continue;
       }
     }
+    sol = solveNeq(constrained);
     return { ...sol, datum, helmert: fit, iterations: iter };
   }
 }
