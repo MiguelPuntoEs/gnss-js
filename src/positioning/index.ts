@@ -747,3 +747,5 @@ export * from './solid-earth-tide';
 export * from './eop';
 export * from './pole-tide';
 export * from './atmospheric-tide-loading';
+export * from './igrf';
+export * from './iono-higher-order';

@@ -40,7 +40,8 @@ export interface PppEpochContext {
 export interface CorrectionResult {
   /** Additive range correction applied to BOTH code and phase (m). */
   rangeM: number;
-  /** Additional phase-only correction (wind-up), metres. */
+  /** Additional phase-only correction (wind-up, and the phase − code part
+   *  of the higher-order ionosphere), metres. */
   phaseWindupM: number;
 }
 
@@ -79,6 +80,11 @@ import {
   oceanPoleTideEnu,
   type OceanPoleTideCoefficients,
 } from './pole-tide';
+import type { IonexGrid } from '../rinex/ionex';
+import {
+  higherOrderIonoFromGim,
+  higherOrderIonoIonoFree,
+} from './iono-higher-order';
 import {
   atmosphericTideEnu,
   type AtmTideCoefficients,
@@ -124,6 +130,9 @@ export interface PppCorrectionConfig {
   oceanPoleTide?: OceanPoleTideCoefficients;
   /** The station's S1/S2 atmospheric tide loading coefficients. */
   atmosphericTides?: AtmTideCoefficients;
+  /** Higher-order (2nd + 3rd) ionospheric delay left in the iono-free
+   *  combination, from a GIM's slant TEC and IGRF-14 at the pierce point. */
+  higherOrderIono?: { gim: IonexGrid; thirdOrder?: boolean };
 }
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
@@ -271,12 +280,37 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
         rangeM -= vdot(e, ctx.tideDisp);
       }
 
+      // ── Higher-order ionosphere: different on code and phase, so the
+      // code part goes in the common range and the difference phase-only ──
+      const hoi = cfg.higherOrderIono;
+      if (hoi && ctx) {
+        const t = higherOrderIonoFromGim(
+          hoi.gim,
+          ctx.timeMs,
+          latRad,
+          lonRad,
+          geom.azRad,
+          geom.elRad,
+          e
+        );
+        if (t) {
+          const d = higherOrderIonoIonoFree(
+            t,
+            geom.f1,
+            geom.f2,
+            hoi.thirdOrder ?? true
+          );
+          rangeM += d.code;
+          phaseWindupM += d.phase - d.code;
+        }
+      }
+
       // ── Phase wind-up (phase only) ──
       if (useWindup && frame) {
         const wu = phaseWindup(geom.prn, e, frame, latRad, lonRad, windupState);
         // cycles → metres via the iono-free wavelength ≈ c/(f1+f2).
         const lambdaIf = 299792458 / (geom.f1 + geom.f2);
-        phaseWindupM = wu * lambdaIf;
+        phaseWindupM += wu * lambdaIf;
       }
 
       return { rangeM, phaseWindupM };
