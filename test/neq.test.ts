@@ -610,9 +610,10 @@ describe('EUREF week 2297: daily NEQs → weekly (real data)', () => {
     // stations); reduced to six stations it still fixes the datum, so the
     // stack is regular as it is.
     const sol = solveNeq(stackNeqs(moved));
-    // Differences to EUR0; the datum here (6 stations) differs from
-    // EUREF's 41 IGS20 stations by a translation of a few 0.1 mm, so the
-    // shape is compared after removing the mean difference.
+    // Differences to EUR0: the daily NNT left in the reduced NEQs differs
+    // from the weekly NNT by a ~1 mm translation, and six stations lose the
+    // network context, so the shape is compared after removing the mean
+    // difference (full network: scripts/neq-oracles, 0.003 mm median).
     const d = sol.params.map((p, i) => {
       const k = ['STAX', 'STAY', 'STAZ'].indexOf(p.type);
       return { k, v: sol.estimate[i]! - fx.weekly[p.site]!.xyz[k]! };
