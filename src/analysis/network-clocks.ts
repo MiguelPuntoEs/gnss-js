@@ -47,6 +47,7 @@ import {
 } from '../positioning/ppp-corrections';
 import { niellMapping } from '../positioning/ppp-tropo';
 import { choleskyDecompose, choleskySolve, DenseNeq } from './dense-ls';
+import type { ClkFile, ClkRecord } from '../rinex/clk';
 
 const C = 299792458;
 
@@ -618,5 +619,92 @@ export function estimateNetworkClocks(
     nRejected,
     nAmbiguities: nA,
     alignment: { offsetS, driftSPerS },
+  };
+}
+
+/** Metadata for {@link clockSolutionToClk}. */
+export interface ClockFileMeta {
+  /** 3-character analysis centre code. */
+  agency: string;
+  agencyName?: string;
+  /** Stations of the solution (name, ECEF m) for the SOLN STA records. */
+  stations: {
+    name: string;
+    id?: string;
+    xyz: readonly [number, number, number];
+  }[];
+  comments?: string[];
+  /** Frame of the station coordinates (default IGS20). */
+  trf?: string;
+  createdMs?: number;
+}
+
+/**
+ * The solution as a RINEX CLOCK file object (`writeClk` → 3.04 text): AS
+ * records for the satellites, AR records for the receivers (each station's
+ * clock of the first constellation), the reference station as the
+ * analysis clock reference.
+ */
+export function clockSolutionToClk(
+  sol: NetworkClockSolution,
+  meta: ClockFileMeta
+): ClkFile {
+  const records: ClkRecord[] = [];
+  const sats: ClkFile['sats'] = {};
+  const prns = [...sol.satClocks.keys()].sort();
+  const rcv = [...sol.rcvClocks.keys()]
+    .filter((k) => k.endsWith(`|${[...sol.rcvClocks.keys()][0]!.slice(-1)}`))
+    .sort();
+  sol.epochs.forEach((t, ei) => {
+    for (const k of rcv) {
+      const v = sol.rcvClocks.get(k)![ei]!;
+      if (Number.isFinite(v))
+        records.push({ type: 'AR', name: k.split('|')[0]!, t, values: [v] });
+    }
+    for (const prn of prns) {
+      const v = sol.satClocks.get(prn)![ei]!;
+      if (!Number.isFinite(v)) continue;
+      records.push({ type: 'AS', name: prn, t, values: [v] });
+      const s = (sats[prn] ??= { t: [], c: [] });
+      s.t.push(t);
+      s.c.push(v);
+    }
+  });
+  const refs = [...new Set(sol.reference.filter(Boolean))];
+  const created = new Date(meta.createdMs ?? Date.now());
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const systems = new Set(prns.map((p) => p[0]!));
+  return {
+    sats,
+    intervalSec:
+      sol.epochs.length > 1 ? (sol.epochs[1]! - sol.epochs[0]!) / 1000 : 300,
+    version: 3.04,
+    satSystem: systems.size === 1 ? [...systems][0]! : 'M',
+    pgm: 'gnss-js',
+    runBy: meta.agency,
+    date: `${created.getUTCFullYear()}${pad(created.getUTCMonth() + 1)}${pad(created.getUTCDate())} ${pad(created.getUTCHours())}${pad(created.getUTCMinutes())}${pad(created.getUTCSeconds())} UTC`,
+    comments: meta.comments ?? [],
+    timeSystem: 'GPS',
+    dataTypes: ['AR', 'AS'],
+    analysisCenter: { id: meta.agency, name: meta.agencyName ?? '' },
+    clkRefs: [
+      {
+        refs: refs.map((name) => ({
+          name,
+          id: meta.stations.find((s) => s.name === name)?.id ?? '',
+        })),
+      },
+    ],
+    numStations: meta.stations.length,
+    trf: meta.trf ?? 'IGS20',
+    stations: meta.stations.map((s) => ({
+      name: s.name,
+      id: s.id ?? '',
+      xMm: Math.round(s.xyz[0] * 1000),
+      yMm: Math.round(s.xyz[1] * 1000),
+      zMm: Math.round(s.xyz[2] * 1000),
+    })),
+    prns,
+    records,
   };
 }
