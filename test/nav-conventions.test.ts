@@ -5,7 +5,12 @@
  * 10403.3 §3.5.7-3.5.12) with values whose physical meaning is known.
  */
 import { describe, expect, it } from 'vitest';
-import type { Ephemeris, KeplerEphemeris } from '../src/rinex/nav';
+import type {
+  Ephemeris,
+  GlonassEphemeris,
+  KeplerEphemeris,
+} from '../src/rinex/nav';
+import { satClockCorrection } from '../src/positioning';
 import { parseNavFile } from '../src/rinex/nav';
 import { navSecondsOfWeek } from '../src/navbits/index';
 import {
@@ -38,10 +43,7 @@ describe('toc is seconds of the GNSS week (IS-GPS-200 t_oc)', () => {
   it.each(Object.keys(sources))(
     '%s: toc agrees with tocDate and, as broadcast, with toe',
     (key) => {
-      // RTCM 1042 BeiDou epochs: see the BDT clock-face lock below.
-      const list = sources[key]!.filter(
-        (e) => isKepler(e) && !(key === 'rtcm3' && e.system === 'C')
-      ) as KeplerEphemeris[];
+      const list = sources[key]!.filter(isKepler);
       if (list.length === 0) return; // state-vector-only source
       for (const e of list) {
         expect(e.toc, e.prn).toBe(navSecondsOfWeek(e.tocDate.getTime()));
@@ -93,4 +95,119 @@ describe('toc is seconds of the GNSS week (IS-GPS-200 t_oc)', () => {
       }
     }
   );
+});
+
+describe('BeiDou epochs are on the BDT clock face (RINEX 3.05 Table A14)', () => {
+  const rtcm = rawSources()['rtcm3'] ?? [];
+
+  it('RTCM 1042 → Ephemeris: tocDate is BDT, as in RINEX and RTKLIB', () => {
+    // RTKLIB 2.4.2p13 convbin, same capture (test-fixtures/convbin/):
+    //   C10 2026 11  6  9  0  0 -.875937752426E-03 …
+    const c10 = rtcm.find((e) => e.prn === 'C10') as KeplerEphemeris;
+    expect(c10.tocDate.toISOString()).toBe('2026-11-06T09:00:00.000Z');
+    expect(c10.toc).toBe(c10.toe); // 464400 s of BDT week 1087
+    expect(c10.week).toBe(1087);
+    for (const e of rtcm.filter((x) => x.system === 'C'))
+      expect(e.tocDate.getUTCSeconds(), e.prn).toBe(0);
+  });
+
+  it('round-trips a BDT week-start epoch through RTCM 1042', () => {
+    // toc = 0: on the GPS-scale axis the epoch is 14 s before the BDT
+    // week boundary, so the week went one low and the clock epoch moved
+    // back seven days.
+    const c = rtcm.find((e) => e.system === 'C') as KeplerEphemeris;
+    const start: KeplerEphemeris = {
+      ...c,
+      tocDate: new Date(Date.UTC(2026, 10, 8)), // Sunday 00:00 BDT
+      toc: 0,
+      toe: 0,
+      week: 1088,
+    };
+    const back = ephInfoToEphemeris({
+      ...decodeEphemeris(
+        new Rtcm3Decoder().decode(encodeEphemeris(ephemerisToInfo(start))!)[0]!
+      )!,
+      lastReceived: start.tocDate.getTime(),
+    }) as KeplerEphemeris;
+    expect(back.week).toBe(1088);
+    expect(back.tocDate.toISOString()).toBe('2026-11-08T00:00:00.000Z');
+  });
+});
+
+describe('GLONASS message frame time (RINEX 3.05 Table A10)', () => {
+  it('RTCM 1020 tk becomes the UTC seconds-of-week frame time', () => {
+    // RTKLIB 2.4.2p13 convbin: R 3 2026 11  6  9 15  0 … .465240000000E+06
+    // = Friday 09:14:00 UTC (tk), 60 s before tb.
+    const r03 = (rawSources()['rtcm3'] ?? []).find((e) => e.prn === 'R03');
+    expect(r03).toBeDefined();
+    expect((r03 as { messageFrameTime: number }).messageFrameTime).toBe(465240);
+  });
+});
+
+describe('satellite clock: tocDate time scale (BDT, UTC) vs GPS-scale t', () => {
+  // satClockCorrection takes GPS-scale time, like computeSatPosition.
+  // Asymmetric, exaggerated drifts so a 14 s / 18 s slip is visible.
+  const bds: KeplerEphemeris = {
+    system: 'C',
+    prn: 'C24',
+    tocDate: new Date(Date.UTC(2026, 10, 6, 9)), // 09:00:00 BDT
+    toc: 464400,
+    toe: 464400,
+    week: 1087,
+    af0: -8.7e-4,
+    af1: 2.5e-9,
+    af2: 0,
+    iode: 1,
+    crs: 0,
+    deltaN: 0,
+    m0: 0,
+    cuc: 0,
+    e: 0, // no relativistic term: the polynomial alone
+    cus: 0,
+    sqrtA: 5282.6,
+    cic: 0,
+    omega0: 0,
+    cis: 0,
+    i0: 0.96,
+    crc: 0,
+    omega: 0,
+    omegaDot: 0,
+    idot: 0,
+    svHealth: 0,
+    tgd: 0,
+  };
+
+  it('BeiDou: at toc (= GPST 09:00:14) the correction is af0', () => {
+    const tocGps = Date.UTC(2026, 10, 6, 9, 0, 14);
+    expect(satClockCorrection(bds, tocGps)).toBe(bds.af0);
+    // 100 s later on either axis: af0 + af1·100
+    expect(satClockCorrection(bds, tocGps + 100_000)).toBeCloseTo(
+      bds.af0 + bds.af1 * 100,
+      15
+    );
+  });
+
+  it('GLONASS: at toc (UTC 09:15, = GPST 09:15:18) the correction is −τn', () => {
+    const glo: GlonassEphemeris = {
+      system: 'R',
+      prn: 'R03',
+      tocDate: new Date(Date.UTC(2026, 10, 6, 9, 15)),
+      tauN: 2.766e-5,
+      gammaN: 3.1e-9,
+      messageFrameTime: 465240,
+      x: 12128.4,
+      xDot: 0.31,
+      xAcc: 0,
+      y: 22295.5,
+      yDot: 0.17,
+      yAcc: 0,
+      z: 2178.2,
+      zDot: -3.58,
+      zAcc: 0,
+      health: 0,
+      freqNum: 5,
+    };
+    const tocGps = Date.UTC(2026, 10, 6, 9, 15, 18);
+    expect(satClockCorrection(glo, tocGps)).toBe(glo.tauN);
+  });
 });

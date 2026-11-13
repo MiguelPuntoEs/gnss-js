@@ -10,7 +10,7 @@ import type {
 } from '../rinex/nav';
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
-import { START_BDS_TIME, START_GPS_TIME } from '../constants/time';
+import { START_GPS_TIME } from '../constants/time';
 import { OMEGA_E, OMEGA_E_BDS, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 import { invertMatrix } from './matrix';
@@ -697,8 +697,11 @@ function selectBest(ephs: Ephemeris[], timeMs: number): Ephemeris | null {
 
 const GPS_EPOCH_MS = START_GPS_TIME.getTime();
 const MS_PER_WEEK = 7 * 86400_000;
-// BDS epoch on the GPS-scale axis (BDT = GPS − 14 s), like GPS/GAL below
-const BDS_EPOCH_MS = START_BDS_TIME.getTime();
+// BDT week 0 on the BDT clock face (2006-01-01 00:00 BDT), the RINEX
+// epoch convention every other ephemeris decoder uses for BeiDou
+// tocDate. START_BDS_TIME is the same instant on the GPS-scale axis
+// (+14 s) — using it put RTCM-decoded BeiDou epochs at hh:mm:14.
+const BDS_EPOCH_MS = Date.UTC(2006, 0, 1);
 // GST week numbering starts at GPS week 1024 (1999-08-22)
 const GAL_EPOCH_MS = GPS_EPOCH_MS + 1024 * MS_PER_WEEK;
 
@@ -725,13 +728,22 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     const tbSec = (info.tb ?? 0) * 60; // EphemerisInfo.tb is minutes
     const moscowOffset = 3 * 3600; // Moscow = UTC+3
     const tocMs = utcMidnight + (tbSec - moscowOffset) * 1000;
+    // RINEX 3 message frame time: tk (UTC time of day) + nd·86400 in
+    // seconds of the UTC week. The frame precedes tb by at most a few
+    // hours, so take the day of toc unless that puts tk after toc.
+    const tocSow = (tocMs - GPS_EPOCH_MS) / 1000;
+    const tocDay = tocSow - (((tocSow % 86400) + 86400) % 86400);
+    let tof = tocDay + (info.tk ?? 0);
+    if (tof - tocSow > 43200) tof -= 86400;
+    else if (tocSow - tof > 43200) tof += 86400;
+    const tofSow = ((tof % 604800) + 604800) % 604800;
     return {
       system: 'R',
       prn: info.prn,
       tocDate: new Date(tocMs),
       tauN: -(info.af0 ?? 0), // RTCM stores -tauN
       gammaN: info.gammaN ?? 0,
-      messageFrameTime: 0,
+      messageFrameTime: info.tk === undefined ? 0 : tofSow,
       x: info.x,
       xDot: info.vx,
       xAcc: info.ax ?? 0,

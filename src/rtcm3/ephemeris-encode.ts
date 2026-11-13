@@ -8,11 +8,7 @@
  * Reference: RTCM 10403.3 §3.5.7–3.5.12; RTKLIB rtcm3e.c.
  */
 
-import {
-  MILLISECONDS_IN_WEEK,
-  START_BDS_TIME,
-  START_GPS_TIME,
-} from '../constants/time';
+import { MILLISECONDS_IN_WEEK, START_GPS_TIME } from '../constants/time';
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
 import type { EphemerisInfo } from './ephemeris';
 import { BitWriter, frameRtcm3 } from './writer';
@@ -336,7 +332,8 @@ export interface EphemerisInfoExtras {
 }
 
 const GPS_EPOCH_MS = START_GPS_TIME.getTime();
-const BDS_EPOCH_MS = START_BDS_TIME.getTime();
+// BeiDou tocDate is on the BDT clock face (RINEX convention).
+const BDS_EPOCH_MS = Date.UTC(2006, 0, 1);
 const GAL_EPOCH_MS = GPS_EPOCH_MS + 1024 * MILLISECONDS_IN_WEEK; // GST week 0
 
 /**

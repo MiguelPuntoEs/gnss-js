@@ -22,6 +22,7 @@ import { ecefToGeodetic } from '../coordinates/ecef';
 import { klobucharDelay } from './klobuchar';
 import type { KlobucharCoeffs } from './klobuchar';
 import { gimSlantIonoDelayL1 } from './gim';
+import { getGpsLeap } from '../time/utc';
 import type { IonexGrid } from '../rinex/ionex';
 
 export { klobucharDelay } from './klobuchar';
@@ -138,6 +139,8 @@ export interface SppSolution {
 /* ================================================================== */
 
 const GM_GPS = 3.986005e14;
+/** GPST − BDT (s → ms): BDT started at GPST 2006-01-01 00:00:14. */
+const BDT_GPST_MS = 14_000;
 const F_REL = -4.442807633e-10; // s/√m — IS-GPS-200 relativistic constant
 
 /**
@@ -146,17 +149,25 @@ const F_REL = -4.442807633e-10; // s/√m — IS-GPS-200 relativistic constant
  * eccentricity term for Keplerian systems.
  */
 export function satClockCorrection(eph: Ephemeris, tMs: number): number {
+  // `tocDate` is the epoch on the system's own clock face (the RINEX
+  // convention): UTC for GLONASS, BDT = GPST − 14 s for BeiDou. Put it
+  // on the GPS-scale axis of `tMs` before differencing, as
+  // computeSatPosition does for the orbit.
   if (eph.system === 'R' || eph.system === 'S') {
     // Both parse paths already store the clock-bias term (−τ_n) in
     // `tauN`: RINEX keeps the raw SV-clock field (= −τ_n per the spec),
     // and the RTCM path negates raw τ_n to match. So the correction is
     // +tauN + gammaN·dt — using −tauN put GLONASS tens of km out and
     // got every GLONASS satellite rejected by the SPP outlier filter.
-    const dt = (tMs - eph.tocDate.getTime()) / 1000;
+    const tocMs =
+      eph.tocDate.getTime() +
+      (eph.system === 'R' ? getGpsLeap(eph.tocDate) * 1000 : 0);
+    const dt = (tMs - tocMs) / 1000;
     return eph.tauN + eph.gammaN * dt;
   }
   const k = eph as KeplerEphemeris;
-  const dt = (tMs - k.tocDate.getTime()) / 1000;
+  const tocMs = k.tocDate.getTime() + (k.system === 'C' ? BDT_GPST_MS : 0);
+  const dt = (tMs - tocMs) / 1000;
   const poly = k.af0 + k.af1 * dt + k.af2 * dt * dt;
 
   // Relativistic correction needs the eccentric anomaly at t
