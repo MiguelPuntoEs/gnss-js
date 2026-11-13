@@ -12,7 +12,7 @@
  * (`system` 'I'), so NavIC flows through the same orbit/SPP/RINEX path as GPS,
  * Galileo and BeiDou.
  */
-import { getBitU, getBitS, GPS_PI } from './index';
+import { getBitU, getBitS, GPS_PI, navSecondsOfWeek } from './index';
 import { crc24q } from './cnav';
 import type { KeplerEphemeris } from '../rinex/nav';
 
@@ -112,7 +112,7 @@ export function decodeNavicSubframes(
     system: 'I',
     prn,
     tocDate,
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     af0,
     af1,
     af2,

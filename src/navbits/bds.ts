@@ -22,7 +22,7 @@
  */
 
 import type { KeplerEphemeris } from '../rinex/nav';
-import { getBitS, getBitU, GPS_PI } from './index';
+import { getBitS, getBitU, GPS_PI, navSecondsOfWeek as sowOf } from './index';
 
 // BDT calendar epoch (Jan 1 2006 00:00:00 BDT), naive — RINEX BDS nav
 // records print BDT calendar dates and parseNavFile keeps them as-is.
@@ -31,8 +31,6 @@ const BDT_EPOCH_MS = Date.UTC(2006, 0, 1);
 const SEC_PER_WEEK = 7 * 86400;
 const MS_PER_WEEK = SEC_PER_WEEK * 1000;
 const HALF_WEEK = 302400;
-
-const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 /** Bytes per stored 300-bit subframe (RTKLIB layout: 38-byte stride). */
 export const BDS_SUBFRAME_BYTES = 38;

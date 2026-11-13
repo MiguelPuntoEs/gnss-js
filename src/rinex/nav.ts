@@ -10,7 +10,7 @@ import {
   CNAV_OMEGA_DOT_REF,
   type CnavEphemeris,
 } from '../navbits/cnav';
-import { GPS_PI } from '../navbits/index';
+import { GPS_PI, navSecondsOfWeek } from '../navbits/index';
 import {
   bdsCnavAref,
   type BdsCnavEphemeris,
@@ -346,7 +346,7 @@ function buildKeplerEphemeris(
     system: sys,
     prn,
     tocDate: date,
-    toc: (date.getTime() / 1000) % (7 * 86400), // seconds of week approx
+    toc: navSecondsOfWeek(date.getTime()),
     af0: epochVals[0] ?? 0,
     af1: epochVals[1] ?? 0,
     af2: epochVals[2] ?? 0,

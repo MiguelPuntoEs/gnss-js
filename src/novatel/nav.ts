@@ -39,7 +39,7 @@
  * `messageFrameTime` is the frame time as seconds of the UTC week.
  */
 
-import { decodeGpsLnavFrame } from '../navbits';
+import { decodeGpsLnavFrame, navSecondsOfWeek as sowOf } from '../navbits';
 import { CnavAssembler, cnavCrcOk, type CnavEphemeris } from '../navbits/cnav';
 import { decodeSbasGeoNav } from '../navbits/sbas';
 import type {
@@ -71,8 +71,6 @@ const MS_PER_WEEK = SEC_PER_WEEK * 1000;
 
 const gpsMs = (week: number, sec: number) =>
   GPS_EPOCH_MS + week * MS_PER_WEEK + sec * 1000;
-
-const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 /**
  * Fold a seconds-of-week value into the week nearest the reference

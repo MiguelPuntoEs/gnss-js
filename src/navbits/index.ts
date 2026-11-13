@@ -23,6 +23,21 @@ const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 const SEC_PER_WEEK = 7 * 86400;
 
 /**
+ * Seconds into the week of an ephemeris epoch held as a clock-face
+ * `Date` (the RINEX epoch convention: the system's own clock read as if
+ * it were UTC). GPS, Galileo (GST) and BeiDou (BDT) weeks all start at
+ * Sunday 00:00 of their own clock, so one formula serves every Keplerian
+ * system. `toc`/`toe` fields hold this value (IS-GPS-200 t_oc).
+ *
+ * Counted from the GPS epoch — not from the Unix epoch, which is a
+ * Thursday: `(ms / 1000) % 604800` is 259200 s (3 days) off.
+ */
+export function navSecondsOfWeek(dateMs: number): number {
+  const s = (dateMs - GPS_EPOCH_MS) / 1000;
+  return ((s % SEC_PER_WEEK) + SEC_PER_WEEK) % SEC_PER_WEEK;
+}
+
+/**
  * Extract `len` (≤ 32) bits as an unsigned integer, MSB first.
  * `pos` is the bit offset from the start of `buff`.
  */
@@ -264,8 +279,7 @@ export function decodeGpsLnavFrame(
     system: prn[0] === 'J' ? 'J' : 'G',
     prn,
     tocDate,
-    // Same seconds-of-week convention as parseNavFile (rinex/nav.ts).
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     af0,
     af1,
     af2,

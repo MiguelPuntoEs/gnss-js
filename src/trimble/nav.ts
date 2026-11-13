@@ -43,6 +43,7 @@ import type {
   GlonassEphemeris,
   KeplerEphemeris,
 } from '../rinex/nav';
+import { navSecondsOfWeek as sowOf } from '../navbits/index';
 import { getGpsLeap } from '../time/utc';
 import { RETSVDATA, trimbleFrames } from './frame';
 
@@ -61,7 +62,6 @@ const BDS_LEAP_SEC = 14;
 
 const gpsMs = (week: number, sec: number) =>
   GPS_EPOCH_MS + week * MS_PER_WEEK + sec * 1000;
-const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 const SUB_GPS_EPHEMERIS = 1;
 const SUB_ION_UTC = 3;

@@ -33,7 +33,7 @@
 
 import type { KeplerEphemeris } from '../rinex/nav';
 import { crc24q } from './cnav';
-import { getBitS, getBitU, GPS_PI } from './index';
+import { getBitS, getBitU, GPS_PI, navSecondsOfWeek } from './index';
 
 const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
 const SEC_PER_WEEK = 7 * 86400;
@@ -202,7 +202,7 @@ export function decodeGalInavWords(words: Uint8Array): KeplerEphemeris | null {
   return {
     system: 'E',
     prn: `E${two(svid)}`,
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     tocDate,
     af0,
     af1,
@@ -335,7 +335,7 @@ export function decodeGalFnavPages(pages: Uint8Array): KeplerEphemeris | null {
   return {
     system: 'E',
     prn: `E${two(svid)}`,
-    toc: (tocDate.getTime() / 1000) % SEC_PER_WEEK,
+    toc: navSecondsOfWeek(tocDate.getTime()),
     tocDate,
     af0,
     af1,

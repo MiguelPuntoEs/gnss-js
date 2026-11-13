@@ -25,6 +25,7 @@ import type {
   GlonassEphemeris,
   KeplerEphemeris,
 } from '../rinex/nav';
+import { navSecondsOfWeek as sowOf } from '../navbits/index';
 import { getGpsLeap } from '../time/utc';
 import { scanSbfFrames, svidToPrn } from './frame';
 
@@ -54,8 +55,6 @@ function adjustWeek(refWeek: number, wn: number, mod: number): number {
 
 const gpsMs = (week: number, sec: number) =>
   GPS_EPOCH_MS + week * MS_PER_WEEK + sec * 1000;
-
-const sowOf = (dateMs: number) => (dateMs / 1000) % SEC_PER_WEEK;
 
 /* ================================================================== */
 /*  Navigation blocks                                                  */

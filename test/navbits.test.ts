@@ -194,8 +194,8 @@ describe('decodeGpsLnavFrame', () => {
       GPS_EPOCH_MS + (1562 * 604800 + 518400) * 1000
     );
     expect(eph.tocDate.toISOString()).toBe('2009-12-19T00:00:00.000Z');
-    // Mirrors parseNavFile's seconds-of-week convention.
-    expect(eph.toc).toBe((eph.tocDate.getTime() / 1000) % 604800);
+    // GPS seconds of week (IS-GPS-200 t_oc), as parseNavFile.
+    expect(eph.toc).toBe(518400);
   });
 
   it('applies the IS-GPS-200 scale factors exactly', () => {

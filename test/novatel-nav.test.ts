@@ -39,10 +39,11 @@ describe.skipIf(!existsSync(FILE))('parseNovatelNav (OEMV)', () => {
     const g11 = res.ephemerides.find((e) => e.prn === 'G11') as KeplerEphemeris;
     expect(g11).toBeDefined();
 
-    // Epoch: 2009-12-19 00:00:00 GPS, week 1562 — same conventions
-    // as parseNavFile (GPS-scale Date, mirror toc seconds).
+    // Epoch: 2009-12-19 00:00:00 GPS (a Saturday), week 1562 — same
+    // conventions as parseNavFile (GPS-scale Date, toc = GPS seconds of
+    // week, IS-GPS-200 t_oc: here equal to toe).
     expect(g11.tocDate.getTime()).toBe(Date.UTC(2009, 11, 19));
-    expect(g11.toc).toBe((Date.UTC(2009, 11, 19) / 1000) % 604800);
+    expect(g11.toc).toBe(518400);
     expect(g11.week).toBe(1562);
     expect(g11.toe).toBe(518400);
     expect(g11.iode).toBe(110);
@@ -174,7 +175,7 @@ describe.skipIf(!existsSync(OEM7_FILE))('parseNovatelNav (OEM719)', () => {
 
     // Epoch: 2025-03-25 18:00:00 GPS scale, GAL/GPS week 2359.
     expect(e02.tocDate.getTime()).toBe(Date.UTC(2025, 2, 25, 18));
-    expect(e02.toc).toBe((Date.UTC(2025, 2, 25, 18) / 1000) % 604800);
+    expect(e02.toc).toBe(237600); // Tuesday 18:00 = 2·86400 + 64800
     expect(e02.week).toBe(2359);
     expect(e02.toe).toBe(237600);
     expect(e02.iode).toBe(15); // IODNav
@@ -439,8 +440,7 @@ describe('parseNovatelNav (synthetic frames)', () => {
     expect(j.tocDate.getTime()).toBe(
       Date.UTC(1980, 0, 6) + (WEEK * 604800 + 514800) * 1000
     );
-    // Same (Unix-week) convention as parseNavFile's toc field.
-    expect(j.toc).toBe((j.tocDate.getTime() / 1000) % 604800);
+    expect(j.toc).toBe(514800); // GPS seconds of week, = toe here
     expect(j.iode).toBe(121);
     expect(j.svHealth).toBe(1); // alert bit masked off
     expect(j.sqrtA).toBe(Math.sqrt(A)); // A (m) → sqrtA
@@ -515,18 +515,15 @@ describe('parseNovatelNav (synthetic frames)', () => {
     expect(res.ephemerides.length).toBe(2);
     const [i, f] = res.ephemerides as KeplerEphemeris[];
     expect(i!.prn).toBe('E05');
-    const sow = (s: number) =>
-      (((Date.UTC(1980, 0, 6) / 1000 + WEEK * 604800 + s) % 604800) + 604800) %
-      604800;
     expect(i!.af0).toBe(2.07e-4); // I/NAV clock set
     expect(i!.af1).toBe(2.83e-12);
-    expect(i!.toc).toBe(sow(237000));
+    expect(i!.toc).toBe(237000);
     expect(i!.tocDate.getTime()).toBe(
       Date.UTC(1980, 0, 6) + (WEEK * 604800 + 237000) * 1000
     );
     expect(f!.af0).toBe(1.5e-4); // F/NAV clock set
     expect(f!.af1).toBe(2.5e-12);
-    expect(f!.toc).toBe(sow(236400));
+    expect(f!.toc).toBe(236400);
     // Both carry the same broadcast orbit, radians as-is, and the
     // RINEX SVH bit packing (E5b HS=2,DVS=1|E5a HS=1,DVS=0|E1B HS=3,DVS=1).
     for (const e of [i!, f!]) {
