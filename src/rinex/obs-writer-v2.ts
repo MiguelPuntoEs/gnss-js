@@ -12,6 +12,8 @@ import {
   createGzipLineSink,
   epochLines2,
   obsField,
+  obsTimeSystem,
+  timeOfObs,
   stationHeaderLines,
 } from './obs-writer-common';
 
@@ -186,14 +188,14 @@ export async function writeRinex2ObsBlob(
     sink.push(hdrLine(content, '# / TYPES OF OBSERV'));
   }
 
-  const first = new Date(epochs[0]!.time);
-  const timeSys = sysChar === 'R' ? 'GLO' : 'GPS';
-  sink.push(
-    hdrLine(
-      `  ${first.getUTCFullYear()}    ${String(first.getUTCMonth() + 1).padStart(2)}    ${String(first.getUTCDate()).padStart(2)}    ${String(first.getUTCHours()).padStart(2)}    ${String(first.getUTCMinutes()).padStart(2)}   ${(first.getUTCSeconds() + first.getUTCMilliseconds() / 1000).toFixed(7).padStart(10)}     ${timeSys}`,
-      'TIME OF FIRST OBS'
-    )
+  const tagged = epochs.filter(
+    (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
+  const timeSys = obsTimeSystem(header, [...hasSystems]);
+  if (tagged.length > 0)
+    sink.push(
+      hdrLine(timeOfObs(tagged[0]!.time, timeSys), 'TIME OF FIRST OBS')
+    );
 
   sink.push(hdrLine('', 'END OF HEADER'));
   await sink.flush();

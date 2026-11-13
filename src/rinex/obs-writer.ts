@@ -17,6 +17,8 @@ import {
   createGzipLineSink,
   epochLine3,
   obsField,
+  obsTimeSystem,
+  timeOfObs,
   stationHeaderLines,
 } from './obs-writer-common';
 
@@ -144,19 +146,21 @@ export async function writeModernObsBlob(
     }
   }
 
-  const timeSys = systems.includes('R') && systems.length === 1 ? 'GLO' : 'GPS';
-  const obsTimeLine = (d: Date) =>
-    `  ${d.getUTCFullYear()}    ${String(d.getUTCMonth() + 1).padStart(2)}    ${String(d.getUTCDate()).padStart(2)}    ${String(d.getUTCHours()).padStart(2)}    ${String(d.getUTCMinutes()).padStart(2)}   ${(d.getUTCSeconds() + d.getUTCMilliseconds() / 1000).toFixed(7).padStart(10)}     ${timeSys}`;
-
-  sink.push(
-    hdrLine(obsTimeLine(new Date(epochs[0]!.time)), 'TIME OF FIRST OBS')
+  const timeSys = obsTimeSystem(header, systems);
+  const tagged = epochs.filter(
+    (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
-  sink.push(
-    hdrLine(
-      obsTimeLine(new Date(epochs[epochs.length - 1]!.time)),
-      'TIME OF LAST OBS'
-    )
-  );
+  if (tagged.length > 0) {
+    sink.push(
+      hdrLine(timeOfObs(tagged[0]!.time, timeSys), 'TIME OF FIRST OBS')
+    );
+    sink.push(
+      hdrLine(
+        timeOfObs(tagged[tagged.length - 1]!.time, timeSys),
+        'TIME OF LAST OBS'
+      )
+    );
+  }
 
   const interval = modalIntervalS(epochs);
   if (interval !== null && interval < 3600) {

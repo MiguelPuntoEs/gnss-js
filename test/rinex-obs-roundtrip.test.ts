@@ -202,3 +202,52 @@ describe('epoch flag, receiver clock offset and events survive every writer', ()
     });
   }
 });
+
+describe('TIME OF FIRST OBS time system (RINEX 3.04 Table A2)', () => {
+  // "Defaults: GPS for pure GPS files, GLO … GAL … QZS … BDT for pure BDS
+  // files, IRN …"; compulsory in mixed files. BDT is GPST − 14 s, so a
+  // BeiDou-only file labelled GPS puts every epoch 14 s off.
+  const firstObs = (t: string) =>
+    t.split('\n').find((l) => l.slice(60).startsWith('TIME OF FIRST OBS'))!;
+
+  it('single-system data without a stated system get the spec default', async () => {
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const unstated = { ...sur4.header, timeSystem: undefined };
+    for (const [sys, code, want] of [
+      ['E', 'C1C', 'GAL'],
+      ['C', 'C2I', 'BDT'],
+      ['R', 'C1C', 'GLO'],
+      ['G', 'C1C', 'GPS'],
+    ] as const) {
+      const d = subset(sur4, { [sys]: [code] });
+      const t = await W3({ ...d, header: unstated });
+      // 5I6,F13.7,5X,A3: the system sits in columns 49–51
+      expect(firstObs(t)).toBe(
+        `  2026    11     4     0     0    0.0000000     ${want}         TIME OF FIRST OBS   `
+      );
+    }
+  });
+
+  it("a source file's stated system is kept, tags untouched (no 14 s shift)", async () => {
+    // SUR4 states GPS: its BeiDou subset is still tagged in GPS time.
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const bds = subset(sur4, { C: ['C2I', 'L2I'] });
+    for (const w of [W3, W4]) {
+      const t = await w(bds);
+      expect(firstObs(t).slice(48, 51)).toBe('GPS');
+      const back = await reread(t);
+      expect(back.header.timeSystem).toBe('GPS');
+      expect(back.epochs.map((e) => e.time)).toEqual(
+        bds.epochs.map((e) => e.time)
+      );
+    }
+  });
+
+  it('a blank source record defaults from the source file system', async () => {
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const d = subset(sur4, { E: ['C1C'] });
+    const header = { ...d.header, timeSystem: '', satSystem: 'E' };
+    expect(firstObs(await W3({ ...d, header })).slice(48, 51)).toBe('GAL');
+    expect(firstObs(await W2({ ...d, header })).slice(48, 51)).toBe('GAL');
+  });
+});

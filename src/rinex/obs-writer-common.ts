@@ -170,3 +170,45 @@ export function epochLines2(
   if (clock != null) lines[0] = padL(lines[0]!, 68) + fmtF(clock, 12, 9);
   return lines;
 }
+
+/** Default time system of a single-system file (RINEX 3.04 Table A2). */
+const DEFAULT_TIME_SYSTEM: Record<string, string> = {
+  G: 'GPS',
+  R: 'GLO',
+  E: 'GAL',
+  J: 'QZS',
+  C: 'BDT',
+  I: 'IRN',
+};
+
+/**
+ * The time system the epochs are tagged in, for TIME OF FIRST / LAST OBS:
+ * the header's own (as read from TIME OF FIRST OBS) when stated; a blank
+ * record means the default of the source file's system; with no source
+ * record at all, the default of the systems written (GPS when mixed). The
+ * writers relabel nothing: the epoch tags are written as given.
+ */
+export function obsTimeSystem(
+  header: RinexHeader,
+  systems: readonly string[]
+): string {
+  if (header.timeSystem) return header.timeSystem;
+  const sys =
+    header.timeSystem === ''
+      ? header.satSystem
+      : systems.length === 1
+        ? systems[0]!
+        : 'M';
+  return DEFAULT_TIME_SYSTEM[sys] ?? 'GPS';
+}
+
+/** TIME OF FIRST / LAST OBS content: 5I6,F13.7,5X,A3. */
+export function timeOfObs(time: number, timeSystem: string): string {
+  const f = epochFields(time);
+  return (
+    [f.y, f.mo, f.d, f.h, f.mi].map((v) => padR(String(v), 6)).join('') +
+    fmtF(f.sec, 13, 7) +
+    '     ' +
+    timeSystem
+  );
+}
