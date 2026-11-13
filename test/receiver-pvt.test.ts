@@ -141,4 +141,21 @@ describe('parseNovatelPvt (BESTPOS)', () => {
     expect(r.nrSV).toBe(14);
     expect(r.week).toBe(2429);
   });
+
+  it('labels a FIXEDPOS base (position type 1) as fixed-location, like SBF', () => {
+    // OEM7 Table 95. The WHU base logs BESTPOS type 1 throughout; it used to
+    // come out as "mode-1", so consumers keyed on 'fixed-location' (SBF Mode
+    // 3) never treated a NovAtel base as surveyed.
+    const body = new Uint8Array(72);
+    const v = new DataView(body.buffer);
+    v.setUint32(4, 1, true);
+    v.setFloat64(8, 30.5, true);
+    v.setFloat64(16, 114.3, true);
+    const r = parseNovatelPvt(oem4Frame(42, 2359, 273300000, body)).records[0]!;
+    expect(r.mode).toBe('fixed-location');
+    v.setUint32(4, 2, true);
+    expect(
+      parseNovatelPvt(oem4Frame(42, 2359, 273300000, body)).records[0]!.mode
+    ).toBe('fixed-height');
+  });
 });

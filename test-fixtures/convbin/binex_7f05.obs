@@ -1,0 +1,51 @@
+     3.04           OBSERVATION DATA    M: Mixed            RINEX VERSION / TYPE
+format: BINEX                                               COMMENT
+                                                            MARKER NAME
+                                                            MARKER NUMBER
+                                                            MARKER TYPE
+                                                            OBSERVER / AGENCY
+                                                            REC # / TYPE / VERS
+                                                            ANT # / TYPE
+        0.0000        0.0000        0.0000                  APPROX POSITION XYZ
+        0.0000        0.0000        0.0000                  ANTENNA: DELTA H/E/N
+G   64 C1C L1C D1C S1C C1P L1P D1P S1P C1W L1W D1W S1W C1Y  SYS / # / OBS TYPES
+       L1Y D1Y S1Y C1M L1M D1M S1M L1N D1N S1N C1S L1S D1S  SYS / # / OBS TYPES
+       S1S C1L L1L D1L S1L C2C L2C D2C S2C C2D L2D D2D S2D  SYS / # / OBS TYPES
+       C2S L2S D2S S2S C2L L2L D2L S2L C2X L2X D2X S2X C2P  SYS / # / OBS TYPES
+       L2P D2P S2P C2W L2W D2W S2W C2Y L2Y D2Y S2Y C2M      SYS / # / OBS TYPES
+R   28 C1C L1C D1C S1C C1P L1P D1P S1P C2C L2C D2C S2C C2P  SYS / # / OBS TYPES
+       L2P D2P S2P C3I L3I D3I S3I C3Q L3Q D3Q S3Q C3X L3X  SYS / # / OBS TYPES
+       D3X S3X                                              SYS / # / OBS TYPES
+E   64 C1C L1C D1C S1C C1A L1A D1A S1A C1B L1B D1B S1B C1X  SYS / # / OBS TYPES
+       L1X D1X S1X C1Z L1Z D1Z S1Z C5I L5I D5I S5I C5Q L5Q  SYS / # / OBS TYPES
+       D5Q S5Q C5X L5X D5X S5X C6A L6A D6A S6A C6B L6B D6B  SYS / # / OBS TYPES
+       S6B C6C L6C D6C S6C C6X L6X D6X S6X C6Z L6Z D6Z S6Z  SYS / # / OBS TYPES
+       C7I L7I D7I S7I C7Q L7Q D7Q S7Q C7X L7X D7X S7X      SYS / # / OBS TYPES
+J   56 C1C L1C D1C S1C C1S L1S D1S S1S C1L L1L D1L S1L C1X  SYS / # / OBS TYPES
+       L1X D1X S1X C1Z L1Z D1Z S1Z C2S L2S D2S S2S C2L L2L  SYS / # / OBS TYPES
+       D2L S2L C2X L2X D2X S2X C5I L5I D5I S5I C5Q L5Q D5Q  SYS / # / OBS TYPES
+       S5Q C5X L5X D5X S5X C6S L6S D6S S6S C6L L6L D6L S6L  SYS / # / OBS TYPES
+       C6X L6X D6X S6X                                      SYS / # / OBS TYPES
+S   16 C1C L1C D1C S1C C5I L5I D5I S5I C5Q L5Q D5Q S5Q C5X  SYS / # / OBS TYPES
+       L5X D5X S5X                                          SYS / # / OBS TYPES
+C   36 C1I L1I D1I S1I C1Q L1Q D1Q S1Q C1X L1X D1X S1X C7I  SYS / # / OBS TYPES
+       L7I D7I S7I C7Q L7Q D7Q S7Q C7X L7X D7X S7X C6I L6I  SYS / # / OBS TYPES
+       D6I S6I C6Q L6Q D6Q S6Q C6X L6X D6X S6X              SYS / # / OBS TYPES
+  2023    11    29     0    59   59.0000000     GPS         TIME OF FIRST OBS
+  2023    11    29     0    59   59.0000000     GPS         TIME OF LAST OBS
+G                                                           SYS / PHASE SHIFT
+R                                                           SYS / PHASE SHIFT
+E                                                           SYS / PHASE SHIFT
+J                                                           SYS / PHASE SHIFT
+S                                                           SYS / PHASE SHIFT
+C                                                           SYS / PHASE SHIFT
+  0                                                         GLONASS SLOT / FRQ #
+ C1C    0.000 C1P    0.000 C2C    0.000 C2P    0.000        GLONASS COD/PHS/BIS
+                                                            END OF HEADER
+> 2023 11 29  0 59 59.0000000  0  6
+G22  20537032.564   107923048.187          79.535          48.500                                                                    20537031.581   107923048.187                          45.000                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    20537031.633    84095972.523          61.973          45.000
+G21  24068219.862   126479443.611       -1025.117          37.750                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    24068220.572    98555457.096                          22.250
+E30
+R11
+S33  38085495.469   200140626.952          -0.035          44.750    38085484.824   149455629.305                          40.500
+E 5 222722786.648                1                         55.000   222722789.590                1                         53.750                                                                                                                                                                                                                                                                                                                                                                                                                                                                   222722761.037   950013046.659                          34.500

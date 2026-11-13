@@ -37,7 +37,10 @@ export interface UbxMeasurement {
   doppler: number;
   /** C/N0 (dB-Hz). */
   cn0: number;
-  /** Carrier phase may be off by half a cycle (trkStat bit 2). */
+  /**
+   * Carrier phase may be off by half a cycle: phase valid but trkStat bit 2
+   * (halfCyc, "half cycle valid") clear. u-blox M8 protocol §31.19.4.2.
+   */
   halfCycleAmbiguous: boolean;
   /** Continuous-lock time (ms, saturates at 64500). */
   lockTimeMs: number;
@@ -151,7 +154,8 @@ export function parseUbxRawx(data: Uint8Array): UbxParseResult {
           cp: cpValid && cp !== 0 ? cp : null,
           doppler: view.getFloat32(off + 16, true),
           cn0: data[off + 26]!,
-          halfCycleAmbiguous: (trkStat & 0x04) !== 0,
+          // trkStat bit 2 is "half cycle VALID" (resolved), not ambiguous.
+          halfCycleAmbiguous: cpValid && (trkStat & 0x04) === 0,
           lockTimeMs: view.getUint16(off + 24, true),
           gloChannel: sig[0] === 'R' ? data[off + 23]! - 7 : null,
         });
