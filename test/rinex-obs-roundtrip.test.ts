@@ -158,3 +158,47 @@ describe('signal strength indicator survives every writer', () => {
     });
   }
 });
+
+describe('epoch flag, receiver clock offset and events survive every writer', () => {
+  // INAB (RINEX 2.11) carries a flag-3 event (new site occupation) at
+  // 01:00:00; the clock offsets are synthetic, asymmetric values written to
+  // the precision of the narrower format (RINEX 2 F12.9).
+  const COMMENT = `${'re-occupied'.padEnd(60)}COMMENT`;
+  for (const [name, w] of [
+    ['RINEX 3.04', W3],
+    ['RINEX 4.01', W4],
+    ['RINEX 2.11', W2],
+    ['CRINEX 3.0', CRX(W3)],
+    ['CRINEX 1.0', CRX(W2)],
+  ] as const) {
+    it(name, async () => {
+      const src = subset(await fixture('inab_obs_slice.25o'), {
+        G: ['C1', 'L1'],
+      });
+      const ev = src.epochs.findIndex((e) => e.flag === 3);
+      expect(ev).toBe(3);
+      src.epochs[ev]!.records = [COMMENT];
+      src.epochs[0]!.clockOffset = -0.000123456;
+      src.epochs[1]!.clockOffset = 0.000987654;
+      src.epochs[2]!.flag = 1; // power failure before this epoch
+      // An event without a significant epoch (blank date fields)
+      src.epochs.push({
+        time: NaN,
+        sats: new Map(),
+        flag: 4,
+        records: [COMMENT],
+      });
+      // W2's v2 code passthrough is not this test's subject: use v3 codes.
+      const v3 = { ...src, obsTypes: new Map([['G', ['C1C', 'L1C']]]) };
+      const out = await reread(await w(v3));
+      const meta = (d: RinexObsData) =>
+        d.epochs.map((e) => [
+          e.time,
+          e.flag ?? 0,
+          e.clockOffset ?? null,
+          e.records ?? null,
+        ]);
+      expect(meta(out)).toEqual(meta(src));
+    });
+  }
+});

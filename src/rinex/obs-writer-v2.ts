@@ -7,9 +7,10 @@
 
 import type { RinexHeader } from './parser';
 import type { CompactEpoch } from './obs-writer';
-import { padL, padR, fmtF, hdrLine } from './format';
+import { padL, padR, hdrLine } from './format';
 import {
   createGzipLineSink,
+  epochLines2,
   obsField,
   stationHeaderLines,
 } from './obs-writer-common';
@@ -200,8 +201,15 @@ export async function writeRinex2ObsBlob(
   // ── Epoch records ──
   let epochCount = 0;
   for (const epoch of epochs) {
-    const t = new Date(epoch.time);
-    const sec = t.getUTCSeconds() + t.getUTCMilliseconds() / 1000;
+    const flag = epoch.flag ?? 0;
+    if (flag >= 2) {
+      // Event: its special records (header lines) follow verbatim.
+      const recs = epoch.records ?? [];
+      for (const l of epochLines2(epoch.time, flag, recs.length, []))
+        sink.push(l.trimEnd());
+      for (const r of recs) sink.push(r);
+      continue;
+    }
 
     // Only GPS + GLONASS in v2
     const prns = [...epoch.sats.keys()]
@@ -209,26 +217,14 @@ export async function writeRinex2ObsBlob(
       .sort();
     if (prns.length === 0) continue;
 
-    // Epoch header line: yy mm dd hh mm ss.sssssss  flag numSats PRN list
-    const yy = t.getUTCFullYear() % 100;
-    const yyS = padR(String(yy), 2);
-    const moS = padR(String(t.getUTCMonth() + 1), 2);
-    const ddS = padR(String(t.getUTCDate()), 2);
-    const hhS = padR(String(t.getUTCHours()), 2);
-    const mmS = padR(String(t.getUTCMinutes()), 2);
-    const secS = fmtF(sec, 11, 7);
-    const nSats = padR(String(prns.length), 3);
-    let epochLine = ` ${yyS} ${moS} ${ddS} ${hhS} ${mmS}${secS}  0${nSats}`;
-
-    // PRN list on epoch header (max 12 per line)
-    for (let i = 0; i < prns.length; i++) {
-      if (i > 0 && i % 12 === 0) {
-        sink.push(epochLine);
-        epochLine = ' '.repeat(32);
-      }
-      epochLine += prns[i]!;
-    }
-    sink.push(epochLine);
+    for (const l of epochLines2(
+      epoch.time,
+      flag,
+      prns.length,
+      prns,
+      epoch.clockOffset
+    ))
+      sink.push(l);
 
     // Observation lines (max 5 obs per line, 16 chars each)
     for (const prn of prns) {

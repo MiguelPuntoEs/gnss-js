@@ -3,7 +3,7 @@
  */
 
 import type { RinexHeader } from './parser';
-import { padL, fmtF, hdrLine } from './format';
+import { padL, padR, fmtF, hdrLine } from './format';
 
 /**
  * Batched line sink that streams text through gzip compression so the
@@ -97,4 +97,76 @@ export function obsField(val: number, lli = 0, ssi = 0): string {
     (lli ? String(lli % 10) : ' ') +
     (ssi ? String(ssi % 10) : ' ')
   );
+}
+
+/** Calendar fields of an epoch (Unix ms; a sub-millisecond part is kept). */
+function epochFields(time: number) {
+  const minute = Math.floor(time / 60000) * 60000;
+  const d = new Date(minute);
+  return {
+    y: d.getUTCFullYear(),
+    mo: d.getUTCMonth() + 1,
+    d: d.getUTCDate(),
+    h: d.getUTCHours(),
+    mi: d.getUTCMinutes(),
+    sec: (time - minute) / 1000,
+  };
+}
+
+const n2 = (v: number) => String(v).padStart(2, '0');
+
+/**
+ * RINEX 3/4 EPOCH record (Table A3): `> yyyy mm dd hh mm ss.sssssss  f nnn`,
+ * then 6X and the receiver clock offset F15.12 when known. A NaN time is an
+ * event without significant epoch (blank date fields).
+ */
+export function epochLine3(
+  time: number,
+  flag: number,
+  n: number,
+  clock?: number | null
+): string {
+  let head: string;
+  if (Number.isNaN(time)) head = '>' + ' '.repeat(28);
+  else {
+    const f = epochFields(time);
+    head = `> ${f.y} ${n2(f.mo)} ${n2(f.d)} ${n2(f.h)} ${n2(f.mi)}${fmtF(f.sec, 11, 7)}`;
+  }
+  const line = `${head}  ${flag}${padR(String(n), 3)}`;
+  return clock == null ? line : `${line}      ${fmtF(clock, 15, 12)}`;
+}
+
+/**
+ * RINEX 2.11 EPOCH/SAT record (Table A2): ` yy mm dd hh mm ss.sssssss  f nnn`
+ * + 12(A1,I2) satellites (continuation lines 32X,12(A1,I2)) and the receiver
+ * clock offset F12.9 in columns 69–80 of the first line.
+ */
+export function epochLines2(
+  time: number,
+  flag: number,
+  n: number,
+  sats: string[],
+  clock?: number | null
+): string[] {
+  let head: string;
+  if (Number.isNaN(time)) head = ' '.repeat(26);
+  else {
+    const f = epochFields(time);
+    head =
+      ' ' +
+      [f.y % 100, f.mo, f.d, f.h, f.mi]
+        .map((v) => padR(String(v), 2))
+        .join(' ') +
+      fmtF(f.sec, 11, 7);
+  }
+  const lines: string[] = [];
+  for (let i = 0; i < Math.max(sats.length, 1); i += 12) {
+    const list = sats.slice(i, i + 12).join('');
+    lines.push(
+      (i === 0 ? `${head}  ${flag}${padR(String(n), 3)}` : ' '.repeat(32)) +
+        list
+    );
+  }
+  if (clock != null) lines[0] = padL(lines[0]!, 68) + fmtF(clock, 12, 9);
+  return lines;
 }

@@ -15,6 +15,7 @@ import type { SatValues } from './epoch-sats';
 import { padL, padR, fmtF, hdrLine } from './format';
 import {
   createGzipLineSink,
+  epochLine3,
   obsField,
   stationHeaderLines,
 } from './obs-writer-common';
@@ -183,13 +184,20 @@ export async function writeModernObsBlob(
 
   let epochCount = 0;
   for (const epoch of epochs) {
-    const t = new Date(epoch.time);
-    const sec = t.getUTCSeconds() + t.getUTCMilliseconds() / 1000;
-    const prns = [...epoch.sats.keys()].sort();
+    const flag = epoch.flag ?? 0;
+    if (flag >= 2) {
+      // Event: its special records (header lines) follow verbatim.
+      const recs = epoch.records ?? [];
+      sink.push(epochLine3(epoch.time, flag, recs.length));
+      for (const r of recs) sink.push(r);
+      continue;
+    }
+    // Only satellites of a declared system: the count must match the records.
+    const prns = [...epoch.sats.keys()]
+      .filter((p) => obsTypes.has(p[0]!))
+      .sort();
 
-    sink.push(
-      `> ${t.getUTCFullYear()} ${String(t.getUTCMonth() + 1).padStart(2, '0')} ${String(t.getUTCDate()).padStart(2, '0')} ${String(t.getUTCHours()).padStart(2, '0')} ${String(t.getUTCMinutes()).padStart(2, '0')}${fmtF(sec, 11, 7)}  0${padR(String(prns.length), 3)}`
-    );
+    sink.push(epochLine3(epoch.time, flag, prns.length, epoch.clockOffset));
 
     for (const prn of prns) {
       const sys = prn[0]!;
