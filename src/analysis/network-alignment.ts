@@ -8,7 +8,7 @@
  * scatters more than the station moves. Estimating those common errors from
  * reference stations with trusted coordinates (IGS/EUREF, propagated to the
  * day by their velocities) and removing them is the regional counterpart of
- * Bernese's datum definition by minimum constraints, and of "common-mode
+ * a datum definition by minimum constraints, and of "common-mode
  * filtering" in GNSS time-series work.
  *
  * Model (position-vector convention, small angles, as `applyHelmert`):

@@ -411,6 +411,13 @@ function tdResidual(
 
 /** Time-differenced iono-free phase jump (m) that flags a cycle slip. */
 const TD_SLIP_M = 0.08;
+/** A time-differenced jump this large is a slip without confirmation. */
+const TD_SURE_M = 0.3;
+/** Geometry-free phase change between consecutive epochs that confirms a
+ *  slip (an equal (1,1) slip moves it ~5 cm; the ionosphere mm over 30 s). */
+const GF_CONFIRM_M = 0.03;
+/** Melbourne–Wübbena change between consecutive epochs that confirms one. */
+const MW_CONFIRM_CYC = 1.5;
 /** Code residual spread (m, beyond 3σ of position) that screens a satellite. */
 const CODE_GATE_M = 15;
 
@@ -759,7 +766,14 @@ export class PppEngine {
    *  (clock-free) cycle-slip test. */
   private tdPrev!: Map<
     string,
-    { ei: number; lIf: number; sat: [number, number, number]; model: number }
+    {
+      ei: number;
+      lIf: number;
+      sat: [number, number, number];
+      model: number;
+      gf: number;
+      mw: number;
+    }
   >;
   /** Consecutive gated-out phase updates per satellite. */
   private phaseRejects!: Map<string, number>;
@@ -1128,6 +1142,8 @@ export class PppEngine {
       range: number;
       tropoFixed: number; // zhd·mh (+ range corrections)
       mw: number;
+      /** Geometry-free phase λ1·L1 − λ2·L2 (m): ionosphere + ambiguities. */
+      gf: number;
       /** Gradient partials: mapping × cos/sin azimuth (0 when not estimated). */
       mgN: number;
       mgE: number;
@@ -1245,6 +1261,7 @@ export class PppEngine {
         range,
         tropoFixed: zhd * mh + trop.gradient + corr.rangeM,
         mw,
+        gf: o.l1 * lam1 - o.l2 * lam2,
         mgN: grad ? gradientMapping(elRad) * Math.cos(azRad) : 0,
         mgE: grad ? gradientMapping(elRad) * Math.sin(azRad) : 0,
         windupM: corr.phaseWindupM,
@@ -1280,7 +1297,7 @@ export class PppEngine {
     // cannot see). Unlike an innovation test it does not depend on how well
     // the filter's clock is settled within the epoch.
     {
-      const dq: { v: Vis; d: number }[] = [];
+      const dq: { v: Vis; d: number; gfJump: number; mwJump: number }[] = [];
       for (const v of vis) {
         const prev = tdPrev.get(v.prn);
         const model = -v.satClkM + v.tropoFixed + v.windupM;
@@ -1293,16 +1310,40 @@ export class PppEngine {
           dq.push({
             v,
             d: v.lIf - prev.lIf - (v.range - r0) - (model - prev.model),
+            gfJump: Math.abs(v.gf - prev.gf),
+            mwJump: Math.abs(v.mw - prev.mw),
           });
         }
-        tdPrev.set(v.prn, { ei, lIf: v.lIf, sat: v.sat, model });
+        tdPrev.set(v.prn, {
+          ei,
+          lIf: v.lIf,
+          sat: v.sat,
+          model,
+          gf: v.gf,
+          mw: v.mw,
+        });
       }
       if (!kinematic) {
         if (dq.length >= 4) {
           const sorted = dq.map((q) => q.d).sort((a, b) => a - b);
           const med = sorted[Math.floor(sorted.length / 2)]!;
-          for (const q of dq)
-            if (Math.abs(q.d - med) > TD_SLIP_M) q.v.slip = true;
+          // The difference also carries the satellite clock's error over
+          // the interval — cm for clocks interpolated from 5-minute SP3
+          // samples, enough to cross the threshold hundreds of times a day.
+          // A real slip also moves a clock-free combination: an equal (n, n)
+          // slip, the one the wide-lane cannot see, shifts the geometry-free
+          // phase by n·(λ1 − λ2) ≥ 5 cm. So a candidate resets only when one
+          // of those jumped too, or when it is too large for clock noise.
+          for (const q of dq) {
+            const r = Math.abs(q.d - med);
+            if (
+              r > TD_SLIP_M &&
+              (r > TD_SURE_M ||
+                q.gfJump > GF_CONFIRM_M ||
+                q.mwJump > MW_CONFIRM_CYC)
+            )
+              q.v.slip = true;
+          }
         }
       } else if (dq.length >= 6) {
         // A moving receiver adds −e·Δr to every satellite's difference: fit

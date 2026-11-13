@@ -535,7 +535,7 @@ With `antenna` configured, a receiver whose antenna type wasn't in the model had
 
 ### New — baseline network adjustment (`analysis`)
 
-`adjustBaselineNetwork(fixed, baselines)` adjusts one session's static GNSS baselines by least squares, as Bernese and survey software do. It returns:
+`adjustBaselineNetwork(fixed, baselines)` adjusts one session's static GNSS baselines by least squares, as network adjustment and survey software do. It returns:
 
 - the free points' coordinates and covariances;
 - the a-posteriori variance factor σ̂₀² with a χ² test;
