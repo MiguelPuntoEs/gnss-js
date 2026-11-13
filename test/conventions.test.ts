@@ -250,6 +250,8 @@ describe('BLQ ocean loading', () => {
       rcvAntType: '',
       tides: false,
       oceanLoading: c,
+      // The rotation under test, not the synthesis (default 'iers').
+      oceanLoadingModel: 'basic',
     }).epochContext!(t, rcv) as { tideDisp: V3 };
     const want = oceanLoadingEnu(c, t);
     const e = enuToEcef([1, 0, 0], lat, lon);
