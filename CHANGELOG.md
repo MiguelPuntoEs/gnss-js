@@ -36,6 +36,7 @@
 - `PppOptions.elevationWeighting`, `PppOptions.systemSigmaScale` (per-constellation code/phase σ).
 - Satellite attitude: eclipse and noon-turn yaw laws per block (GPS, Galileo, GLONASS-M, BeiDou, QZSS), ORBEX quaternions (`parseOrbex`), `PppCorrectionConfig.attitude`. Within 2° of CODE's attitude; no measurable coordinate change on the benchmark.
 - `withSatelliteAntennas`: take some constellations' satellite antennas from another ANTEX (e.g. the one a product's clocks assume). `SP3` files expose `agency`.
+- `PppOptions.clockGroup`: separate receiver clocks per satellite group (e.g. BeiDou-2/BeiDou-3, or by satellite manufacturer); `clock-groups.ts` has the presets. Default unchanged.
 
 ### Fixed
 
