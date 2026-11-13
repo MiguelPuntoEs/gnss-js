@@ -12,6 +12,7 @@ export * from './sp3-writer';
 export * from './clk';
 export * from './clk-writer';
 export * from './bias-sinex';
+export * from './bias-sinex-writer';
 export * from './obs-writer';
 export * from './epoch-sats';
 export * from './obs-writer-v2';
