@@ -3,9 +3,10 @@
  * IGS, EUREF and national agencies exchange station coordinates and
  * velocities in. `writeSinex` produces a station position + velocity
  * solution (SITE/ID, SOLUTION/EPOCHS, SOLUTION/ESTIMATE and a block-diagonal
- * SOLUTION/MATRIX_ESTIMATE); `parseSinexEstimates` reads the estimates back
+ * SOLUTION/MATRIX_ESTIMATE — or the full one with `covariance`); `parseSinexEstimates` reads the estimates back
  * (any SINEX file's STAX…VELZ).
  */
+import { dms, eFmt, geodetic, sinexEpoch } from './sinex-format';
 
 /** One station's solution. */
 export interface SinexStation {
@@ -39,60 +40,11 @@ export interface SinexSolution {
   input?: string;
   /** Creation time (ms); default now. */
   createdMs?: number;
-}
-
-/** SINEX epoch "YY:DDD:SSSSS". */
-function sinexEpoch(ms: number): string {
-  const d = new Date(ms);
-  const y = d.getUTCFullYear();
-  const doy = Math.floor((ms - Date.UTC(y, 0, 1)) / 86_400_000) + 1;
-  const sod = Math.round((ms - Date.UTC(y, 0, doy)) / 1000);
-  return `${String(y % 100).padStart(2, '0')}:${String(doy).padStart(3, '0')}:${String(Math.min(sod, 86399)).padStart(5, '0')}`;
-}
-
-/** Fortran-style E format with a 2-digit exponent, right-aligned. */
-function eFmt(v: number, digits: number, width: number): string {
-  const [m, e] = v.toExponential(digits).split('e') as [string, string];
-  const exp = Number(e);
-  const s = `${m}e${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(2, '0')}`;
-  return s.padStart(width);
-}
-
-/** "DDD MM SS.S" (longitude 0…360 east) or "-DD MM SS.S" (latitude). */
-function dms(deg: number, width: number): string {
-  const sign = deg < 0 ? '-' : '';
-  let a = Math.abs(deg);
-  let d = Math.floor(a);
-  a = (a - d) * 60;
-  let m = Math.floor(a);
-  let s = Math.round((a - m) * 600) / 10;
-  if (s >= 60) {
-    s -= 60;
-    m++;
-  }
-  if (m >= 60) {
-    m -= 60;
-    d++;
-  }
-  return `${sign}${d} ${String(m).padStart(2, '0')} ${s.toFixed(1).padStart(4, '0')}`.padStart(
-    width
-  );
-}
-
-/** Geodetic latitude/longitude (deg) and height (m) on GRS80/WGS84. */
-function geodetic(x: number, y: number, z: number): [number, number, number] {
-  const a = 6378137;
-  const f = 1 / 298.257222101;
-  const e2 = f * (2 - f);
-  const p = Math.hypot(x, y);
-  let lat = Math.atan2(z, p * (1 - e2));
-  let h = 0;
-  for (let i = 0; i < 6; i++) {
-    const n = a / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
-    h = p / Math.cos(lat) - n;
-    lat = Math.atan2(z, p * (1 - (e2 * n) / (n + h)));
-  }
-  return [(lat * 180) / Math.PI, (Math.atan2(y, x) * 180) / Math.PI, h];
+  /** Full covariance over all parameters in written order (each station's
+   *  X, Y, Z[, VX, VY, VZ], stations in order), row-major — a network
+   *  solution's cross-covariances. Replaces the per-station `cov` blocks
+   *  in SOLUTION/MATRIX_ESTIMATE; the std devs still come from `cov`. */
+  covariance?: ArrayLike<number>;
 }
 
 /** Write a SINEX 2.02 station position (+ velocity) solution. */
@@ -182,19 +134,31 @@ export function writeSinex(sol: SinexSolution): string {
   L.push(
     '*PARA1 PARA2 ____PARA2+0__________ ____PARA2+1__________ ____PARA2+2__________'
   );
-  st.forEach((s, si) => {
-    const n = s.vel ? 6 : 3;
-    const base = first[si]!;
-    for (let r = 0; r < n; r++)
+  if (sol.covariance) {
+    const C = sol.covariance;
+    for (let r = 0; r < nPar; r++)
       for (let c0 = 0; c0 <= r; c0 += 3) {
         const cols = [];
         for (let c = c0; c <= Math.min(r, c0 + 2); c++)
-          cols.push(eFmt(s.cov[r]?.[c] ?? 0, 14, 21));
+          cols.push(eFmt(C[r * nPar + c] ?? 0, 14, 21));
         L.push(
-          ` ${String(base + r).padStart(5)} ${String(base + c0).padStart(5)} ${cols.join(' ')}`
+          ` ${String(r + 1).padStart(5)} ${String(c0 + 1).padStart(5)} ${cols.join(' ')}`
         );
       }
-  });
+  } else
+    st.forEach((s, si) => {
+      const n = s.vel ? 6 : 3;
+      const base = first[si]!;
+      for (let r = 0; r < n; r++)
+        for (let c0 = 0; c0 <= r; c0 += 3) {
+          const cols = [];
+          for (let c = c0; c <= Math.min(r, c0 + 2); c++)
+            cols.push(eFmt(s.cov[r]?.[c] ?? 0, 14, 21));
+          L.push(
+            ` ${String(base + r).padStart(5)} ${String(base + c0).padStart(5)} ${cols.join(' ')}`
+          );
+        }
+    });
   L.push('-SOLUTION/MATRIX_ESTIMATE L COVA');
   L.push('%ENDSNX');
   return L.join('\n') + '\n';
@@ -231,7 +195,7 @@ export function parseSinexEstimates(text: string): Map<string, SinexEstimate> {
       number,
       number,
     ];
-    const year = yy < 50 ? 2000 + yy : 1900 + yy;
+    const year = yy <= 50 ? 2000 + yy : 1900 + yy;
     const epochMs = Date.UTC(year, 0, ddd) + sss * 1000;
     const value = Number(line.slice(47, 68));
     const sd = Number(line.slice(69, 80));
