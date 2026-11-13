@@ -31,6 +31,17 @@ export interface CompactEpoch {
   sats: SatValues;
   /** PRN → loss-of-lock indicator per value (0 = blank), same order. */
   lli?: Map<string, Uint8Array>;
+  /** PRN → signal strength indicator 1–9 per value (0 = blank), same order. */
+  ssi?: Map<string, Uint8Array>;
+  /**
+   * Epoch flag: 0 OK (default), 1 power failure since the previous epoch,
+   * 2–5 an event whose special records are `records` (no `sats`).
+   */
+  flag?: number;
+  /** Receiver clock offset (s) reported in the epoch record. */
+  clockOffset?: number | null;
+  /** Event special records (flags 2–5): header lines, written verbatim. */
+  records?: string[];
 }
 
 /* ================================================================== */

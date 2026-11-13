@@ -1,0 +1,7 @@
+RINEX observation oracles (test/rinex-obs-parse.test.ts, test/rinex-obs-roundtrip.test.ts)
+
+sur4_obs_slice.rnx   crx2rnx (RNXCMP 4.2.0) of sur4_lli_slice.crx, first 4 epochs
+anmg_obs_slice.rnx   crx2rnx (RNXCMP 4.2.0) of anmg_crx_slice.crx, first 3 epochs
+inab_obs_slice.25o   crx2rnx (RNXCMP 4.2.0) of inab_lli_slice.25d, epochs 117-121
+                     (holds the flag-3 event at 01:00:00)
+  produced with: crx2rnx - < X.crx > X.rnx, then header + N epoch records kept.

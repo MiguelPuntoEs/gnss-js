@@ -9,6 +9,10 @@
 !/test-fixtures/f9p_rawx_slice.ubx
 !/test-fixtures/sur4_lli_slice.crx
 !/test-fixtures/inab_lli_slice.25d
+!/test-fixtures/sur4_obs_slice.rnx
+!/test-fixtures/anmg_obs_slice.rnx
+!/test-fixtures/inab_obs_slice.25o
+!/test-fixtures/README.rinex-obs
 !/test-fixtures/f9p_sfrbx_slice.ubx
 !/test-fixtures/tudb_meas3_slice.sbf
 !/test-fixtures/f9p_iono_slice.ubx
