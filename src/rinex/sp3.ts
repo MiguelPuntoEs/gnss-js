@@ -29,6 +29,10 @@ export interface Sp3File {
   timeSystem: string;
   /** prn → per-epoch samples (null where the satellite is missing). */
   satellites: Record<string, (Sp3Sample | null)[]>;
+  /** Producing agency from the first header line (e.g. 'ESA', 'GFZ');
+   *  '' when absent. Tells which satellite antenna model the clocks
+   *  assume. */
+  agency?: string;
 }
 
 const BAD_CLOCK = 999999.999999;
@@ -41,12 +45,14 @@ export function parseSp3(text: string): Sp3File {
   let intervalSec = 0;
   let timeSystem = 'GPS';
   let timeSystemSet = false;
+  let agency = '';
   let epochIdx = -1;
 
   for (const line of lines) {
     if (!version && line.startsWith('#') && line.charAt(1) !== '#') {
       // "#dP2024  1  1 ..." — version char at column 2
       version = line.charAt(1);
+      agency = line.slice(56, 60).trim();
     }
     if (line.startsWith('##')) {
       // "## week  sow  interval  mjd  frac"
@@ -107,7 +113,7 @@ export function parseSp3(text: string): Sp3File {
     while (arr.length < epochs.length) arr.push(null);
   }
 
-  return { version, epochs, intervalSec, timeSystem, satellites };
+  return { version, epochs, intervalSec, timeSystem, satellites, agency };
 }
 
 /**
