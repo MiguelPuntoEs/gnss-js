@@ -15,6 +15,7 @@
  */
 
 import type { KeplerEphemeris } from '../rinex/nav';
+import { gpsFitHours, uraMeters } from '../rtcm3/accuracy';
 
 /** π as fixed by IS-GPS-200 for semicircle → radian conversion. */
 export const GPS_PI = 3.1415926535898;
@@ -191,12 +192,15 @@ export function decodeGpsLnavFrame(
   i += 3 + 2;
   const week10 = getBitU(b, i, 10);
   i += 10;
-  i += 2; // codes on L2
-  i += 4; // URA index
+  const l2Codes = getBitU(b, i, 2);
+  i += 2;
+  const ura = getBitU(b, i, 4);
+  i += 4;
   const svHealth = getBitU(b, i, 6);
   i += 6;
   const iodc0 = getBitU(b, i, 2);
   i += 2;
+  const l2pFlag = getBitU(b, i, 1);
   i += 1 + 87; // L2 P data flag + reserved
   const tgdRaw = getBitS(b, i, 8);
   i += 8;
@@ -232,6 +236,8 @@ export function decodeGpsLnavFrame(
   const sqrtA = getBitU(b, i, 32) * 2 ** -19;
   i += 32;
   const toes = getBitU(b, i, 16) * 16.0;
+  i += 16;
+  const fitFlag = getBitU(b, i, 1);
 
   /* subframe 3 */
   i = 480 + 24;
@@ -303,5 +309,11 @@ export function decodeGpsLnavFrame(
     week,
     svHealth,
     tgd: tgdRaw === -128 ? 0.0 : tgdRaw * 2 ** -31, // IS-GPS-200: -128 reserved
+    l2Codes,
+    l2pFlag,
+    iodc,
+    svAccuracy: uraMeters(ura),
+    // RINEX: GPS fit interval in hours, QZSS the flag itself (Table A12)
+    fitInterval: prn[0] === 'J' ? fitFlag : gpsFitHours(fitFlag),
   };
 }
