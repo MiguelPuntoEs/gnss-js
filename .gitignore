@@ -92,6 +92,11 @@
 # 30 s of CNES PPP-Wizard post_2024001 GBM0MGXRAP…_ABS.BIA (G+E OSBs).
 !/test-fixtures/esa_dcb_slice.bia
 !/test-fixtures/cnes_osb_slice.bia
+!/test-fixtures/atm-tide-grid-excerpt.dat
+!/test-fixtures/atm-tide-stations-excerpt.dat
+!/test-fixtures/opole-excerpt.txt
+!/test-fixtures/eop20c04-excerpt.txt
+!/test-fixtures/finals2000a-excerpt.txt
 # BLQ round trip + HARDISP oracle: header + ONSA/REYK/WTZR of the Onsala
 # FES2004 BLQ in DSOlab/iers2010 data/NTUA.BLQ.
 !/test-fixtures/ntua_blq_slice.blq

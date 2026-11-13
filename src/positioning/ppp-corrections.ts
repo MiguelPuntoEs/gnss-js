@@ -43,7 +43,8 @@ export interface PppEpochContext {
 export interface CorrectionResult {
   /** Additive range correction applied to BOTH code and phase (m). */
   rangeM: number;
-  /** Additional phase-only correction (wind-up), metres. */
+  /** Additional phase-only correction (wind-up, and the phase − code part
+   *  of the higher-order ionosphere), metres. */
   phaseWindupM: number;
   /** Leave the satellite out at this epoch (attitude unknown). */
   exclude?: boolean;
@@ -76,10 +77,28 @@ export function applyCorrections(
 
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { sunEcef, moonEcef, solidEarthTide } from './ppp-astro';
+import { solidEarthTideIers } from './solid-earth-tide';
+import { interpolateEop, gpsMsToUtcMjd, type EopRecord } from './eop';
+import {
+  wobble,
+  solidPoleTideEnu,
+  oceanPoleTideEnu,
+  type OceanPoleTideCoefficients,
+} from './pole-tide';
+import type { IonexGrid } from '../rinex/ionex';
+import {
+  higherOrderIonoFromGim,
+  higherOrderIonoIonoFree,
+} from './iono-higher-order';
+import {
+  atmosphericTideEnu,
+  type AtmTideCoefficients,
+} from './atmospheric-tide-loading';
 import {
   oceanLoadingEnu,
   type OceanLoadingCoefficients,
 } from './ocean-loading';
+import { oceanLoadingEnuIers } from './ocean-loading-iers';
 import {
   type PppAntennaModel,
   satBodyFrame,
@@ -109,6 +128,27 @@ export interface PppCorrectionConfig {
    *  models or the analysis centre's ORBEX quaternions — see
    *  `createSatAttitude`). Default: nominal yaw steering. */
   attitude?: SatAttitudeProvider;
+  /** Ocean loading synthesis: the IERS 2010 way — nodal modulation plus
+   *  the minor tides by admittance (default) — or the 11 BLQ constituents
+   *  alone (the model before gnss-js 2.46). */
+  oceanLoadingModel?: 'iers' | 'basic';
+  /** Solid-earth tide model: the full IERS 2010 Steps 1 + 2 (default), or
+   *  the degree-2 in-phase term alone (the model before gnss-js 2.46). */
+  tideModel?: 'iers2010' | 'degree2';
+  /** Polar motion for the pole tides (IERS 2010 7.1.4–7.1.5): an EOP
+   *  series (`parseEopC04`, `parseFinals2000A`, IGS ERP rows) interpolated
+   *  per epoch, or one fixed pole (arcsec). Without it no pole tide. */
+  eop?: readonly EopRecord[] | { xp: number; yp: number };
+  /** Apply the solid-earth pole tide when `eop` is given. Default true. */
+  poleTide?: boolean;
+  /** The station's Desai (2002) ocean pole tide coefficients; applied when
+   *  `eop` is given. */
+  oceanPoleTide?: OceanPoleTideCoefficients;
+  /** The station's S1/S2 atmospheric tide loading coefficients. */
+  atmosphericTides?: AtmTideCoefficients;
+  /** Higher-order (2nd + 3rd) ionospheric delay left in the iono-free
+   *  combination, from a GIM's slant TEC and IGRF-14 at the pierce point. */
+  higherOrderIono?: { gim: IonexGrid; thirdOrder?: boolean };
 }
 
 /** Wire satellite/receiver antenna + tides + wind-up into a PppCorrections. */
@@ -124,6 +164,15 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
   const useRcv = cfg.rcvPco ?? true;
   const useTides = cfg.tides ?? true;
   const useWindup = cfg.windup ?? true;
+  const iersTide = (cfg.tideModel ?? 'iers2010') === 'iers2010';
+  const usePoleTide = cfg.poleTide ?? true;
+  const eop = cfg.eop;
+  const poleAt = (timeMs: number) =>
+    !eop
+      ? null
+      : 'xp' in eop
+        ? eop
+        : interpolateEop(eop as readonly EopRecord[], timeMs);
   const antDelta = cfg.antDeltaEnu ?? [0, 0, 0];
   // Phase wind-up accumulator per satellite (unwrapped, cycles).
   const windupState = new Map<string, number>();
@@ -133,11 +182,40 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       const sun = sunEcef(timeMs);
       const moon = moonEcef(timeMs);
       const tideDisp = useTides
-        ? solidEarthTide(rcvEcef, sun, moon)
+        ? iersTide
+          ? solidEarthTideIers(rcvEcef, sun, moon, timeMs)
+          : solidEarthTide(rcvEcef, sun, moon)
         : ([0, 0, 0] as [number, number, number]);
+      // Site displacements given in local East/North/Up.
+      const enu: [number, number, number] = [0, 0, 0];
+      const addEnu = (d: [number, number, number]) => {
+        enu[0] += d[0];
+        enu[1] += d[1];
+        enu[2] += d[2];
+      };
+      const pole = poleAt(timeMs);
+      if (pole) {
+        const { m1, m2 } = wobble(pole.xp, pole.yp, gpsMsToUtcMjd(timeMs));
+        const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
+        if (usePoleTide) addEnu(solidPoleTideEnu(lat, lon, m1, m2));
+        if (cfg.oceanPoleTide)
+          addEnu(oceanPoleTideEnu(cfg.oceanPoleTide, m1, m2));
+      }
+      if (cfg.atmosphericTides)
+        addEnu(atmosphericTideEnu(cfg.atmosphericTides, timeMs));
+      if (enu[0] || enu[1] || enu[2]) {
+        const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
+        const d = enuToEcef(enu, lat, lon);
+        tideDisp[0] += d[0];
+        tideDisp[1] += d[1];
+        tideDisp[2] += d[2];
+      }
       if (cfg.oceanLoading) {
         // Ocean loading ENU → ECEF, added to the receiver displacement.
-        const [e, n, u] = oceanLoadingEnu(cfg.oceanLoading, timeMs);
+        const [e, n, u] =
+          cfg.oceanLoadingModel === 'basic'
+            ? oceanLoadingEnu(cfg.oceanLoading, timeMs)
+            : oceanLoadingEnuIers(cfg.oceanLoading, timeMs);
         const [lat, lon] = ecefToGeodetic(rcvEcef[0], rcvEcef[1], rcvEcef[2]);
         const d = enuToEcef([e, n, u], lat, lon);
         tideDisp[0] += d[0];
@@ -238,12 +316,37 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
         rangeM -= vdot(e, ctx.tideDisp);
       }
 
+      // ── Higher-order ionosphere: different on code and phase, so the
+      // code part goes in the common range and the difference phase-only ──
+      const hoi = cfg.higherOrderIono;
+      if (hoi && ctx) {
+        const t = higherOrderIonoFromGim(
+          hoi.gim,
+          ctx.timeMs,
+          latRad,
+          lonRad,
+          geom.azRad,
+          geom.elRad,
+          e
+        );
+        if (t) {
+          const d = higherOrderIonoIonoFree(
+            t,
+            geom.f1,
+            geom.f2,
+            hoi.thirdOrder ?? true
+          );
+          rangeM += d.code;
+          phaseWindupM += d.phase - d.code;
+        }
+      }
+
       // ── Phase wind-up (phase only) ──
       if (useWindup && frame) {
         const wu = phaseWindup(geom.prn, e, frame, latRad, lonRad, windupState);
         // cycles → metres via the iono-free wavelength ≈ c/(f1+f2).
         const lambdaIf = 299792458 / (geom.f1 + geom.f2);
-        phaseWindupM = wu * lambdaIf;
+        phaseWindupM += wu * lambdaIf;
       }
 
       return { rangeM, phaseWindupM };
