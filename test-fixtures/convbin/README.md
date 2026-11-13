@@ -11,6 +11,7 @@ then trailing blanks and the two machine-specific header lines (`log:` comment,
 Known RTKLIB 2.4.2 limitations the tests document: no GPS/QZSS L1C or Galileo
 E6 slot, Galileo PRN ≤ 30, BeiDou B1I named `1I` (RINEX 3.02).
 
-| file             | FMT   | fixture                   | extra                                                                    |
-| ---------------- | ----- | ------------------------- | ------------------------------------------------------------------------ |
-| dlf100_rtcm3.obs | rtcm3 | dlf100_rtcm_rtk_base.rtcm | `-tr 2026/11/06 9:00:00 -ts 2026/11/06 09:13:51 -te 2026/11/06 09:14:00` |
+| file             | FMT   | fixture                   | extra                                                                                    |
+| ---------------- | ----- | ------------------------- | ---------------------------------------------------------------------------------------- |
+| dlf100_rtcm3.obs | rtcm3 | dlf100_rtcm_rtk_base.rtcm | `-tr 2026/11/06 9:00:00 -ts 2026/11/06 09:13:51 -te 2026/11/06 09:14:00`                 |
+| rtcm2_avl12.obs  | rtcm2 | rtcm2_avl12_slice.bin     | `-tr 2026/11/13 0:30:00` (RTCM 2 has no date: only the time within the hour is compared) |
