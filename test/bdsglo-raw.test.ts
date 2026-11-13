@@ -120,9 +120,13 @@ function buildD1(sow = 352806, toe = D1_TOE): Uint8Array {
   }
   /* subframe 1 */
   setBitU(b, 42, 1, 1); // SatH1
+  setBitU(b, 43, 5, 3); // AODC
+  setBitU(b, 48, 4, 2); // URA index
   setBitU(b, 60, 13, D1_WEEK);
   setSplit(b, 73, 9, 90, 8, D1_TOE / 8); // toc
   setSplit(b, 98, 10, 0, 0, -47); // tgd1 = -4.7 ns
+  setSplit(b, 108, 4, 120, 6, 123); // tgd2 = 12.3 ns
+  setBitU(b, 287, 5, 17); // AODE
   setSplit(b, 214, 11, 0, 0, -100); // af2
   setSplit(b, 225, 7, 240, 17, -654321); // af0
   setSplit(b, 257, 5, 270, 17, 98765); // af1
@@ -166,8 +170,12 @@ describe('decodeBdsD1Frame (synthetic)', () => {
       Date.UTC(2006, 0, 1) + (D1_WEEK * 7 * 86400 + D1_TOE) * 1000
     );
     expect(eph.svHealth).toBe(1);
-    expect(eph.iode).toBe(Math.floor(D1_TOE / 720) % 240);
+    // RINEX 3.05 Table A14: the broadcast AODE (5 bits), not a toc count
+    expect(eph.iode).toBe(17);
+    expect(eph.aodc).toBe(3);
+    expect(eph.svAccuracy).toBe(4); // URA index 2 → 4.0 m
     relClose(eph.tgd, -47 * 0.1e-9);
+    relClose(eph.tgd2!, 123 * 0.1e-9);
     relClose(eph.af0, -654321 * 2 ** -33);
     relClose(eph.af1, 98765 * 2 ** -50);
     relClose(eph.af2, -100 * 2 ** -66);
@@ -516,9 +524,9 @@ describe('GloStringAssembler', () => {
  * GEO D2, worst relative difference 4.4e-12) and all 11 GLONASS
  * records (worst 3.9e-12) field for field, and the raw decode agrees
  * with the captures' decoded BDSNav/GLONav blocks on every broadcast
- * field (BDS `iode` excepted: the raw path derives AODE from toc per
- * RTKLIB/RINEX convention while the decoded block carries the
- * broadcast AODE).
+ * field. BDS `iode` is the broadcast AODE, as in the decoded block
+ * and RINEX 3.05 Table A14; demo5 convbin prints toc/720 mod 240 there
+ * (10 for these records), RTKLIB 2.4.2p13 the AODE.
  *
  * Known convbin delta, asserted here as documented: RTKLIB's
  * decode_glorawcanav decodes ephemeris and UTC together and its UTC
@@ -568,7 +576,7 @@ describe.skipIf(!existsSync(SBF_FILE))('parseSbf{Bds,Glo}Nav (DLF5)', () => {
     expect(e.toe).toBe(352800); // BDT s of week
     // naive-BDT calendar epoch, like parseNavFile
     expect(e.tocDate.getTime()).toBe(Date.UTC(2026, 6, 23, 2, 0, 0));
-    expect(e.iode).toBe(10);
+    expect(e.iode).toBe(1); // AODE (demo5 convbin: toc/720 mod 240 = 10)
     expect(e.svHealth).toBe(0);
     relClose(e.af0, 6.34600059129e-4);
     relClose(e.af1, 5.24735810359e-12);
@@ -596,7 +604,7 @@ describe.skipIf(!existsSync(SBF_FILE))('parseSbf{Bds,Glo}Nav (DLF5)', () => {
     expect(e.week).toBe(1072);
     expect(e.toe).toBe(352800);
     expect(e.tocDate.getTime()).toBe(Date.UTC(2026, 6, 23, 2, 0, 0));
-    expect(e.iode).toBe(10);
+    expect(e.iode).toBe(1); // AODE (demo5 convbin: toc/720 mod 240 = 10)
     expect(e.svHealth).toBe(0);
     relClose(e.af0, 7.64848664403e-8);
     relClose(e.af1, 1.50990331349e-14);

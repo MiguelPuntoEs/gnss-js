@@ -311,3 +311,25 @@ describe('broadcast clock sign and unit vs ESA MGEX SP3 clocks', () => {
     expect(big).toBeGreaterThan(3); // a sign flip would show
   });
 });
+
+describe('BeiDou D1/D2 IODE slot = broadcast AODE (RINEX 3.05 Table A14)', () => {
+  it('every decoder gives 0-31, and RTCM 1042 can carry it', () => {
+    // u-blox / SBF raw D1/D2 used demo5's toc/720 mod 240 (105, 130):
+    // out of the AODE range RINEX documents, unlike every other source,
+    // and RTCM 1042's 5-bit AODE field threw a RangeError on encode.
+    // RTKLIB 2.4.2p13 convbin, f9p_sfrbx_slice.ubx: "C 8 … .100000000000E+01".
+    const all = { ...rawSources(), ...rinexSources() };
+    for (const [key, list] of Object.entries(all))
+      for (const e of list.filter(
+        (x) => x.system === 'C'
+      ) as KeplerEphemeris[]) {
+        expect(e.iode, `${key} ${e.prn}`).toBeGreaterThanOrEqual(0);
+        expect(e.iode, `${key} ${e.prn}`).toBeLessThanOrEqual(31);
+      }
+    const c08 = (all['ubx:f9p_sfrbx_slice.ubx'] ?? []).find(
+      (e) => e.prn === 'C08'
+    ) as KeplerEphemeris;
+    expect(c08.iode).toBe(1);
+    expect(() => encodeEphemeris(ephemerisToInfo(c08))).not.toThrow();
+  });
+});

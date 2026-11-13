@@ -480,7 +480,9 @@ describe.skipIf(!existsSync(UBX_FILE))('parseUbxRawNav (F9P slice)', () => {
     expect(e.week).toBe(781); // BDT week
     expect(e.toe).toBe(421200); // BDT s of week
     expect(e.tocDate.getTime()).toBe(Date.UTC(2020, 11, 24, 21, 0, 0));
-    expect(e.iode).toBe(105); // derived from toc, RTKLIB convention
+    // AODE as broadcast (RINEX 3.05 Table A14; RTKLIB 2.4.2p13 convbin
+    // prints 1 too). demo5 convbin derives toc/720 mod 240 = 105.
+    expect(e.iode).toBe(1);
     expect(e.svHealth).toBe(0);
     relClose(e.af0, 3.29195871018e-4);
     relClose(e.af1, 5.12301312483e-12);
