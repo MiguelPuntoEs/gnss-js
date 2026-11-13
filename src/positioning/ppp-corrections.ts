@@ -90,7 +90,8 @@ export interface PppCorrectionConfig {
   /** Receiver antenna type (RINEX header "ANT # / TYPE"). */
   rcvAntType: string;
   /** Marker→ARP offset in local ENU (m). RINEX "ANTENNA: DELTA H/E/N"
-   * is [Up, East, North] → pass as [E, N, U]. */
+   * is [Up, East, North] → pass as [E, N, U]. Applied whether or not the
+   * antenna type is calibrated (as RTK's `deltaEnu`). */
   antDeltaEnu?: [number, number, number];
   satPco?: boolean;
   rcvPco?: boolean;
@@ -182,27 +183,33 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       }
 
       // ── Receiver antenna PCO + PCV + antenna delta ──
-      if (useRcv && geom.band1 && geom.band2) {
-        const off = cfg.antenna.rcvOffset(
-          cfg.rcvAntType,
-          geom.band1,
-          geom.band2,
-          geom.f1,
-          geom.f2
-        );
-        if (off) {
-          const total: [number, number, number] = [
-            // PCO is ANTEX North/East/Up; the delta and enuToEcef are ENU.
-            off.pco[1] + antDelta[0],
-            off.pco[0] + antDelta[1],
-            off.pco[2] + antDelta[2],
-          ];
-          const ecef = enuToEcef(total, latRad, lonRad);
-          // APC = marker + offset ⇒ range loses e·offset.
-          rangeM -= vdot(e, ecef);
-          const zenithDeg = 90 - (geom.elRad * 180) / Math.PI;
-          rangeM += interpPcv(off, zenithDeg, (geom.azRad * 180) / Math.PI);
-        }
+      // The marker→ARP delta is geometry, not calibration: it applies even
+      // when the antenna type has no calibration (or rcvPco is off) — else
+      // an uncalibrated antenna's height silently lands in the coordinate.
+      const off =
+        useRcv && geom.band1 && geom.band2
+          ? cfg.antenna.rcvOffset(
+              cfg.rcvAntType,
+              geom.band1,
+              geom.band2,
+              geom.f1,
+              geom.f2
+            )
+          : null;
+      const total: [number, number, number] = [
+        // PCO is ANTEX North/East/Up; the delta and enuToEcef are ENU.
+        (off ? off.pco[1] : 0) + antDelta[0],
+        (off ? off.pco[0] : 0) + antDelta[1],
+        (off ? off.pco[2] : 0) + antDelta[2],
+      ];
+      if (total[0] !== 0 || total[1] !== 0 || total[2] !== 0) {
+        const ecef = enuToEcef(total, latRad, lonRad);
+        // APC = marker + offset ⇒ range loses e·offset.
+        rangeM -= vdot(e, ecef);
+      }
+      if (off) {
+        const zenithDeg = 90 - (geom.elRad * 180) / Math.PI;
+        rangeM += interpPcv(off, zenithDeg, (geom.azRad * 180) / Math.PI);
       }
 
       // ── Solid-earth tides (receiver displacement projected on LOS) ──

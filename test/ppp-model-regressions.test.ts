@@ -156,6 +156,63 @@ describe('PPP antenna model', () => {
       }).evaluate!(geom, null).rangeM;
     expect(range(0.1) - range(0)).toBeCloseTo(-0.1, 9);
   });
+
+  it('applies the marker→ARP delta for an uncalibrated antenna too', () => {
+    // Regression: the delta used to ride along with the receiver PCO, so an
+    // antenna type missing from the ANTEX (or rcvPco: false) silently
+    // dropped the antenna height — the solution was the ARP's, 1–2 m high
+    // on a tripod. Asymmetric E/N/U and a slanted line of sight make an
+    // axis swap visible too.
+    const lat = (50 * Math.PI) / 180;
+    const lon = (8 * Math.PI) / 180;
+    const rcvEcef = geodeticToEcef(lat, lon, 200);
+    const el = (35 * Math.PI) / 180;
+    const az = (60 * Math.PI) / 180; // east of north
+    const los = enuToEcef(
+      [Math.cos(el) * Math.sin(az), Math.cos(el) * Math.cos(az), Math.sin(el)],
+      lat,
+      lon
+    );
+    const geom = {
+      prn: 'G04',
+      satEcef: [
+        rcvEcef[0] + los[0] * 2e7,
+        rcvEcef[1] + los[1] * 2e7,
+        rcvEcef[2] + los[2] * 2e7,
+      ] as [number, number, number],
+      rcvEcef,
+      los,
+      elRad: el,
+      azRad: az,
+      f1,
+      f2,
+      band1: 'G01',
+      band2: 'G02',
+      g: (f1 * f1) / (f1 * f1 - f2 * f2),
+    };
+    const delta: [number, number, number] = [0.031, -0.072, 1.234]; // E, N, U
+    const d = enuToEcef(delta, lat, lon);
+    const expected = -(los[0] * d[0] + los[1] * d[1] + los[2] * d[2]);
+    for (const [rcvAntType, rcvPco] of [
+      ['NOT-IN-ANTEX     NONE', true],
+      ['LEIAR25.R3      NONE', false],
+    ] as const) {
+      const range = (dEnu: [number, number, number]) =>
+        createPppCorrections({
+          antenna: model,
+          rcvAntType,
+          rcvPco,
+          antDeltaEnu: dEnu,
+          satPco: false,
+          tides: false,
+          windup: false,
+        }).evaluate!(geom, null).rangeM;
+      expect(range(delta) - range([0, 0, 0]), rcvAntType).toBeCloseTo(
+        expected,
+        9
+      );
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ */
