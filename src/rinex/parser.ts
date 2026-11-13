@@ -43,6 +43,11 @@ export interface RinexHeader {
   glonassSlots: Record<number, number>;
   isCrx: boolean;
   crxVersion: number;
+  /**
+   * SYS / SCALE FACTOR (RINEX 3): system → obs code → factor. The parser
+   * divides the stored values by it, so callbacks see physical values.
+   */
+  scaleFactors?: Record<string, Record<string, number>>;
 }
 
 export interface EpochSummary {
@@ -146,6 +151,7 @@ function parseHeader(lines: string[]): RinexHeader {
   };
 
   let currentObsSys = '';
+  let lastScale: { sys: string; factor: number } | null = null;
 
   for (const raw of lines) {
     const label = raw.substring(60).trim();
@@ -232,6 +238,23 @@ function parseHeader(lines: string[]): RinexHeader {
             .split(/\s+/)
             .filter(Boolean);
           h.obsTypes[currentObsSys]!.push(...codes);
+        }
+        break;
+      }
+      case 'SYS / SCALE FACTOR': {
+        // A1,1X,I4,2X,I2,12(1X,A3); continuation 10X,12(1X,A3). No codes:
+        // every type of the system (RINEX 3.04 Table A2).
+        const codes = data.substring(10).trim().split(/\s+/).filter(Boolean);
+        const sys = data[0]?.trim();
+        if (sys) {
+          const factor = parseInt(data.substring(2, 6));
+          const m = ((h.scaleFactors ??= {})[sys] ??= {});
+          for (const c of codes.length ? codes : (h.obsTypes[sys] ?? []))
+            m[c] = factor;
+          lastScale = { sys, factor };
+        } else if (lastScale) {
+          for (const c of codes)
+            h.scaleFactors![lastScale.sys]![c] = lastScale.factor;
         }
         break;
       }
@@ -599,8 +622,11 @@ export async function parseRinexStream(
       // Read all values once, use for both SNR and callback
       const values: (number | null)[] = new Array(codes.length);
       const lli: (number | null)[] = new Array(codes.length);
+      const scale = header.scaleFactors?.[sys];
       for (let i = 0; i < codes.length; i++) {
-        values[i] = readObsValue(obsLine, i);
+        const v = readObsValue(obsLine, i);
+        const f = scale?.[codes[i]!];
+        values[i] = v !== null && f ? v / f : v;
         lli[i] = readObsLli(obsLine, i);
       }
       if (!skipEpochs) {
@@ -715,6 +741,13 @@ export async function parseRinexStream(
           ).map((s) => [s.idx, s.band])
         );
 
+    const crxCodes =
+      header.version >= 3
+        ? (header.obsTypes[sys] ?? [])
+        : (header.obsTypes['_v2'] ?? []);
+    const crxScale =
+      header.version >= 3 ? header.scaleFactors?.[sys] : undefined;
+
     // Decompress each observation, collecting values for callback
     const obsValues: (number | null)[] = onSatObs
       ? new Array(ntype).fill(null)
@@ -732,7 +765,10 @@ export async function parseRinexStream(
       const { state, result } = crxDecompress(states[j] ?? null, field);
       states[j] = state;
 
-      if (onSatObs) obsValues[j] = result / 1000;
+      if (onSatObs) {
+        const f = crxScale?.[crxCodes[j]!];
+        obsValues[j] = f ? result / 1000 / f : result / 1000;
+      }
 
       if (sBandMap) {
         const band = sBandMap.get(j);

@@ -104,3 +104,27 @@ ${lines}
     });
   });
 });
+
+describe('SYS / SCALE FACTOR', () => {
+  // RINEX 3.04 Table A2: "Factor to divide stored observations with before
+  // use (1,10,100,1000)". A phase stored ×10 keeps a fourth decimal.
+  const text = `     3.04           OBSERVATION DATA    G                   RINEX VERSION / TYPE
+TEST                                                        MARKER NAME
+G    3 C1C L1C S1C                                          SYS / # / OBS TYPES
+G   10  1 L1C                                               SYS / SCALE FACTOR
+G  100  1 S1C                                               SYS / SCALE FACTOR
+  2024     1     1     0     0    0.0000000     GPS         TIME OF FIRST OBS
+                                                            END OF HEADER
+> 2024 01 01 00 00  0.0000000  0  1
+G01  20000000.123  1050000001.234        4525.000
+`;
+
+  it('divides stored values by the factor (RINEX 3 and Compact RINEX 3)', async () => {
+    for (const t of [text, writeCrx(text, { date: '01-Jan-24 00:00' })]) {
+      const [o] = await collect(t);
+      expect(o!.values[0]).toBeCloseTo(20000000.123, 6);
+      expect(o!.values[1]).toBeCloseTo(105000000.1234, 6);
+      expect(o!.values[2]).toBeCloseTo(45.25, 9);
+    }
+  });
+});
