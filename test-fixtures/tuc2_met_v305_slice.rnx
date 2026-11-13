@@ -1,0 +1,25 @@
+     3.05           METEOROLOGICAL DATA                     RINEX VERSION / TYPE
+Spider V7.4.1.8151  TUC                 20251027 000004 UTC PGM / RUN BY / DATE 
+gfzrnx-2.2.0        FILE PROCESSING     20251210 135617 UTC COMMENT             
+INITIAL_RINEX_VERSION: 3.02                                 COMMENT             
+TUC2                                                        MARKER NAME         
+12617M003                                                   MARKER NUMBER       
+     3    HR    PR    TD                                    # / TYPES OF OBSERV 
+Measurements recorded in GPS time                           COMMENT             
+Paroscientific      *Met3                                PR SENSOR MOD/TYPE/ACC 
+Paroscientific      *Met3                                TD SENSOR MOD/TYPE/ACC 
+Paroscientific      *Met3                                HR SENSOR MOD/TYPE/ACC 
+  4744543.7806  2119411.9664  3686258.7452      160.8652 PR SENSOR POS XYZ/H    
+  4744543.7806  2119411.9664  3686258.7452      160.8652 TD SENSOR POS XYZ/H    
+  4744543.7806  2119411.9664  3686258.7452      160.8652 HR SENSOR POS XYZ/H    
+                                                            END OF HEADER      
+ 2025 10 26 00 00 00   68.0 1000.1   18.8
+ 2025 10 26 00 01 00   68.3 1000.1   18.8
+ 2025 10 26 00 02 00   68.3 1000.1   18.8
+ 2025 10 26 00 03 00   68.5 1000.1   18.8
+ 2025 10 26 00 04 00   68.5 1000.1   18.8
+ 2025 10 26 00 05 00   68.5 1000.1   18.7
+ 2025 10 26 00 06 00   68.4 1000.0   18.7
+ 2025 10 26 00 07 00   68.2 1000.0   18.7
+ 2025 10 26 00 08 00   68.1 1000.0   18.6
+ 2025 10 26 00 09 00   67.9 1000.0   18.6
