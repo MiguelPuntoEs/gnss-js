@@ -31,6 +31,7 @@
 import { ecefToGeodetic, getAer } from '../coordinates';
 import type { PppEpoch } from '../positioning/ppp';
 import type { IonexGrid } from '../rinex/ionex';
+import type { BiasRecord, BiasSinex } from '../rinex/bias-sinex';
 import { DenseNeq } from './dense-ls';
 
 const C = 299792458;
@@ -116,6 +117,8 @@ export interface RegionalIonoModel {
   startMs: number;
   endMs: number;
   nodeIntervalS: number;
+  /** Total degree of the Taylor series. */
+  degree: number;
   shellHeightM: number;
   /** Network centre (deg) the series is developed around. */
   centre: { latDeg: number; lonDeg: number };
@@ -586,6 +589,7 @@ export function estimateRegionalIonosphere(
     startMs: t0,
     endMs: t1,
     nodeIntervalS: nodeS,
+    degree,
     shellHeightM: o.shellHeightM,
     centre: { latDeg: lat0 / DEG, lonDeg: lon0 / DEG },
   };
@@ -618,4 +622,139 @@ export function regionalIonoGrid(
     rms.push(r);
   }
   return { epochs: [...epochs], lats: [...lats], lons: [...lons], maps, rms };
+}
+
+/** Producer metadata for {@link regionalIonoToIonex} / {@link regionalDcbToBiasSinex}. */
+export interface RegionalIonoFileMeta {
+  /** 3-character agency code. */
+  agency: string;
+  /** Stations used (with DOMES numbers when known). */
+  stations: { id: string; domes?: string }[];
+  createdMs?: number;
+  elevationMaskDeg?: number;
+}
+
+/**
+ * The gridded model (from {@link regionalIonoGrid}) as an IONEX 1.0 file
+ * object for `writeIonex`: TEC + RMS maps, and the satellite and receiver
+ * DCBs in the DIFFERENTIAL CODE BIASES auxiliary block (ns, P1−P2 sense as
+ * in IGS GIMs).
+ */
+export function regionalIonoToIonex(
+  model: RegionalIonoModel,
+  grid: IonexGrid & { rms: Float32Array[] },
+  meta: RegionalIonoFileMeta
+): IonexGrid {
+  const created = new Date(meta.createdMs ?? Date.now());
+  const step = (a: number[]) => (a.length > 1 ? a[1]! - a[0]! : 0);
+  const domes = new Map(meta.stations.map((s) => [s.id, s.domes ?? '']));
+  const c1w = (d: DcbEstimate) => d.obs1 === 'C1W' && d.obs2 === 'C2W';
+  return {
+    ...grid,
+    rmsMaps: grid.rms,
+    version: 1.0,
+    system: 'GPS',
+    pgm: 'gnss-js',
+    runBy: meta.agency,
+    date: created.toISOString().slice(0, 10),
+    descriptions: [
+      'Regional ionosphere map from a station network: carrier-',
+      'levelled geometry-free observations, Sun-fixed Taylor series',
+      `of degree ${model.degree} around ${model.centre.latDeg.toFixed(1)}N ${model.centre.lonDeg.toFixed(1)}E, nodes every ${model.nodeIntervalS} s.`,
+    ],
+    comments: [
+      'Modified single-layer mapping (alpha 0.9782); no value (9999)',
+      'where no pierce point above 20 deg lies within 500 km.',
+      'TEC/RMS values in 0.1 TECU; 9999, if no value available',
+    ],
+    epochFirst: grid.epochs[0],
+    epochLast: grid.epochs[grid.epochs.length - 1],
+    interval: step(grid.epochs) / 1000,
+    numMaps: grid.epochs.length,
+    mappingFunction: 'COSZ',
+    elevationCutoff: meta.elevationMaskDeg ?? 10,
+    observablesUsed: 'One-way carrier phase leveled to code',
+    numStations: meta.stations.length,
+    numSatellites: new Set(model.satelliteDcb.map((d) => d.prn)).size,
+    baseRadius: 6371,
+    mapDimension: 2,
+    hgt: {
+      from: model.shellHeightM / 1000,
+      to: model.shellHeightM / 1000,
+      step: 0,
+    },
+    latDef: {
+      from: grid.lats[0]!,
+      to: grid.lats[grid.lats.length - 1]!,
+      step: step(grid.lats),
+    },
+    lonDef: {
+      from: grid.lons[0]!,
+      to: grid.lons[grid.lons.length - 1]!,
+      step: step(grid.lons),
+    },
+    exponent: -1,
+    aux: {
+      name: 'DIFFERENTIAL CODE BIASES',
+      sats: model.satelliteDcb
+        .filter(c1w)
+        .map((d) => ({ prn: d.prn, biasNs: d.valueNs, rmsNs: d.sigmaNs })),
+      stations: model.receiverDcb.filter(c1w).map((d) => ({
+        sys: d.system,
+        name: d.station.slice(0, 4),
+        id: domes.get(d.station) ?? '',
+        biasNs: d.valueNs,
+        rmsNs: d.sigmaNs,
+      })),
+      comments: ['DCB values in ns, C1W-C2W (P1-P2); zero-mean satellites'],
+    },
+  };
+}
+
+/**
+ * The estimated DCBs as a Bias-SINEX object (DSB records, ns) for
+ * `writeBiasSinex`, valid over the model's span.
+ */
+export function regionalDcbToBiasSinex(
+  model: RegionalIonoModel,
+  meta: RegionalIonoFileMeta
+): BiasSinex {
+  const rec = (d: DcbEstimate): BiasRecord => ({
+    type: 'DSB',
+    prn: d.prn,
+    station: d.station,
+    obs1: d.obs1,
+    obs2: d.obs2,
+    startMs: model.startMs,
+    endMs: model.endMs,
+    value: d.valueNs,
+    unit: 'ns',
+    std: d.sigmaNs,
+  });
+  const records = [...model.satelliteDcb, ...model.receiverDcb].map(rec);
+  const bySat = new Map<string, BiasRecord[]>();
+  for (const r of records)
+    if (!r.station) bySat.set(r.prn, [...(bySat.get(r.prn) ?? []), r]);
+  return {
+    records,
+    bySat,
+    header: {
+      version: '1.00',
+      fileAgency: meta.agency,
+      createdMs: meta.createdMs ?? Date.now(),
+      dataAgency: meta.agency,
+      startMs: model.startMs,
+      endMs: model.endMs,
+      mode: 'R',
+      count: records.length,
+    },
+    reference: [
+      { key: 'DESCRIPTION', value: 'Regional ionosphere + DCB estimation' },
+      { key: 'SOFTWARE', value: 'gnss-js estimateRegionalIonosphere' },
+    ],
+    comments: [
+      'Satellite DSBs constrained to zero mean per signal pair.',
+      'Receiver DSBs in the same datum.',
+    ],
+  };
 }

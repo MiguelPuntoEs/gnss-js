@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   estimateRegionalIonosphere,
+  regionalDcbToBiasSinex,
   regionalIonoGrid,
+  regionalIonoToIonex,
 } from '../src/analysis/regional-iono';
+import { parseIonex } from '../src/rinex/ionex';
+import { writeIonex } from '../src/rinex/ionex-writer';
+import { parseBiasSinex } from '../src/rinex/bias-sinex';
+import { writeBiasSinex } from '../src/rinex/bias-sinex-writer';
 import type { PppEpoch } from '../src/positioning/ppp';
 
 // Synthetic network: a smooth Sun-fixed ionosphere, known satellite and
@@ -156,5 +162,40 @@ describe('estimateRegionalIonosphere', () => {
     expect(g.maps[0]![0]).toBeCloseTo(truth(50, 10, T0 + 6 * 3600_000), 0);
     expect(Number.isNaN(g.maps[0]![1]!)).toBe(true);
     expect(g.rms[0]![0]).toBeGreaterThan(0);
+  });
+
+  it('writes IONEX (maps, RMS, DCB block) and Bias-SINEX that read back', () => {
+    const lats = [60, 57.5, 55, 52.5, 50, 47.5, 45, 42.5, 40];
+    const lons = [-5, 0, 5, 10, 15, 20, 25, 30];
+    const epochs = [T0 + 3600_000, T0 + 7200_000];
+    const g = regionalIonoGrid(model, { epochs, lats, lons });
+    const meta = { agency: 'GCC', stations: SITES.map(([id]) => ({ id })) };
+    const back = parseIonex(writeIonex(regionalIonoToIonex(model, g, meta)));
+    expect(back.epochs).toEqual(epochs);
+    expect(back.lats).toEqual(lats);
+    back.maps.forEach((m, e) =>
+      m.forEach((v, k) => {
+        const a = g.maps[e]![k]!;
+        if (Number.isFinite(a))
+          expect(Math.abs(v - a)).toBeLessThanOrEqual(0.051);
+        else expect(Number.isNaN(v)).toBe(true);
+      })
+    );
+    expect(back.aux?.sats).toHaveLength(PRNS.length);
+    expect(back.aux!.sats[0]!.biasNs).toBeCloseTo(
+      model.satelliteDcb[0]!.valueNs,
+      2
+    );
+    expect(back.rmsMaps).toHaveLength(2);
+    const bia = parseBiasSinex(
+      writeBiasSinex(regionalDcbToBiasSinex(model, meta))
+    );
+    const g01 = bia.records.find((r) => r.prn === 'G01' && !r.station)!;
+    expect(g01.obs1).toBe('C1W');
+    expect(g01.value).toBeCloseTo(
+      model.satelliteDcb.find((d) => d.prn === 'G01')!.valueNs,
+      3
+    );
+    expect(bia.records.filter((r) => r.station)).toHaveLength(SITES.length);
   });
 });
