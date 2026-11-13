@@ -518,3 +518,190 @@ describe('RINEX 2.11 ↔ 3 observation codes', () => {
     }
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  The full matrix: every source format through every writer          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a writer must give back of a source, in the source's own codes:
+ * all of it for RINEX 3/4; for RINEX 2.11 the signal v2CodeColumns picks
+ * per v2 code of the systems 2.11 defines.
+ */
+function expectedCodes(src: RinexObsData, toV2: boolean) {
+  const v3 = new Map(
+    [...src.obsTypes].map(([sys, codes]) => [
+      sys,
+      codes.map((c) => (c.length === 2 ? (v2ToV3ObsCode(sys, c) ?? '?') : c)),
+    ])
+  );
+  if (!toV2) return { src: v3, out: v3 };
+  const s = new Map<string, string[]>();
+  const o = new Map<string, string[]>();
+  for (const [sys, codes] of src.obsTypes) {
+    const cols = v2CodeColumns(sys, codes);
+    if (cols.size === 0) continue;
+    s.set(
+      sys,
+      [...cols.values()].map((i) => v3.get(sys)![i]!)
+    );
+    o.set(
+      sys,
+      [...cols.keys()].map((c) => v2ToV3ObsCode(sys, c) ?? '?')
+    );
+  }
+  return { src: s, out: o };
+}
+
+const SOURCES = [
+  ['RINEX 3.04 (SUR4, Leica GR50)', 'sur4_obs_slice.rnx'],
+  ['CRINEX 3.0 (SUR4)', 'sur4_lli_slice.crx'],
+  ['RINEX 3.02 (ANMG)', 'anmg_obs_slice.rnx'],
+  ['CRINEX 3.0 (ANMG, .Z)', 'anmg_crx_slice.crx.Z'],
+  ['RINEX 2.11 (INAB, event)', 'inab_obs_slice.25o'],
+  ['CRINEX 1.0 (INAB)', 'inab_lli_slice.25d'],
+] as const;
+
+const WRITERS = [
+  ['RINEX 2.11', W2, true],
+  ['RINEX 3.04', W3, false],
+  ['RINEX 4.01', W4, false],
+  ['CRINEX 1.0', CRX(W2), true],
+  ['CRINEX 3.0', CRX(W3), false],
+  ['CRINEX 3.0 (RINEX 4.01)', CRX(W4), false],
+] as const;
+
+/** First n observation epochs (+ events among them): keeps CRX cases fast. */
+function head(d: RinexObsData, n = 12): RinexObsData {
+  return { ...d, epochs: d.epochs.slice(0, n) };
+}
+
+describe('conversion matrix: values, LLI, SSI, flags, clock, events', () => {
+  for (const [sname, file] of SOURCES) {
+    for (const [wname, w, toV2] of WRITERS) {
+      it(`${sname} → ${wname}`, async () => {
+        const src = head(await fixture(file));
+        const out = await reread(await w(src));
+        const codes = expectedCodes(src, toV2);
+        expect(plain(out, codes.out)).toEqual(plain(src, codes.src));
+        // nothing else appears
+        expect([...out.obsTypes.keys()].sort()).toEqual(
+          [...codes.out.keys()].sort()
+        );
+        // header records every version has (RINEX 2.11 lacks MARKER TYPE,
+        // SIGNAL STRENGTH UNIT, GLONASS SLOT / FRQ #, SYS / PHASE SHIFT)
+        const hk = (h: RinexObsData['header'], v2: boolean) => ({
+          markerName: h.markerName,
+          markerNumber: h.markerNumber ?? '',
+          observer: h.observer,
+          agency: h.agency,
+          receiver: [h.receiverNumber, h.receiverType, h.receiverVersion],
+          antenna: [h.antNumber, h.antType],
+          approxPosition: h.approxPosition,
+          antDelta: h.antDelta,
+          timeSystem: h.timeSystem,
+          leapSeconds: h.leapSeconds,
+          ...(v2
+            ? {}
+            : {
+                markerType: h.markerType,
+                signalStrengthUnit: h.signalStrengthUnit,
+                glonassSlots: h.glonassSlots,
+              }),
+        });
+        const v2 = toV2 || src.header.version < 3;
+        expect(hk(out.header, v2)).toEqual(hk(src.header, v2));
+        // INTERVAL is optional: written (30 s) even when the source has none
+        expect(out.header.interval).toBe(src.header.interval ?? 30);
+      });
+    }
+  }
+
+  it('RINEX 4.01 source (written from SUR4) → every writer', async () => {
+    const v4 = await reread(await W4(await fixture('sur4_obs_slice.rnx')));
+    expect(v4.header.version).toBe(4.01);
+    for (const [, w, toV2] of WRITERS) {
+      const out = await reread(await w(v4));
+      const codes = expectedCodes(v4, toV2);
+      expect(plain(out, codes.out)).toEqual(plain(v4, codes.src));
+    }
+  });
+});
+
+describe('multi-step chains', () => {
+  it('RINEX 2.11 → 3.04 → CRINEX 3 → 3.04 → 2.11 gives the 2.11 file back', async () => {
+    const src = await fixture('inab_obs_slice.25o');
+    const v3 = await reread(await CRX(W3)(src));
+    const v2 = await reread(await W2(v3));
+    // Same set of types (C2 → C2X → C2, P1 → C1W → P1, …); allowed
+    // difference: the list is in canonical order, not the source's.
+    expect([...v2.obsTypes.get('G')!].sort()).toEqual(
+      src.obsTypes
+        .get('G')!
+        .filter((c) => v2ToV3ObsCode('G', c))
+        .sort()
+    );
+    expect(plain(v2)).toEqual(plain(src));
+  });
+
+  it('RINEX 3.04 → 2.11 → CRINEX 1 → 2.11 → 3.04 → CRINEX 3 → 3.04', async () => {
+    const src = await fixture('sur4_obs_slice.rnx');
+    const a = await reread(await W2(src));
+    const b = await reread(await CRX(W2)(a));
+    const c = await reread(await CRX(W3)(b));
+    const d = await reread(await W3(c));
+    expect(plain(d)).toEqual(plain(c));
+    expect(plain(b)).toEqual(plain(a));
+    const codes = expectedCodes(src, true);
+    expect(plain(d, codes.out)).toEqual(plain(src, codes.src));
+  });
+
+  it('writers are a fixed point: write(read(write(x))) = write(x)', async () => {
+    const strip = (t: string) =>
+      t
+        .replace(/^.*PGM \/ RUN BY \/ DATE.*$/m, '')
+        .replace(/^.*CRINEX PROG.*$/m, '');
+    for (const file of ['sur4_obs_slice.rnx', 'inab_obs_slice.25o']) {
+      const src = await fixture(file);
+      for (const [, w] of WRITERS) {
+        const once = await w(src);
+        const twice = await w(await reread(once));
+        expect(strip(twice)).toBe(strip(once));
+      }
+    }
+  });
+});
+
+describe('RINEX 3.04 data section is line-identical to the source', () => {
+  // Our writer against crx2rnx's decompression of the Leica file: every
+  // epoch and observation record, character for character. Allowed
+  // differences: satellite order within an epoch (we sort by PRN), and an
+  // LLI or SSI digit 0 is written blank (Table A3: "0 or blank: OK or not
+  // known" / "not known, don't care").
+  it('SUR4', async () => {
+    const original = readFileSync(FIX('sur4_obs_slice.rnx'), 'latin1');
+    const ours = await W3(await fixture('sur4_obs_slice.rnx'));
+    const body = (t: string) => {
+      const lines = t.split('\n');
+      const out: string[] = [];
+      let block: string[] = [];
+      for (const l of lines.slice(
+        lines.findIndex((x) => x.includes('END OF HEADER')) + 1
+      )) {
+        if (l.startsWith('>')) {
+          out.push(...block.sort());
+          block = [];
+          out.push(l);
+        } else if (l)
+          block.push(
+            l
+              .replace(/(\.\d{3})0/g, '$1 ')
+              .replace(/(\.\d{3}[ \d])0/g, '$1 ')
+              .trimEnd()
+          );
+      }
+      return [...out, ...block.sort()];
+    };
+    expect(body(ours)).toEqual(body(original));
+  });
+});

@@ -57,5 +57,14 @@ export async function readRinexObs(file: Blob): Promise<RinexObsData> {
       epochs.push(cur);
     }
   );
-  return { header: result.header, epochs, obsTypes };
+  // Header order (RINEX 3: every declared system, observed or not); a
+  // RINEX 2 file's shared list goes to each system seen, in first-seen order.
+  const h = result.header;
+  const ordered = new Map<string, string[]>();
+  if (h.version >= 3)
+    for (const [sys, codes] of Object.entries(h.obsTypes))
+      if (sys !== '_v2') ordered.set(sys, codes);
+  for (const [sys, codes] of obsTypes)
+    if (!ordered.has(sys)) ordered.set(sys, codes);
+  return { header: h, epochs, obsTypes: ordered };
 }
