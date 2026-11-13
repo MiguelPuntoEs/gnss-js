@@ -48,6 +48,19 @@ export function fmtD(val: number): string {
   return `${sign}${mStr}E${expSign}${expStr}`;
 }
 
+/** RINEX header D12.4: "  2.5146E-08" (IONOSPHERIC CORR coefficients). */
+function fmtD12(val: number): string {
+  if (val === 0) return '  0.0000E+00';
+  let exp = Math.floor(Math.log10(Math.abs(val)));
+  let m = (Math.abs(val) / 10 ** exp).toFixed(4);
+  if (m.length > 6) {
+    exp += 1;
+    m = (Math.abs(val) / 10 ** exp).toFixed(4);
+  }
+  const e = `${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(2, '0')}`;
+  return `${val < 0 ? '-' : ''}${m}E${e}`.padStart(12);
+}
+
 /* ================================================================== */
 /*  Date formatting                                                    */
 /* ================================================================== */
@@ -107,20 +120,20 @@ function writeHeader(nav: NavResult): string {
     )
   );
 
-  // Ionospheric corrections
+  // Ionospheric corrections: A4,1X,4D12.4 (RINEX 3.04 Table A5). The
+  // values must be D12.4: D19.12 fields overflowed column 60 and were
+  // cut by hdrLine.
   const ionoOrder = ['GPSA', 'GPSB', 'GAL', 'BDSA', 'BDSB'];
-  for (const key of ionoOrder) {
+  const keys = [
+    ...ionoOrder,
+    ...Object.keys(nav.header.ionoCorrections).filter(
+      (k) => !ionoOrder.includes(k)
+    ),
+  ];
+  for (const key of keys) {
     const vals = nav.header.ionoCorrections[key];
     if (!vals) continue;
-    const valStr = vals.map((v) => fmtD(v)).join('');
-    lines.push(hdrLine(padL(key, 5) + valStr, 'IONOSPHERIC CORR'));
-  }
-  // Any remaining correction types not in the standard order
-  for (const key of Object.keys(nav.header.ionoCorrections)) {
-    if (ionoOrder.includes(key)) continue;
-    const vals = nav.header.ionoCorrections[key];
-    if (!vals) continue;
-    const valStr = vals.map((v) => fmtD(v)).join('');
+    const valStr = vals.map((v) => fmtD12(v)).join('');
     lines.push(hdrLine(padL(key, 5) + valStr, 'IONOSPHERIC CORR'));
   }
 

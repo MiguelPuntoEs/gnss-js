@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { parseNavFile, type KeplerEphemeris } from '../src/rinex/nav';
+import { writeRinexNav } from '../src/rinex/nav-writer';
 import { hasFixture, readText } from './nav-sources';
 
 const HAS_V4 = hasFixture('brdc_v4_dlr.nav');
@@ -46,5 +47,32 @@ describe('reader: blank (BNK) fields keep their slot', () => {
     const [g] = parseNavFile(text).ephemerides as KeplerEphemeris[];
     expect(g!.week).toBe(2399);
     expect(g!.ttm).toBeUndefined(); // blank t_tm = not known
+  });
+});
+
+describe('writeRinexNav header', () => {
+  it('IONOSPHERIC CORR is A4,1X,4D12.4 and reads back', () => {
+    // RINEX 3.04 Table A5. The D19.12 fields used before ran past
+    // column 60 and were cut: GPSA read back as [2.5146, 0, 6e8, 9].
+    const iono = {
+      GPSA: [2.5146e-8, 7.4506e-9, -1.1921e-7, 5.9605e-8],
+      GPSB: [149500, -212990, 0, 327680],
+      GAL: [155, -0.70703, 0.002655],
+    };
+    const out = writeRinexNav({
+      header: {
+        version: 3.04,
+        type: 'N',
+        leapSeconds: 18,
+        ionoCorrections: iono,
+      },
+      ephemerides: [],
+    });
+    const line = out.split('\n').find((l) => l.startsWith('GPSA'))!;
+    // IGS brdc_v3_igs.nav prints the same line with D exponents
+    expect(line).toBe(
+      'GPSA   2.5146E-08  7.4506E-09 -1.1921E-07  5.9605E-08       IONOSPHERIC CORR    '
+    );
+    expect(parseNavFile(out).header.ionoCorrections).toEqual(iono);
   });
 });
