@@ -151,6 +151,28 @@ describe('writeSp3: SP3-d Example 2 (all record types)', () => {
   });
 });
 
+describe('writeSp3: a 7-digit negative clock fused to z (fixed columns)', () => {
+  // Real case (G04, 2025-08-20): F14.6 has no separator, so a clock of
+  // −431772.931600 µs runs into z — whitespace splitting reads one field.
+  const FUSED =
+    'PG01 -11044.805800 -10475.672350  -5337.893301-431772.931600 18 18 18 219';
+  const text = EXAMPLE2.replace(
+    'PG01 -11044.805800 -10475.672350  21929.418200    189.163300 18 18 18 219\n',
+    FUSED + '\n'
+  );
+
+  it('reads z and the clock from their own columns', () => {
+    expect(text).toContain(FUSED);
+    const s = parseSp3(text).satellites['G01']![0]!;
+    expect(s.z).toBeCloseTo(-5337893.301, 3);
+    expect(s.clk).toBeCloseTo(-431772.9316e-6, 12);
+  });
+
+  it('writes the fused record back unchanged', () => {
+    expect(trimmed(writeSp3(parseSp3(text)))).toEqual(trimmed(text + '\n'));
+  });
+});
+
 describe('writeSp3: convention locks', () => {
   // asymmetric values: a swapped axis, flipped sign or wrong unit shows
   const sp3: Sp3File = {
