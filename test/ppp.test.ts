@@ -284,6 +284,30 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
     expect(phase.length / sats.length).toBeGreaterThan(0.9);
   });
 
+  it('clockGroup: the default grouping changes nothing; a split adds clocks', async () => {
+    const { epochs, truth } = await load();
+    const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+    const part = epochs.slice(0, 300);
+    const opts = { aprioriPos: truth, elevationMaskDeg: 10, diagnostics: true };
+    const plain = solvePpp(part, sp3, opts);
+    const same = solvePpp(part, sp3, { ...opts, clockGroup: (p) => p[0]! });
+    expect(same.position).toEqual(plain.position);
+    // BeiDou on two clocks: by PRN, BeiDou-2 below C19.
+    const split = solvePpp(part, sp3, {
+      ...opts,
+      clockGroup: (p) =>
+        p[0] === 'C' ? (Number(p.slice(1)) < 19 ? 'C2' : 'C3') : p[0]!,
+    });
+    const keys = new Set(
+      split.series.flatMap((s) => Object.keys(s.diagnostics!.clockM))
+    );
+    expect(keys.has('C')).toBe(false);
+    expect(keys.has('C3')).toBe(true);
+    // Same data, one more parameter: the position stays at the cm level.
+    const d = split.position.map((v, i) => v - plain.position[i]!);
+    expect(Math.hypot(d[0]!, d[1]!, d[2]!)).toBeLessThan(0.05);
+  });
+
   it('reports the hydrostatic delay on an epoch without satellites', async () => {
     const { epochs, truth } = await load();
     const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));

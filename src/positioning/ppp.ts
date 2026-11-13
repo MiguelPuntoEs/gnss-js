@@ -106,6 +106,12 @@ export interface PppOptions {
    *  `{ C: { phase: 2 } }` to down-weight a constellation whose orbits and
    *  clocks are less accurate. Default 1 for every system. */
   systemSigmaScale?: Record<string, { code?: number; phase?: number }>;
+  /** The receiver-clock group of a satellite: one clock (and so one
+   *  inter-system bias) per distinct key. Default the constellation letter;
+   *  e.g. split BeiDou-2 from BeiDou-3, or BeiDou-3 by manufacturer
+   *  (clockGroupFromBlocks, clock-groups.ts). Float only — ambiguity fixing differences
+   *  satellites per constellation. */
+  clockGroup?: (prn: string) => string;
   /**
    * Elevation-dependent observation weighting (the variance at zenith ×
    * f(elevation)). 'sin2' (default): σ²/sin²e with sin e floored at 0.1
@@ -1178,6 +1184,8 @@ export class PppEngine {
     const flushArc = this.flushArc.bind(this);
     const detectSlip = this.detectSlip.bind(this);
     const growState = this.growState.bind(this);
+    /** Receiver-clock group of a satellite (the constellation by default). */
+    const clockGroup = opts.clockGroup ?? ((prn: string) => prn[0]!);
     const dropState = this.dropState.bind(this);
     const clockOf = this.clockOf.bind(this);
     const ei = this.ei;
@@ -1497,7 +1505,7 @@ export class PppEngine {
     // variance reset for free white-noise re-estimation this epoch.
     const bySys = new Map<string, number[]>();
     for (const v of vis) {
-      const sys = v.prn[0]!;
+      const sys = clockGroup(v.prn);
       const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + wetSlant(x, v));
       const arr = bySys.get(sys);
       if (arr) arr.push(r);
@@ -1517,7 +1525,7 @@ export class PppEngine {
       if (res.length < 4) continue;
       const med = [...res].sort((a, b) => a - b)[Math.floor(res.length / 2)]!;
       for (const v of vis) {
-        if (v.prn[0] !== sys) continue;
+        if (clockGroup(v.prn) !== sys) continue;
         const r = v.pIf - (v.range - v.satClkM + v.tropoFixed + wetSlant(x, v));
         if (Math.abs(r - med) > codeGate) screened.add(v.prn);
       }
@@ -1549,7 +1557,7 @@ export class PppEngine {
 
     /** Create the ambiguity on first sight, reset it on a slip. */
     const prepAmbiguity = (v: Vis): number => {
-      const ci = clockOf(v.prn[0]!);
+      const ci = clockOf(clockGroup(v.prn));
       const common =
         rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       // A flagged/detected slip ends the current arc before re-init.
@@ -1586,7 +1594,7 @@ export class PppEngine {
     const phaseUsed = new Set<string>();
     const reinited = new Set<string>();
     const codeUpdate = (v: Vis): void => {
-      const ci = clockOf(v.prn[0]!);
+      const ci = clockOf(clockGroup(v.prn));
       const common =
         rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       const wEl = elevationVarianceFactor(v.elRad, opts.elevationWeighting);
@@ -1611,7 +1619,7 @@ export class PppEngine {
     };
 
     const phaseUpdate = (v: Vis, ai: number): void => {
-      const ci = clockOf(v.prn[0]!);
+      const ci = clockOf(clockGroup(v.prn));
       const kP = opts.systemSigmaScale?.[v.prn[0]!]?.phase ?? 1;
       const rPhase =
         (kP * phaseSigma) ** 2 *
@@ -1725,7 +1733,7 @@ export class PppEngine {
         const v = vis.find((u) => u.prn === prn);
         const ai = ambIdx.get(prn);
         if (!v || ai === undefined || screened.has(prn)) continue;
-        const ci = clockOf(prn[0]!);
+        const ci = clockOf(clockGroup(prn));
         p.innov0 =
           v.lIf -
           (rangeNow(v) +
@@ -1749,7 +1757,7 @@ export class PppEngine {
         p.dIf = (c) => g * l1 * c.n1 - (g - 1) * l2 * c.n2;
       }
       const clockPinned = (sys: string) =>
-        [...phaseUsed].filter((q) => q[0] === sys).length >= 2;
+        [...phaseUsed].filter((q) => clockGroup(q) === sys).length >= 2;
       const choose = (p: Pend, ref: number, extraVar: number) => {
         if (p.innov0 == null || p.sig == null || !p.dIf) return null;
         const sig = Math.sqrt(p.sig ** 2 + extraVar);
@@ -1762,12 +1770,14 @@ export class PppEngine {
           : null;
       };
       for (const p of pend) {
-        const sys = p.prn[0]!;
+        const sys = clockGroup(p.prn);
         let best: { n1: number; n2: number } | null = null;
         if (nSats >= 4 && clockPinned(sys)) {
           best = choose(p, 0, P[clockOf(sys)]![clockOf(sys)]!);
         } else {
-          const same = pend.filter((q) => q.prn[0] === sys && q.innov0 != null);
+          const same = pend.filter(
+            (q) => clockGroup(q.prn) === sys && q.innov0 != null
+          );
           if (same.length >= 3) {
             const med = same.map((q) => q.innov0!).sort((a, b) => a - b)[
               Math.floor(same.length / 2)
@@ -1806,7 +1816,7 @@ export class PppEngine {
       for (const v of vis) {
         const ai = ambIdx.get(v.prn);
         if (ai === undefined) continue;
-        const sys = v.prn[0]!;
+        const sys = clockGroup(v.prn);
         const ci = clockOf(sys);
         const commonPh =
           rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
@@ -1847,7 +1857,7 @@ export class PppEngine {
         return Math.sqrt(Math.max(v, 0));
       }) as [number, number, number];
       const raw = vis.map((v) => {
-        const ci = clockOf(v.prn[0]!);
+        const ci = clockOf(clockGroup(v.prn));
         const common =
           rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
         const ai = ambIdx.get(v.prn);
