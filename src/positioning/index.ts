@@ -733,6 +733,8 @@ export type {
   PppCorrectionConfig,
 } from './ppp-corrections';
 export { buildPppAntenna, withSatelliteAntennas } from './ppp-antenna';
+export { satelliteBlocks, clockGroupFromBlocks } from './clock-groups';
+export type { ClockGroupMode } from './clock-groups';
 export type {
   PppAntennaModel,
   AntennaOffset,
