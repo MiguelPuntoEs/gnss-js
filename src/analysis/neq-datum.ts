@@ -59,13 +59,14 @@ export interface StationTriplet {
 /** Group STAX/Y/Z (or VELX/Y/Z) parameters into per-station triplets. */
 export function stationTriplets(
   params: readonly NeqParameter[],
-  kind: 'STA' | 'VEL' = 'STA'
+  /** Type prefix: 'STA', 'VEL', or a periodic term ('S1', 'C1', …). */
+  kind: string = 'STA'
 ): StationTriplet[] {
   const m = new Map<string, StationTriplet>();
   params.forEach((p, i) => {
     if (!p.type.startsWith(kind)) return;
-    const k = 'XYZ'.indexOf(p.type.slice(3));
-    if (k < 0 || p.type.length !== 4) return;
+    const k = 'XYZ'.indexOf(p.type.slice(kind.length));
+    if (k < 0 || p.type.length !== kind.length + 1) return;
     const key = `${p.site}|${p.pointCode ?? 'A'}|${p.solnId ?? '1'}`;
     let t = m.get(key);
     if (!t)
@@ -136,6 +137,7 @@ export function referenceAt(
 }
 
 const EARTH_RADIUS = 6_371_000;
+const PERIODIC = ['S1', 'C1', 'S2', 'C2'];
 
 /**
  * Minimum-constraint pseudo-observations over `triplets` (positions or
@@ -351,6 +353,32 @@ export function solveWithDatum(
                   number,
                 ]
             )
+          )
+        );
+    }
+    // Periodic terms (`NeqCombination`): with Helmert parameters per
+    // solution their network mean is not observable — condition it to 0.
+    for (const pk of PERIODIC) {
+      const tr = stationTriplets(neq.params, pk);
+      if (!tr.length) continue;
+      const sitesOn = new Set(on.map((c) => c.t.site));
+      const ts = tr.filter((t) => sitesOn.has(t.site));
+      if (ts.length)
+        rows.push(
+          ...minimumConstraintRows(
+            neq,
+            ts,
+            ts.map(() => [0, 0, 0]),
+            posModel,
+            sigma,
+            ts.map((t) => {
+              const c = on.find((x) => x.t.site === t.site)!;
+              return c.t.idx.map((i) => neq.params[i]!.apriori) as [
+                number,
+                number,
+                number,
+              ];
+            })
           )
         );
     }

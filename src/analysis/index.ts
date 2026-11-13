@@ -19,3 +19,4 @@ export * from './multipath-reference';
 export * from './normal-equations';
 export * from './neq';
 export * from './neq-datum';
+export * from './neq-combination';

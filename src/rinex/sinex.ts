@@ -195,7 +195,7 @@ export function parseSinexEstimates(text: string): Map<string, SinexEstimate> {
       number,
       number,
     ];
-    const year = yy < 50 ? 2000 + yy : 1900 + yy;
+    const year = yy <= 50 ? 2000 + yy : 1900 + yy;
     const epochMs = Date.UTC(year, 0, ddd) + sss * 1000;
     const value = Number(line.slice(47, 68));
     const sd = Number(line.slice(69, 80));

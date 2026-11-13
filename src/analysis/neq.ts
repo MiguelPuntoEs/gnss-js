@@ -418,3 +418,39 @@ export function transformNeq(
     }
   return { ...neq, params: newParams, N, b };
 }
+
+/**
+ * One station's daily solution (PPP: position + 3×3 covariance) as
+ * normal equations N = C⁻¹, b = N·(x̂ − x₀) — the input `NeqCombination`
+ * stacks into a multi-day / multi-year solution. Without `apriori` the
+ * a-priori is x̂ rounded to the millimetre.
+ */
+export function stationNeq(opts: {
+  site: string;
+  epochMs: number;
+  xyz: readonly number[];
+  /** 3×3 covariance (row-major, 9 values) of X, Y, Z (m²). */
+  cov: readonly number[];
+  apriori?: readonly number[];
+  solnId?: string;
+  dataStartMs?: number;
+  dataEndMs?: number;
+}): NormalEquations {
+  const params: NeqParameter[] = ['STAX', 'STAY', 'STAZ'].map((type, k) => ({
+    type,
+    site: opts.site,
+    pointCode: 'A',
+    solnId: opts.solnId ?? '1',
+    refEpochMs: opts.epochMs,
+    apriori: opts.apriori?.[k] ?? Math.round(opts.xyz[k]! * 1000) / 1000,
+    unit: 'm',
+  }));
+  return neqFromCovariance({
+    params,
+    estimate: opts.xyz,
+    cov: opts.cov,
+    nObs: 3,
+    dataStartMs: opts.dataStartMs ?? opts.epochMs,
+    dataEndMs: opts.dataEndMs ?? opts.epochMs,
+  });
+}

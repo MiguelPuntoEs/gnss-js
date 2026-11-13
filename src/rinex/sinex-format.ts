@@ -67,6 +67,6 @@ export function parseSinexEpoch(s: string): number | null {
   const d = Number(m[2]);
   const sec = Number(m[3]);
   if (y === 0 && d === 0 && sec === 0) return null;
-  if (m[1]!.length === 2) y = y < 50 ? 2000 + y : 1900 + y;
+  if (m[1]!.length === 2) y = y <= 50 ? 2000 + y : 1900 + y;
   return Date.UTC(y, 0, 1) + (d - 1) * 86_400_000 + sec * 1000;
 }
