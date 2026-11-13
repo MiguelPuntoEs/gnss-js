@@ -923,7 +923,9 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     omega: info.argPerigee,
     omegaDot: info.omegaDot ?? 0,
     idot: info.idot ?? 0,
-    week,
+    // RINEX GAL week is continuous and GPS-aligned (3.05 Table A8 *****):
+    // GST week + 1024. Every other decoder (and the RINEX files) uses it.
+    week: sys === 'E' ? week + 1024 : week,
     svHealth: info.health,
     tgd: 0,
     ...rinexFields(sys, info),

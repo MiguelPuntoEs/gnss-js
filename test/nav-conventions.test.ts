@@ -373,3 +373,22 @@ describe('cross-decoder: the same satellite, two receivers, one orbit', () => {
     expect(e04.svAccuracy).toBeCloseTo(3.12, 10); // SISA index 107
   });
 });
+
+describe('week numbers (RINEX 3.05 Tables A6/A8/A14 footnotes)', () => {
+  it('every decoder: GPS/QZSS/Galileo continuous GPS week, BeiDou BDT week', () => {
+    // Galileo GST week + 1024 = GPS week; RTCM 1045/1046 send the 12-bit
+    // GST week (E02 1419 at 2026-11-06), RINEX wants 2443 — the RTCM path
+    // kept 1419. BeiDou weeks count from 2006-01-01 (GPS − 1356).
+    for (const [key, list] of Object.entries(rawSources()))
+      for (const e of list.filter(isKepler)) {
+        const gpsWeek = Math.floor(
+          (e.tocDate.getTime() - Date.UTC(1980, 0, 6)) / 604800_000
+        );
+        const want = e.system === 'C' ? gpsWeek - 1356 : gpsWeek;
+        // toe may sit in the neighbouring week of toc
+        expect(Math.abs(e.week - want), `${key} ${e.prn}`).toBeLessThanOrEqual(
+          1
+        );
+      }
+  });
+});
