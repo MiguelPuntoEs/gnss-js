@@ -65,11 +65,16 @@ export function parseIonex(text: string): IonexGrid {
     if (label === 'START OF TEC MAP') {
       const map = new Float32Array(lats.length * lons.length).fill(NaN);
       let epochMs = 0;
+      // an EXPONENT inside the map applies to the rows that follow it
+      let mapScale = scale;
       i++;
       while (i < lines.length) {
         const l = lines[i]!;
         const lab = l.slice(60).trim();
-        if (lab === 'EPOCH OF CURRENT MAP') {
+        if (lab === 'EXPONENT') {
+          mapScale = Math.pow(10, parseInt(l.slice(0, 60).trim(), 10));
+          i++;
+        } else if (lab === 'EPOCH OF CURRENT MAP') {
           const f = l.slice(0, 60).trim().split(/\s+/).map(Number);
           epochMs = Date.UTC(f[0]!, f[1]! - 1, f[2]!, f[3]!, f[4]!, f[5]!);
           i++;
@@ -88,7 +93,7 @@ export function parseIonex(text: string): IonexGrid {
               const v = parseInt(vStr, 10);
               if (latIdx >= 0) {
                 map[latIdx * lons.length + lonIdx] =
-                  v === 9999 ? NaN : v * scale;
+                  v === 9999 ? NaN : v * mapScale;
               }
               lonIdx++;
             }
