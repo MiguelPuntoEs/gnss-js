@@ -1,92 +1,34 @@
 /**
  * RINEX 2.11 observation file writer.
  *
- * Converts RINEX 3 obs codes to RINEX 2 format and writes
- * a valid RINEX 2.11 observation file.
+ * Converts RINEX 3 obs codes to RINEX 2 format (see obs-codes.ts) and
+ * writes a valid RINEX 2.11 observation file.
  */
 
 import type { RinexHeader } from './parser';
 import type { CompactEpoch } from './obs-writer';
 import { padL, padR, fmtF, hdrLine } from './format';
-import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
-
-/* ── RINEX 3 → 2 code mapping ──────────────────────────────────── */
-
-/**
- * Map RINEX 3 obs codes to RINEX 2 equivalents.
- * RINEX 2 uses 2-char codes: L1, L2, P1, P2, C1, C2, D1, D2, S1, S2, L5, etc.
- */
-const V3_TO_V2: Record<string, string> = {
-  // GPS
-  C1C: 'C1',
-  C1S: 'C1',
-  C1L: 'C1',
-  C1X: 'C1',
-  C1W: 'P1',
-  C1P: 'P1',
-  C2C: 'C2',
-  C2S: 'P2',
-  C2L: 'P2',
-  C2X: 'P2',
-  C2W: 'P2',
-  C2P: 'P2',
-  C5I: 'C5',
-  C5Q: 'C5',
-  C5X: 'C5',
-  L1C: 'L1',
-  L1S: 'L1',
-  L1L: 'L1',
-  L1X: 'L1',
-  L1W: 'L1',
-  L1P: 'L1',
-  L2C: 'L2',
-  L2S: 'L2',
-  L2L: 'L2',
-  L2X: 'L2',
-  L2W: 'L2',
-  L2P: 'L2',
-  L5I: 'L5',
-  L5Q: 'L5',
-  L5X: 'L5',
-  D1C: 'D1',
-  D1S: 'D1',
-  D1L: 'D1',
-  D1X: 'D1',
-  D1W: 'D1',
-  D1P: 'D1',
-  D2C: 'D2',
-  D2S: 'D2',
-  D2L: 'D2',
-  D2X: 'D2',
-  D2W: 'D2',
-  D2P: 'D2',
-  D5I: 'D5',
-  D5Q: 'D5',
-  D5X: 'D5',
-  S1C: 'S1',
-  S1S: 'S1',
-  S1L: 'S1',
-  S1X: 'S1',
-  S1W: 'S1',
-  S1P: 'S1',
-  S2C: 'S2',
-  S2S: 'S2',
-  S2L: 'S2',
-  S2X: 'S2',
-  S2W: 'S2',
-  S2P: 'S2',
-  S5I: 'S5',
-  S5Q: 'S5',
-  S5X: 'S5',
-};
-
-function v3ToV2Code(code3: string): string | null {
-  return V3_TO_V2[code3] ?? null;
-}
+import { modalIntervalS } from './obs-writer';
+import { RINEX2_CODE_ORDER, RINEX2_SYSTEMS, v2CodeColumns } from './obs-codes';
+import {
+  clockOffsApplLine,
+  createGzipLineSink,
+  epochLines2,
+  leapSecondsLine,
+  obsField,
+  obsTimeSystem,
+  timeOfObs,
+  stationHeaderLines,
+} from './obs-writer-common';
 
 /**
  * Write RINEX 2.11 obs file from compact observations.
- * Only GPS+GLONASS satellites are included (RINEX 2 limitation).
+ *
+ * Codes map per {@link v2CodeColumns} (RINEX 2.11 section 10.1.1): one v3
+ * signal per system and v2 code, chosen by a fixed priority. Only the
+ * systems RINEX 2.11 defines are written — GPS, GLONASS, Galileo, SBAS;
+ * BeiDou, QZSS and NavIC have no RINEX 2.11 codes. Code lists already in
+ * v2 form (from a RINEX 2 source) pass through.
  */
 export async function writeRinex2ObsBlob(
   header: RinexHeader,
@@ -95,56 +37,37 @@ export async function writeRinex2ObsBlob(
 ): Promise<Blob> {
   if (epochs.length === 0) return new Blob([], { type: 'application/gzip' });
 
-  // Build v2 obs type list from v3 codes (GPS codes, deduplicated)
-  const gpsCodes = obsTypes.get('G') ?? obsTypes.get('R') ?? [];
-  const v2Codes: string[] = [];
-  const v2CodeSet = new Set<string>();
-  const v3ToV2Map = new Map<string, number>(); // v3 code → v2 index
-
-  for (const code3 of gpsCodes) {
-    const code2 = v3ToV2Code(code3);
-    if (!code2) continue;
-    if (!v2CodeSet.has(code2)) {
-      v2CodeSet.add(code2);
-      v3ToV2Map.set(code3, v2Codes.length);
-      v2Codes.push(code2);
-    } else {
-      // Map to existing index
-      v3ToV2Map.set(code3, v2Codes.indexOf(code2));
-    }
+  // Per system: v2 code → column of its values
+  const columns = new Map<string, Map<string, number>>();
+  for (const sys of RINEX2_SYSTEMS) {
+    const codes = obsTypes.get(sys);
+    if (!codes) continue;
+    const cols = v2CodeColumns(sys, codes);
+    if (cols.size > 0) columns.set(sys, cols);
   }
-
-  // Also map GLONASS codes
-  const gloCodes = obsTypes.get('R') ?? [];
-  for (const code3 of gloCodes) {
-    const code2 = v3ToV2Code(code3);
-    if (!code2) continue;
-    if (!v2CodeSet.has(code2)) {
-      v2CodeSet.add(code2);
-      v3ToV2Map.set(code3, v2Codes.length);
-      v2Codes.push(code2);
-    } else if (!v3ToV2Map.has(code3)) {
-      v3ToV2Map.set(code3, v2Codes.indexOf(code2));
-    }
-  }
+  // The shared # / TYPES OF OBSERV list: every v2 code some system fills,
+  // in canonical order (a v2 source's own order is kept).
+  const passthrough = [...columns.keys()].flatMap((sys) =>
+    obsTypes.get(sys)!.every((c) => c.length === 2) ? obsTypes.get(sys)! : []
+  );
+  const used = new Set([...columns.values()].flatMap((m) => [...m.keys()]));
+  const v2Codes = [
+    ...new Set([
+      ...passthrough,
+      ...RINEX2_CODE_ORDER.filter((c) => used.has(c)),
+      ...used,
+    ]),
+  ];
 
   const sink = createGzipLineSink();
   const BATCH = 200;
 
-  // Determine satellite system character
+  // Satellite system character
   const hasSystems = new Set<string>();
-  for (const epoch of epochs) {
-    for (const prn of epoch.sats.keys()) {
-      const sys = prn[0]!;
-      if (sys === 'G' || sys === 'R') hasSystems.add(sys);
-    }
-  }
-  const sysChar =
-    hasSystems.has('G') && hasSystems.has('R')
-      ? 'M'
-      : hasSystems.has('R')
-        ? 'R'
-        : 'G';
+  for (const epoch of epochs)
+    for (const prn of epoch.sats.keys())
+      if (columns.has(prn[0]!)) hasSystems.add(prn[0]!);
+  const sysChar = hasSystems.size === 1 ? [...hasSystems][0]! : 'M';
 
   // ── Header ──
   sink.push(
@@ -164,7 +87,7 @@ export async function writeRinex2ObsBlob(
   );
 
   sink.push(hdrLine('Converted from RINEX 3 by GNSSCalc', 'COMMENT'));
-  for (const line of stationHeaderLines(header)) sink.push(line);
+  for (const line of stationHeaderLines(header, 2)) sink.push(line);
 
   sink.push(hdrLine('     1     1', 'WAVELENGTH FACT L1/2'));
 
@@ -181,14 +104,26 @@ export async function writeRinex2ObsBlob(
     sink.push(hdrLine(content, '# / TYPES OF OBSERV'));
   }
 
-  const first = new Date(epochs[0]!.time);
-  const timeSys = sysChar === 'R' ? 'GLO' : 'GPS';
-  sink.push(
-    hdrLine(
-      `  ${first.getUTCFullYear()}    ${String(first.getUTCMonth() + 1).padStart(2)}    ${String(first.getUTCDate()).padStart(2)}    ${String(first.getUTCHours()).padStart(2)}    ${String(first.getUTCMinutes()).padStart(2)}   ${(first.getUTCSeconds() + first.getUTCMilliseconds() / 1000).toFixed(7).padStart(10)}     ${timeSys}`,
-      'TIME OF FIRST OBS'
-    )
+  const tagged = epochs.filter(
+    (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
+  const timeSys = obsTimeSystem(header);
+  const interval = modalIntervalS(tagged);
+  if (interval !== null && interval < 3600)
+    sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
+  if (tagged.length > 0) {
+    sink.push(
+      hdrLine(timeOfObs(tagged[0]!.time, timeSys), 'TIME OF FIRST OBS')
+    );
+    sink.push(
+      hdrLine(
+        timeOfObs(tagged[tagged.length - 1]!.time, timeSys),
+        'TIME OF LAST OBS'
+      )
+    );
+  }
+  for (const l of clockOffsApplLine(header, tagged)) sink.push(l);
+  for (const l of leapSecondsLine(header)) sink.push(l);
 
   sink.push(hdrLine('', 'END OF HEADER'));
   await sink.flush();
@@ -196,62 +131,56 @@ export async function writeRinex2ObsBlob(
   // ── Epoch records ──
   let epochCount = 0;
   for (const epoch of epochs) {
-    const t = new Date(epoch.time);
-    const sec = t.getUTCSeconds() + t.getUTCMilliseconds() / 1000;
+    const flag = epoch.flag ?? 0;
+    if (flag >= 2) {
+      // Event: its special records (header lines) follow verbatim.
+      const recs = epoch.records ?? [];
+      for (const l of epochLines2(epoch.time, flag, recs.length, []))
+        sink.push(l.trimEnd());
+      for (const r of recs) sink.push(r);
+      continue;
+    }
 
-    // Only GPS + GLONASS in v2
+    // Only the systems RINEX 2.11 defines
     const prns = [...epoch.sats.keys()]
-      .filter((p) => p[0] === 'G' || p[0] === 'R')
+      .filter((p) => columns.has(p[0]!))
       .sort();
     if (prns.length === 0) continue;
 
-    // Epoch header line: yy mm dd hh mm ss.sssssss  flag numSats PRN list
-    const yy = t.getUTCFullYear() % 100;
-    const yyS = padR(String(yy), 2);
-    const moS = padR(String(t.getUTCMonth() + 1), 2);
-    const ddS = padR(String(t.getUTCDate()), 2);
-    const hhS = padR(String(t.getUTCHours()), 2);
-    const mmS = padR(String(t.getUTCMinutes()), 2);
-    const secS = fmtF(sec, 11, 7);
-    const nSats = padR(String(prns.length), 3);
-    let epochLine = ` ${yyS} ${moS} ${ddS} ${hhS} ${mmS}${secS}  0${nSats}`;
-
-    // PRN list on epoch header (max 12 per line)
-    for (let i = 0; i < prns.length; i++) {
-      if (i > 0 && i % 12 === 0) {
-        sink.push(epochLine);
-        epochLine = ' '.repeat(32);
-      }
-      epochLine += prns[i]!;
-    }
-    sink.push(epochLine);
+    for (const l of epochLines2(
+      epoch.time,
+      flag,
+      prns.length,
+      prns,
+      epoch.clockOffset
+    ))
+      sink.push(l);
 
     // Observation lines (max 5 obs per line, 16 chars each)
     for (const prn of prns) {
       const sys = prn[0]!;
-      const sysCodes3 = obsTypes.get(sys) ?? [];
+      const cols = columns.get(sys)!;
       const valArr = epoch.sats.get(prn)!;
+      const lli = epoch.lli?.get(prn);
+      const ssi = epoch.ssi?.get(prn);
 
-      // Build v2 values array
       const v2Vals: number[] = new Array<number>(v2Codes.length).fill(NaN);
-      for (let j = 0; j < sysCodes3.length; j++) {
-        const v2Idx = v3ToV2Map.get(sysCodes3[j]!);
-        if (v2Idx != null && j < valArr.length && !isNaN(valArr[j]!)) {
-          v2Vals[v2Idx] = valArr[j]!;
-        }
+      const v2Lli: number[] = new Array<number>(v2Codes.length).fill(0);
+      const v2Ssi: number[] = new Array<number>(v2Codes.length).fill(0);
+      for (let k = 0; k < v2Codes.length; k++) {
+        const j = cols.get(v2Codes[k]!);
+        if (j === undefined || j >= valArr.length) continue;
+        v2Vals[k] = valArr[j]!;
+        v2Lli[k] = lli?.[j] ?? 0;
+        v2Ssi[k] = ssi?.[j] ?? 0;
       }
 
       // Write in groups of 5
       let line = '';
       for (let j = 0; j < v2Codes.length; j++) {
-        const val = v2Vals[j]!;
-        if (!isNaN(val)) {
-          line += fmtF(val, 14, 3) + '  ';
-        } else {
-          line += ' '.repeat(16);
-        }
+        line += obsField(v2Vals[j]!, v2Lli[j], v2Ssi[j]);
         if ((j + 1) % 5 === 0 || j === v2Codes.length - 1) {
-          sink.push(line);
+          sink.push(line.trimEnd());
           line = '';
         }
       }

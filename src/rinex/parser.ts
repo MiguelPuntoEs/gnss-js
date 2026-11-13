@@ -46,6 +46,44 @@ export interface RinexHeader {
   glonassSlots: Record<number, number>;
   isCrx: boolean;
   crxVersion: number;
+  /** MARKER NUMBER (A20); absent or '' when the file has none. */
+  markerNumber?: string;
+  /**
+   * Time system of every epoch in the file, from TIME OF FIRST OBS cols
+   * 49–51 (GPS, GLO = UTC(SU), GAL, QZS, BDT, IRN). '' when the record leaves
+   * it blank: the single-system default applies (RINEX 3.04 Table A2).
+   */
+  timeSystem?: string;
+  /** SIGNAL STRENGTH UNIT (RINEX 3), e.g. 'DBHZ'. */
+  signalStrengthUnit?: string;
+  /** LEAP SECONDS: the current number of leap seconds (first I6). */
+  leapSeconds?: number;
+  /** RCV CLOCK OFFS APPL: epoch, code and phase corrected by the receiver clock offset. */
+  rcvClockOffsApplied?: boolean;
+  /** SYS / PHASE SHIFT records, in file order (RINEX 3.01+). */
+  phaseShifts?: PhaseShift[];
+  /**
+   * GLONASS COD/PHS/BIS (RINEX 3.02+): signal (C1C, C1P, C2C, C2P) → code-
+   * phase bias in metres. An empty object is the blank record ("unknown").
+   */
+  glonassCodPhsBis?: Record<string, number>;
+  /**
+   * SYS / SCALE FACTOR (RINEX 3): system → obs code → factor. The parser
+   * divides the stored values by it, so callbacks see physical values.
+   */
+  scaleFactors?: Record<string, Record<string, number>>;
+}
+
+/**
+ * One SYS / PHASE SHIFT record. `code` '' is the blank record (alignment
+ * unknown); `correction` null is a reference signal (nothing applied);
+ * `sats` empty means every satellite of the system.
+ */
+export interface PhaseShift {
+  sys: string;
+  code: string;
+  correction: number | null;
+  sats: string[];
 }
 
 export interface EpochSummary {
@@ -160,6 +198,7 @@ function parseHeader(lines: string[]): RinexHeader {
   };
 
   let currentObsSys = '';
+  let lastScale: { sys: string; factor: number } | null = null;
 
   for (const raw of lines) {
     const label = raw.substring(60).trim();
@@ -183,6 +222,74 @@ function parseHeader(lines: string[]): RinexHeader {
       case 'MARKER TYPE':
         h.markerType = data.trim();
         break;
+      case 'MARKER NUMBER':
+        h.markerNumber = data.substring(0, 20).trim();
+        break;
+      case 'SIGNAL STRENGTH UNIT':
+        h.signalStrengthUnit = data.substring(0, 20).trim();
+        break;
+      case 'LEAP SECONDS': {
+        const n = parseInt(data.substring(0, 6));
+        if (!isNaN(n)) h.leapSeconds = n;
+        break;
+      }
+      case 'RCV CLOCK OFFS APPL':
+        h.rcvClockOffsApplied = parseInt(data.substring(0, 6)) === 1;
+        break;
+      case 'SYS / PHASE SHIFT': {
+        // A1,1X,A3,1X,F8.5,2X,I2.2,10(1X,A3); continuation: 18X,10(1X,A3)
+        const sys = data[0]?.trim() ?? '';
+        const list = (from: number) =>
+          data
+            .substring(from)
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .map(normalizePrn);
+        if (sys) {
+          const corr = data.substring(6, 14).trim();
+          (h.phaseShifts ??= []).push({
+            sys,
+            code: data.substring(2, 5).trim(),
+            correction: corr ? parseFloat(corr) : null,
+            sats: list(18),
+          });
+        } else if (h.phaseShifts?.length) {
+          h.phaseShifts[h.phaseShifts.length - 1]!.sats.push(...list(18));
+        }
+        break;
+      }
+      case 'GLONASS COD/PHS/BIS': {
+        // 4(1X,A3,1X,F8.3); all blank = unknown
+        const bis = (h.glonassCodPhsBis ??= {});
+        for (let i = 0; i < 4; i++) {
+          const code = data.substring(1 + 13 * i, 4 + 13 * i).trim();
+          const v = parseFloat(data.substring(5 + 13 * i, 13 + 13 * i));
+          if (code && !isNaN(v)) bis[code] = v;
+        }
+        break;
+      }
+      case 'SYS / SCALE FACTOR': {
+        // A1,1X,I4,2X,I2,12(1X,A3); continuation 10X,12(1X,A3)
+        const sys = data[0]?.trim();
+        if (sys) {
+          const factor = parseInt(data.substring(2, 6));
+          const codes = data.substring(10).trim().split(/\s+/).filter(Boolean);
+          const all = codes.length === 0 ? (h.obsTypes[sys] ?? []) : codes;
+          const m = ((h.scaleFactors ??= {})[sys] ??= {});
+          for (const c of all) m[c] = factor;
+          lastScale = { sys, factor };
+        } else if (lastScale) {
+          const m = h.scaleFactors![lastScale.sys]!;
+          for (const c of data
+            .substring(10)
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean))
+            m[c] = lastScale.factor;
+        }
+        break;
+      }
       case 'OBSERVER / AGENCY':
         h.observer = data.substring(0, 20).trim();
         h.agency = data.substring(20).trim();
@@ -223,6 +330,7 @@ function parseHeader(lines: string[]): RinexHeader {
         break;
       case 'TIME OF FIRST OBS':
         h.timeOfFirstObs = parseHeaderTime(data);
+        h.timeSystem = data.substring(48, 51).trim();
         break;
       case 'TIME OF LAST OBS':
         h.timeOfLastObs = parseHeaderTime(data);
@@ -363,6 +471,16 @@ interface EpochLineInfo {
   flag: number;
   numSats: number;
   satIds?: string[];
+  /** Receiver clock offset (s), null when the record leaves it blank. */
+  clockOffset: number | null;
+}
+
+/** Optional F15.12 / F12.9 receiver clock offset field. */
+function readClockField(s: string): number | null {
+  const t = s.trim();
+  if (!t) return null;
+  const v = parseFloat(t);
+  return isNaN(v) ? null : v;
 }
 
 /**
@@ -389,14 +507,18 @@ function parseEpochLine3(line: string): EpochLineInfo | null {
   const sc = parseFloat(line.substring(19, 29));
   const flag = parseInt(line.substring(31, 32));
   const numSats = parseInt(line.substring(32, 35));
-  if ([yr, mo, dy, hr, mn].some(isNaN) || isNaN(sc)) return null;
+  // Events without a significant epoch may leave the time blank (A3).
+  const blankTime = [yr, mo, dy, hr, mn].some(isNaN) || isNaN(sc);
+  if (blankTime && !(flag >= 2 && flag <= 5)) return null;
   const wholeSec = Math.floor(sc);
   const ms = Math.round((sc - wholeSec) * 1000);
-  const time = Date.UTC(yr, mo - 1, dy, hr, mn, wholeSec, ms);
+  const time = blankTime ? NaN : Date.UTC(yr, mo - 1, dy, hr, mn, wholeSec, ms);
   return {
     time,
     flag: isNaN(flag) ? 0 : flag,
     numSats: isNaN(numSats) ? 0 : numSats,
+    // 6X reserved, then F15.12 from column 42 (RINEX 3.04 Table A3)
+    clockOffset: readClockField(line.substring(41, 56)),
   };
 }
 
@@ -409,24 +531,33 @@ function parseEpochLine2(line: string): EpochLineInfo | null {
   const sc = parseFloat(line.substring(15, 26));
   const flag = parseInt(line.substring(28, 29));
   const numSats = parseInt(line.substring(29, 32));
-  if ([yr2, mo, dy, hr, mn].some(isNaN) || isNaN(sc)) return null;
+  const blankTime = [yr2, mo, dy, hr, mn].some(isNaN) || isNaN(sc);
+  if (blankTime && !(flag >= 2 && flag <= 5)) return null;
   const yr = yr2 >= 80 ? 1900 + yr2 : 2000 + yr2;
   const wholeSec = Math.floor(sc);
   const ms = Math.round((sc - wholeSec) * 1000);
-  const time = Date.UTC(yr, mo - 1, dy, hr, mn, wholeSec, ms);
+  const time = blankTime ? NaN : Date.UTC(yr, mo - 1, dy, hr, mn, wholeSec, ms);
 
-  const satIds: string[] = [];
-  const satPart = line.substring(32);
-  for (let i = 0; i + 3 <= satPart.length; i += 3) {
-    const id = satPart.substring(i, i + 3).trim();
-    if (id) satIds.push(id);
-  }
+  // Satellite list: 12(A1,I2) in columns 33–68 only — the receiver clock
+  // offset (F12.9) follows in columns 69–80 and is not a satellite.
   return {
     time,
     flag: isNaN(flag) ? 0 : flag,
     numSats: isNaN(numSats) ? 0 : numSats,
-    satIds,
+    satIds: v2SatList(line),
+    clockOffset: readClockField(line.substring(68, 80)),
   };
+}
+
+/** Satellite ids of a RINEX 2 epoch (or continuation) line, cols 33–68. */
+function v2SatList(line: string): string[] {
+  const ids: string[] = [];
+  const satPart = line.substring(32, 68);
+  for (let i = 0; i + 3 <= satPart.length; i += 3) {
+    const id = satPart.substring(i, i + 3);
+    if (id.trim()) ids.push(id);
+  }
+  return ids;
 }
 
 /* ================================================================== */
@@ -447,12 +578,40 @@ export type SatObsCallback = (
   prn: string,
   codes: string[],
   values: (number | null)[],
-  lli?: (number | null)[]
+  lli?: (number | null)[],
+  /** Signal strength indicator digit (1–9) per value, null where blank. */
+  ssi?: (number | null)[]
 ) => void;
+
+/**
+ * One epoch record. Observation epochs (flag 0 = OK, 1 = power failure
+ * since the previous epoch) are reported before their satellites' values;
+ * events (flag 2–5) carry their special records (header lines) verbatim and
+ * `time` NaN when the record leaves the epoch blank. Flag 6 (cycle-slip
+ * records) is skipped.
+ */
+export interface ObsEpochRecord {
+  time: number;
+  flag: number;
+  numSats: number;
+  /** Receiver clock offset (s), null when not reported. */
+  clockOffset: number | null;
+  /** Event special records (flags 2–5). */
+  records?: string[];
+}
+export type ObsEpochCallback = (epoch: ObsEpochRecord) => void;
 
 /** LLI digit after observation `index` of a data line, null if blank. */
 function readObsLli(line: string, index: number): number | null {
-  const c = line[index * 16 + 14];
+  return flagDigit(line[index * 16 + 14]);
+}
+
+/** SSI digit after observation `index` of a data line, null if blank. */
+function readObsSsi(line: string, index: number): number | null {
+  return flagDigit(line[index * 16 + 15]);
+}
+
+function flagDigit(c: string | undefined): number | null {
   if (c === undefined || c === ' ') return null;
   const d = c.charCodeAt(0) - 48;
   return d >= 0 && d <= 9 ? d : null;
@@ -471,7 +630,8 @@ export async function parseRinexStream(
   onProgress?: (percent: number) => void,
   signal?: AbortSignal,
   onSatObs?: SatObsCallback,
-  workerMode?: boolean
+  workerMode?: boolean,
+  onEpoch?: ObsEpochCallback
 ): Promise<RinexResult> {
   const skipEpochs = !!workerMode;
   const yield_ = workerMode ? noYield : yieldToMain;
@@ -493,6 +653,31 @@ export async function parseRinexStream(
   // --- RINEX (non-CRX) state ---
   let satLinesRemaining = 0;
   let eventSkipLines = 0; // lines remaining to skip for event records (flag 2-5)
+  /** The event being read (flags 2–5): its special records accumulate. */
+  let pendingEvent: ObsEpochRecord | null = null;
+  function startEvent(info: EpochLineInfo): number {
+    if (info.flag === 6) return info.numSats; // cycle-slip records: skipped
+    pendingEvent = {
+      time: info.time,
+      flag: info.flag,
+      numSats: info.numSats,
+      clockOffset: null,
+      records: [],
+    };
+    if (info.numSats === 0) endEvent();
+    return info.numSats;
+  }
+  function eventLine(line: string) {
+    if (!pendingEvent) return;
+    pendingEvent.records!.push(line);
+    if (pendingEvent.records!.length >= pendingEvent.numSats) endEvent();
+  }
+  function endEvent() {
+    if (pendingEvent) onEpoch?.(pendingEvent);
+    pendingEvent = null;
+  }
+  /** Is this an observation epoch (flag 0 OK or 1 power failure)? */
+  const isObsFlag = (f: number) => f === 0 || f === 1;
   // v2 specifics
   let v2SatIds: string[] = [];
   let v2SatIndex = 0;
@@ -577,13 +762,23 @@ export async function parseRinexStream(
     snrPerSatBandAccum = {};
   }
 
-  function resetEpochAccum(info: EpochLineInfo) {
+  function resetEpochAccum(info: EpochLineInfo, report = true) {
     epochInfo = info;
+    if (report) reportEpoch(info);
     satsPerSystem = {};
     snrValues = [];
     snrPerSystemAccum = {};
     snrPerSatAccum = {};
     snrPerSatBandAccum = {};
+  }
+
+  function reportEpoch(info: EpochLineInfo) {
+    onEpoch?.({
+      time: info.time,
+      flag: info.flag,
+      numSats: info.numSats,
+      clockOffset: info.clockOffset,
+    });
   }
 
   /* -------- RINEX 3 (non-CRX) -------- */
@@ -611,9 +806,14 @@ export async function parseRinexStream(
       // Read all values once, use for both SNR and callback
       const values: (number | null)[] = new Array(codes.length);
       const lli: (number | null)[] = new Array(codes.length);
+      const ssi: (number | null)[] = new Array(codes.length);
+      const scale = header.scaleFactors?.[sys];
       for (let i = 0; i < codes.length; i++) {
-        values[i] = readObsValue(obsLine, i);
+        const v = readObsValue(obsLine, i);
+        const f = scale?.[codes[i]!];
+        values[i] = v !== null && f ? v / f : v;
         lli[i] = readObsLli(obsLine, i);
+        ssi[i] = readObsSsi(obsLine, i);
       }
       if (!skipEpochs) {
         for (const { idx, band } of getSnrIndices(sys)) {
@@ -621,7 +821,7 @@ export async function parseRinexStream(
           if (val !== null && val > 0) pushSnr(sys, prn, val, band);
         }
       }
-      onSatObs(epochInfo.time, prn, codes, values, lli);
+      onSatObs(epochInfo.time, prn, codes, values, lli, ssi);
     } else if (!skipEpochs) {
       for (const { idx, band } of getSnrIndices(sys)) {
         const val = readObsValue(obsLine, idx);
@@ -635,6 +835,7 @@ export async function parseRinexStream(
   // v2: accumulate all obs values across continuation lines for onSatObs callback
   let v2ObsAccum: (number | null)[] = [];
   let v2LliAccum: (number | null)[] = [];
+  let v2SsiAccum: (number | null)[] = [];
 
   function processSatLineV2(line: string) {
     if (!header || v2SatIndex >= v2SatIds.length) return;
@@ -647,6 +848,7 @@ export async function parseRinexStream(
       if (onSatObs) {
         v2ObsAccum = [];
         v2LliAccum = [];
+        v2SsiAccum = [];
       }
     }
 
@@ -662,6 +864,7 @@ export async function parseRinexStream(
         if (lineOffset + i < (header.obsTypes['_v2'] ?? []).length) {
           v2ObsAccum.push(readObsValue(line, i));
           v2LliAccum.push(readObsLli(line, i));
+          v2SsiAccum.push(readObsSsi(line, i));
         }
       }
     }
@@ -669,7 +872,14 @@ export async function parseRinexStream(
     if (v2CurrentSatLine >= v2LinesPerSat) {
       if (onSatObs && epochInfo) {
         const codes = header.obsTypes['_v2'] ?? [];
-        onSatObs(epochInfo.time, prn, codes, v2ObsAccum, v2LliAccum);
+        onSatObs(
+          epochInfo.time,
+          prn,
+          codes,
+          v2ObsAccum,
+          v2LliAccum,
+          v2SsiAccum
+        );
       }
       v2CurrentSatLine = 0;
       v2SatIndex++;
@@ -727,6 +937,13 @@ export async function parseRinexStream(
           ).map((s) => [s.idx, s.band])
         );
 
+    const crxCodes =
+      header.version >= 3
+        ? (header.obsTypes[sys] ?? [])
+        : (header.obsTypes['_v2'] ?? []);
+    const crxScale =
+      header.version >= 3 ? header.scaleFactors?.[sys] : undefined;
+
     // Decompress each observation, collecting values for callback
     const obsValues: (number | null)[] = onSatObs
       ? new Array(ntype).fill(null)
@@ -744,7 +961,10 @@ export async function parseRinexStream(
       const { state, result } = crxDecompress(states[j] ?? null, field);
       states[j] = state;
 
-      if (onSatObs) obsValues[j] = result / 1000;
+      if (onSatObs) {
+        const f = crxScale?.[crxCodes[j]!];
+        obsValues[j] = f ? result / 1000 / f : result / 1000;
+      }
 
       if (sBandMap) {
         const band = sBandMap.get(j);
@@ -761,12 +981,13 @@ export async function parseRinexStream(
           ? (header.obsTypes[sys] ?? [])
           : (header.obsTypes['_v2'] ?? []);
       const lli: (number | null)[] = new Array(ntype);
+      const ssi: (number | null)[] = new Array(ntype);
       for (let j = 0; j < ntype; j++) {
-        const c = flags[2 * j];
-        const d = c === undefined ? -1 : c.charCodeAt(0) - 48;
-        lli[j] = obsValues[j] !== null && d >= 0 && d <= 9 ? d : null;
+        const has = obsValues[j] !== null;
+        lli[j] = has ? flagDigit(flags[2 * j]) : null;
+        ssi[j] = has ? flagDigit(flags[2 * j + 1]) : null;
       }
-      onSatObs(epochInfo.time, prn, codes, obsValues, lli);
+      onSatObs(epochInfo.time, prn, codes, obsValues, lli, ssi);
     }
   }
 
@@ -776,6 +997,7 @@ export async function parseRinexStream(
   let crxEpochTopFrom = '>';
   let crxEpochTopTo = '>';
   let crxEventSkipLines = 0; // lines remaining to skip for event records
+  let crxClockState: DiffState | null = null;
 
   function processCrxLine(line: string) {
     if (!header) return;
@@ -787,9 +1009,10 @@ export async function parseRinexStream(
       crxEpochTopTo = ' ';
     }
 
-    // Skip embedded header lines after event records (flag 2-5)
+    // Event special records (flags 2-5) are copied verbatim by rnx2crx
     if (crxEventSkipLines > 0) {
       crxEventSkipLines--;
+      eventLine(line);
       return;
     }
 
@@ -828,15 +1051,15 @@ export async function parseRinexStream(
           // Handle event records (flag 2-5): skip embedded header lines
           if (info.flag >= 2) {
             crxPrevEpochLine = epochLine;
-            crxEventSkipLines = info.numSats; // numSats = # of special records
+            crxEventSkipLines = startEvent(info); // # of special records
             return;
           }
-          if (info.flag !== 0) {
+          if (!isObsFlag(info.flag)) {
             crxPrevEpochLine = epochLine;
             return;
           }
 
-          resetEpochAccum(info);
+          resetEpochAccum(info, false);
 
           // Satellite list from position 41+, exactly numSats of them:
           // when an epoch has fewer satellites than the last, the repaired
@@ -863,26 +1086,53 @@ export async function parseRinexStream(
           // Handle event records (flag 2-5): skip embedded header lines
           if (info.flag >= 2) {
             crxPrevEpochLine = epochLine;
-            crxEventSkipLines = info.numSats;
+            crxEventSkipLines = startEvent(info);
             return;
           }
-          if (info.flag !== 0) {
+          if (!isObsFlag(info.flag)) {
             crxPrevEpochLine = epochLine;
             return;
           }
 
-          resetEpochAccum(info);
-          // Only numSats ids: the repaired line may keep a stale tail.
-          crxSatList = (info.satIds ?? [])
-            .slice(0, info.numSats)
-            .map(normalizePrn);
+          resetEpochAccum(info, false);
+          // rnx2crx joins the continuation lines' ids onto the epoch line
+          // (and moves the clock to its own line), so the list runs past
+          // column 68. Only numSats ids: the repaired line may keep a stale
+          // tail.
+          crxSatList = [];
+          for (let k = 0; k < info.numSats; k++)
+            crxSatList.push(
+              normalizePrn(epochLine.substring(32 + 3 * k, 35 + 3 * k))
+            );
           crxSatIndex = 0;
           crxPrevEpochLine = epochLine;
           crxPhase = 'clock';
         }
       }
     } else if (crxPhase === 'clock') {
-      // Skip clock offset line (we don't need it)
+      // Receiver clock offset: Hatanaka-differenced like the data, in units
+      // of the RINEX field's last digit (F15.12 → ps, RINEX 2 F12.9 → ns).
+      // A blank line is an epoch without one. (RINEX 4.02 appends the
+      // pico-second difference after a space; not decoded.)
+      const tok = line.split(' ')[0] ?? '';
+      if (epochInfo) {
+        if (tok) {
+          const init = tok[1] === '&';
+          const v = parseInt(init ? tok.substring(2) : tok);
+          const r = crxDecompress(crxClockState, {
+            empty: false,
+            init,
+            arcOrder: init ? parseInt(tok[0]!) : -1,
+            value: isNaN(v) ? 0 : v,
+          });
+          crxClockState = r.state;
+          epochInfo.clockOffset = r.result / (isV3 ? 1e12 : 1e9);
+        } else {
+          crxClockState = null;
+          epochInfo.clockOffset = null;
+        }
+        reportEpoch(epochInfo);
+      }
       if (crxSatList.length > 0) {
         crxPhase = 'satdata';
       } else {
@@ -905,9 +1155,10 @@ export async function parseRinexStream(
   function processRinexLine(line: string) {
     if (!header) return;
 
-    // Skip embedded header lines after event records (flag 2-5)
+    // Event special records (flags 2-5) and cycle-slip records (flag 6)
     if (eventSkipLines > 0) {
       eventSkipLines--;
+      eventLine(line);
       return;
     }
 
@@ -919,11 +1170,11 @@ export async function parseRinexStream(
       } else if (line[0] === '>') {
         const info = parseEpochLine3(line);
         if (!info) return;
-        if (info.flag >= 2 && info.flag <= 5) {
-          eventSkipLines = info.numSats;
+        if (info.flag >= 2) {
+          eventSkipLines = startEvent(info);
           return;
         }
-        if (info.flag === 0) {
+        if (isObsFlag(info.flag)) {
           resetEpochAccum(info);
           satLinesRemaining = info.numSats;
           if (info.numSats === 0) finishEpoch();
@@ -931,11 +1182,7 @@ export async function parseRinexStream(
       }
     } else {
       if (v2ContinuationSatsRemaining > 0) {
-        const satPart = line.substring(32);
-        for (let i = 0; i + 3 <= satPart.length; i += 3) {
-          const id = satPart.substring(i, i + 3).trim();
-          if (id) v2SatIds.push(id);
-        }
+        v2SatIds.push(...v2SatList(line));
         v2ContinuationSatsRemaining--;
         if (v2ContinuationSatsRemaining === 0) {
           v2SatIndex = 0;
@@ -951,10 +1198,19 @@ export async function parseRinexStream(
         const info = parseEpochLine2(line);
         if (!info) return;
         if (info.flag >= 2 && info.flag <= 5) {
-          eventSkipLines = info.numSats;
+          eventSkipLines = startEvent(info);
           return;
         }
-        if (info.flag === 0) {
+        if (info.flag === 6) {
+          // Cycle-slip records: observation layout (sat list continuation
+          // lines + data lines), skipped.
+          const nObs = (header.obsTypes['_v2'] ?? []).length;
+          eventSkipLines =
+            Math.max(0, Math.ceil((info.numSats - 12) / 12)) +
+            info.numSats * (Math.ceil(nObs / 5) || 1);
+          return;
+        }
+        if (isObsFlag(info.flag)) {
           resetEpochAccum(info);
           v2SatIds = info.satIds ?? [];
           const v2ObsPerSat = (header.obsTypes['_v2'] ?? []).length;

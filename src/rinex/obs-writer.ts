@@ -2,8 +2,9 @@
  * RINEX 3.04 / 4.01 observation file writer.
  *
  * The two formats share the same header layout and epoch record
- * encoding — only the version line and the provenance comment differ
- * (see obs-writer.test.ts, which pins this). RINEX 2.11 lives in
+ * encoding — only the version line, the provenance comment and the two
+ * records RINEX 4 deprecates (SYS / PHASE SHIFT, GLONASS COD/PHS/BIS,
+ * mandatory in 3.04) differ (see obs-writer.test.ts, which pins this). RINEX 2.11 lives in
  * obs-writer-v2.ts (different header records and epoch layout).
  *
  * Streams text through gzip compression so we never hold the full
@@ -12,8 +13,20 @@
 
 import type { RinexHeader } from './parser';
 import type { SatValues } from './epoch-sats';
+import { v2ToV3ObsCode } from './obs-codes';
 import { padL, padR, fmtF, hdrLine } from './format';
-import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
+import {
+  clockOffsApplLine,
+  createGzipLineSink,
+  epochLine3,
+  glonassCodPhsBisLine,
+  leapSecondsLine,
+  obsField,
+  obsTimeSystem,
+  phaseShiftLines,
+  timeOfObs,
+  stationHeaderLines,
+} from './obs-writer-common';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -31,6 +44,17 @@ export interface CompactEpoch {
   sats: SatValues;
   /** PRN → loss-of-lock indicator per value (0 = blank), same order. */
   lli?: Map<string, Uint8Array>;
+  /** PRN → signal strength indicator 1–9 per value (0 = blank), same order. */
+  ssi?: Map<string, Uint8Array>;
+  /**
+   * Epoch flag: 0 OK (default), 1 power failure since the previous epoch,
+   * 2–5 an event whose special records are `records` (no `sats`).
+   */
+  flag?: number;
+  /** Receiver clock offset (s) reported in the epoch record. */
+  clockOffset?: number | null;
+  /** Event special records (flags 2–5): header lines, written verbatim. */
+  records?: string[];
 }
 
 /* ================================================================== */
@@ -82,10 +106,29 @@ export function modalIntervalS(
 export async function writeModernObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
-  obsTypes: Map<string, string[]>,
+  inTypes: Map<string, string[]>,
   opts: { version: string; comment: string }
 ): Promise<Blob> {
   if (epochs.length === 0) return new Blob([], { type: 'application/gzip' });
+
+  // A RINEX 2 source's two-character codes become their RINEX 3 signals
+  // (obs-codes.ts); `cols` maps each written code to its value column.
+  const obsTypes = new Map<string, string[]>();
+  const columns = new Map<string, number[]>();
+  for (const [sys, codes] of inTypes) {
+    const out: string[] = [];
+    const cols: number[] = [];
+    codes.forEach((c, i) => {
+      const v3 = c.length === 2 ? v2ToV3ObsCode(sys, c) : c;
+      if (v3 && !out.includes(v3)) {
+        out.push(v3);
+        cols.push(i);
+      }
+    });
+    if (out.length === 0) continue;
+    obsTypes.set(sys, out);
+    columns.set(sys, cols);
+  }
 
   const sink = createGzipLineSink();
   const BATCH = 200;
@@ -112,7 +155,7 @@ export async function writeModernObsBlob(
   );
 
   sink.push(hdrLine(opts.comment, 'COMMENT'));
-  for (const line of stationHeaderLines(header)) sink.push(line);
+  for (const line of stationHeaderLines(header, 3)) sink.push(line);
 
   for (const [sys, types] of obsTypes) {
     for (let i = 0; i < types.length; i += 13) {
@@ -128,24 +171,38 @@ export async function writeModernObsBlob(
     }
   }
 
-  const timeSys = systems.includes('R') && systems.length === 1 ? 'GLO' : 'GPS';
-  const obsTimeLine = (d: Date) =>
-    `  ${d.getUTCFullYear()}    ${String(d.getUTCMonth() + 1).padStart(2)}    ${String(d.getUTCDate()).padStart(2)}    ${String(d.getUTCHours()).padStart(2)}    ${String(d.getUTCMinutes()).padStart(2)}   ${(d.getUTCSeconds() + d.getUTCMilliseconds() / 1000).toFixed(7).padStart(10)}     ${timeSys}`;
+  if (header.signalStrengthUnit)
+    sink.push(
+      hdrLine(padL(header.signalStrengthUnit, 20), 'SIGNAL STRENGTH UNIT')
+    );
 
-  sink.push(
-    hdrLine(obsTimeLine(new Date(epochs[0]!.time)), 'TIME OF FIRST OBS')
+  const timeSys = obsTimeSystem(header);
+  const tagged = epochs.filter(
+    (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
-  sink.push(
-    hdrLine(
-      obsTimeLine(new Date(epochs[epochs.length - 1]!.time)),
-      'TIME OF LAST OBS'
-    )
-  );
+  if (tagged.length > 0) {
+    sink.push(
+      hdrLine(timeOfObs(tagged[0]!.time, timeSys), 'TIME OF FIRST OBS')
+    );
+    sink.push(
+      hdrLine(
+        timeOfObs(tagged[tagged.length - 1]!.time, timeSys),
+        'TIME OF LAST OBS'
+      )
+    );
+  }
 
-  const interval = modalIntervalS(epochs);
+  const interval = modalIntervalS(tagged);
   if (interval !== null && interval < 3600) {
     sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
   }
+  for (const l of clockOffsApplLine(header, tagged)) sink.push(l);
+
+  // Mandatory in RINEX 3.01–3.05 (GLONASS COD/PHS/BIS from 3.02, for
+  // GLONASS data); RINEX 4 deprecates both: "should be ignored by RINEX
+  // decoders and encoders" (4.01 Table A2).
+  const v3 = parseFloat(opts.version) < 4;
+  if (v3) for (const l of phaseShiftLines(header, obsTypes)) sink.push(l);
 
   if (header.glonassSlots && Object.keys(header.glonassSlots).length > 0) {
     const entries = Object.entries(header.glonassSlots).sort(
@@ -155,12 +212,14 @@ export async function writeModernObsBlob(
       const chunk = entries.slice(i, i + 8);
       let content = i === 0 ? padR(String(entries.length), 3) + ' ' : '    ';
       for (const [slot, freq] of chunk) {
-        content += `R${padR(slot, 2)} ${padR(String(freq), 2)} `;
+        content += `R${slot.padStart(2, '0')} ${padR(String(freq), 2)} `;
       }
       sink.push(hdrLine(content, 'GLONASS SLOT / FRQ #'));
     }
   }
+  if (v3 && obsTypes.has('R')) sink.push(glonassCodPhsBisLine(header));
 
+  for (const l of leapSecondsLine(header)) sink.push(l);
   sink.push(hdrLine('', 'END OF HEADER'));
   await sink.flush();
 
@@ -168,31 +227,36 @@ export async function writeModernObsBlob(
 
   let epochCount = 0;
   for (const epoch of epochs) {
-    const t = new Date(epoch.time);
-    const sec = t.getUTCSeconds() + t.getUTCMilliseconds() / 1000;
-    const prns = [...epoch.sats.keys()].sort();
+    const flag = epoch.flag ?? 0;
+    if (flag >= 2) {
+      // Event: its special records (header lines) follow verbatim.
+      const recs = epoch.records ?? [];
+      sink.push(epochLine3(epoch.time, flag, recs.length));
+      for (const r of recs) sink.push(r);
+      continue;
+    }
+    // Only satellites of a declared system: the count must match the records.
+    const prns = [...epoch.sats.keys()]
+      .filter((p) => obsTypes.has(p[0]!))
+      .sort();
 
-    sink.push(
-      `> ${t.getUTCFullYear()} ${String(t.getUTCMonth() + 1).padStart(2, '0')} ${String(t.getUTCDate()).padStart(2, '0')} ${String(t.getUTCHours()).padStart(2, '0')} ${String(t.getUTCMinutes()).padStart(2, '0')}${fmtF(sec, 11, 7)}  0${padR(String(prns.length), 3)}`
-    );
+    sink.push(epochLine3(epoch.time, flag, prns.length, epoch.clockOffset));
 
     for (const prn of prns) {
       const sys = prn[0]!;
-      const sysTypes = obsTypes.get(sys);
-      if (!sysTypes) continue;
+      const cols = columns.get(sys);
+      if (!cols) continue;
 
       const valArr = epoch.sats.get(prn)!;
+      const lli = epoch.lli?.get(prn);
+      const ssi = epoch.ssi?.get(prn);
       let line = prn;
 
-      for (let i = 0; i < sysTypes.length; i++) {
+      for (const i of cols) {
         const val = i < valArr.length ? valArr[i]! : NaN;
-        if (!isNaN(val)) {
-          line += fmtF(val, 14, 3) + '  ';
-        } else {
-          line += ' '.repeat(16);
-        }
+        line += obsField(val, lli?.[i], ssi?.[i]);
       }
-      sink.push(line);
+      sink.push(line.trimEnd());
     }
 
     epochCount++;

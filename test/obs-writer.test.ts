@@ -75,14 +75,16 @@ describe('obs writers (characterization)', () => {
     ).toMatchSnapshot();
   });
 
-  it('v3 and v4 differ only in version line and comment', async () => {
+  it('v3 and v4 differ only in version line, comment and the records RINEX 4 deprecates', async () => {
     const v3 = await decode(await writeRinexObsBlob(header, epochs, obsTypes));
     const v4 = await decode(await writeRinex4ObsBlob(header, epochs, obsTypes));
-    const diff = v3
-      .split('\n')
+    const deprecated = /SYS \/ PHASE SHIFT|GLONASS COD\/PHS\/BIS/;
+    const v3kept = v3.split('\n').filter((l) => !deprecated.test(l));
+    const diff = v3kept
       .filter((line, i) => v4.split('\n')[i] !== line)
       .map((l) => l.slice(60).trim());
     expect(diff).toEqual(['RINEX VERSION / TYPE', 'COMMENT']);
+    expect(v3kept.length).toBe(v4.split('\n').length);
   });
 
   it('empty input produces an empty blob', async () => {
