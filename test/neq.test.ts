@@ -23,6 +23,7 @@ import { solveWithDatum } from '../src/analysis/neq-datum';
 import {
   NeqCombination,
   segmentsFromEvents,
+  withHelmertParameters,
   tieVelocities,
 } from '../src/analysis/neq-combination';
 import type {
@@ -671,5 +672,45 @@ describe('singular covariances', () => {
     // Information only on the X difference: N·[1,0,1,0] = 0.
     expect(q.N[0]! + q.N[2]!).toBeCloseTo(0, 0);
     expect(q.N[0]).toBeGreaterThan(1e5);
+  });
+});
+
+describe('withHelmertParameters', () => {
+  it('a second solution in a rotated/scaled frame no longer biases the stack', () => {
+    const sites = SITES.map((s) => s[0]);
+    const reg = (obs: number[][]) => {
+      // a regular NEQ: each coordinate observed with 2 mm
+      const q = freeNeq(sites, obs, XYZ, T0);
+      return constrainParameters(q, () => false, 1);
+    };
+    const n = sites.length * 3;
+    const diagNeq = (obs: readonly (readonly number[])[]) => {
+      const q = reg(obs.map((x) => [...x]));
+      const N = new Float64Array(n * n);
+      const b = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        N[i * n + i] = 1 / 0.002 ** 2;
+        b[i] =
+          N[i * n + i]! *
+          (obs[Math.floor(i / 3)]![i % 3]! - q.params[i]!.apriori);
+      }
+      return { ...q, N, b, ltpl: 0 };
+    };
+    const a = diagNeq(XYZ);
+    // Frame of b: 2 cm translation, 1 mas rotation about Z, 3 ppb scale.
+    const rz = 4.85e-9;
+    const bObs = XYZ.map((x) => [
+      x[0] * (1 + 3e-9) - rz * x[1] + 0.02,
+      x[1] * (1 + 3e-9) + rz * x[0],
+      x[2] * (1 + 3e-9),
+    ]);
+    const b = preEliminate(
+      withHelmertParameters(diagNeq(bObs), 'similarity', 'B'),
+      (p) => p.type.startsWith('HLM')
+    );
+    const sol = solveNeq(stackNeqs([a, b]));
+    sol.estimate.forEach((v, i) =>
+      expect(Math.abs(v - XYZ[Math.floor(i / 3)]![i % 3]!)).toBeLessThan(1e-6)
+    );
   });
 });
