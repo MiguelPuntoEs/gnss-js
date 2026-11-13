@@ -73,11 +73,12 @@ export function svidToPrn(svid: number): string | null {
   if (svid <= 106) return svid - 70 <= 36 ? `E${two(svid - 70)}` : null;
   if (svid <= 119) return null; // L-band (MSS) satellites
   if (svid <= 140) return `S${two(svid - 100)}`;
-  if (svid <= 180) return svid - 140 <= 50 ? `C${two(svid - 140)}` : null;
+  if (svid <= 180) return `C${two(svid - 140)}`;
   if (svid <= 190) return `J${two(svid - 180)}`;
   if (svid <= 197) return svid - 190 <= 14 ? `I${two(svid - 190)}` : null;
   if (svid <= 215) return `S${two(svid - 157)}`;
   if (svid <= 222) return svid - 208 <= 14 ? `I${two(svid - 208)}` : null;
-  if (svid <= 245) return svid - 182 <= 50 ? `C${two(svid - 182)}` : null;
+  // 223–245 = C41–C63 (the old ≤ C50 cap dropped real BDS-3 satellites).
+  if (svid <= 245) return `C${two(svid - 182)}`;
   return null;
 }
