@@ -74,3 +74,5 @@
 !/test-fixtures/state_plane_be_pl_proj.json
 !/test-fixtures/swiss_proj.json
 !/test-fixtures/iberia_ireland_proj.json
+!/test-fixtures/cod0epnfin_2024014_tro_slice.tro
+!/test-fixtures/eur0opsfin_2024014_07d_tro_slice.tro
