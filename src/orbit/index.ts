@@ -11,6 +11,7 @@ import type {
 import type { EphemerisInfo } from '../rtcm3/ephemeris';
 import { ecefToGeodetic } from '../coordinates/ecef';
 import { START_GPS_TIME } from '../constants/time';
+import { gpsFitHours, sisaMeters, uraMeters } from '../rtcm3/accuracy';
 import { OMEGA_E, OMEGA_E_BDS, C_LIGHT } from '../constants/gnss';
 import { getGpsLeap } from '../time/utc';
 import { invertMatrix } from './matrix';
@@ -705,6 +706,65 @@ const BDS_EPOCH_MS = Date.UTC(2006, 0, 1);
 // GST week numbering starts at GPS week 1024 (1999-08-22)
 const GAL_EPOCH_MS = GPS_EPOCH_MS + 1024 * MS_PER_WEEK;
 
+/**
+ * The RINEX record fields of an RTCM Keplerian ephemeris message, by
+ * system (RINEX 3.05 Tables A6/A8/A12/A14/A18 ← RTCM 10403.3 DF fields):
+ * group delays, IODC, L2 codes / P flag, fit interval, URA/SISA in
+ * metres, BeiDou AODC, Galileo data sources and SV health bits.
+ */
+function rinexFields(
+  sys: string,
+  info: EphemerisInfo
+): Partial<KeplerEphemeris> {
+  if (sys === 'G' || sys === 'J') {
+    return {
+      tgd: info.tgd ?? 0,
+      ...(info.iodc !== undefined && { iodc: info.iodc }),
+      ...(info.l2Codes !== undefined && { l2Codes: info.l2Codes }),
+      ...(info.l2PFlag !== undefined && { l2pFlag: info.l2PFlag }),
+      ...(info.fitInterval !== undefined && {
+        // QZSS RINEX keeps the flag itself (Table A12)
+        fitInterval:
+          sys === 'J' ? info.fitInterval : gpsFitHours(info.fitInterval),
+      }),
+      ...(info.ura !== undefined && { svAccuracy: uraMeters(info.ura) }),
+    };
+  }
+  if (sys === 'E') {
+    const fnav = info.messageType === 1045;
+    const h = info.health ?? 0;
+    return {
+      tgd: info.bgdE5aE1 ?? 0,
+      tgd2: info.bgdE5bE1 ?? 0,
+      // Data sources (Table A8): F/NAV E5a-I + clock for E5a,E1, or
+      // I/NAV E1-B + E5b-I + clock for E5b,E1.
+      dataSources: fnav ? 0x102 : 0x205,
+      // SV health bits: E1B DVS 0, HS 1-2; E5a DVS 3, HS 4-5; E5b DVS 6, HS 7-8
+      svHealth: fnav
+        ? ((info.e5aDataInvalid ?? 0) << 3) | (h << 4)
+        : (info.e1bDataInvalid ?? 0) |
+          ((info.e1bHealth ?? 0) << 1) |
+          ((info.e5bDataInvalid ?? 0) << 6) |
+          (h << 7),
+      ...(info.ura !== undefined && {
+        svAccuracy: sisaMeters(info.ura),
+      }),
+    };
+  }
+  if (sys === 'C') {
+    return {
+      tgd: info.tgd1 ?? 0,
+      tgd2: info.tgd2 ?? 0,
+      ...(info.aodc !== undefined && { aodc: info.aodc }),
+      ...(info.ura !== undefined && { svAccuracy: uraMeters(info.ura) }),
+    };
+  }
+  return {
+    tgd: info.tgd ?? 0,
+    ...(info.ura !== undefined && { svAccuracy: uraMeters(info.ura) }),
+  };
+}
+
 /** Convert an RTCM3 EphemerisInfo to the Ephemeris type used by orbit computation. */
 export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
   const sys = info.prn.charAt(0);
@@ -833,6 +893,7 @@ export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
     week,
     svHealth: info.health,
     tgd: 0,
+    ...rinexFields(sys, info),
   } satisfies KeplerEphemeris;
 }
 

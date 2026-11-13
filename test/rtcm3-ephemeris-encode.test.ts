@@ -19,8 +19,6 @@ const frames = new Rtcm3Decoder().decode(
 );
 const EPH_TYPES = [1019, 1020, 1042, 1044, 1045, 1046];
 const reframe = (bytes: Uint8Array) => new Rtcm3Decoder().decode(bytes)[0]!;
-/** Decoded fields that describe the message, not the reception. */
-const content = (e: EphemerisInfo) => ({ ...e, lastReceived: 0 });
 
 describe('ephemeris encoders (DLF100 bit-exact)', () => {
   it.each(EPH_TYPES)('%d re-encodes every message bit for bit', (type) => {
@@ -153,24 +151,17 @@ describe('ephemerisToInfo (receiver Ephemeris → RTCM)', () => {
     }
   );
 
-  it('carries the original message content except the fields an Ephemeris drops', () => {
-    const f = frames.find((x) => x.messageType === 1019)!;
-    const info = { ...decodeEphemeris(f)!, lastReceived: ref };
-    const rebuilt = decodeEphemeris(
-      reframe(
-        encodeEphemeris(
-          ephemerisToInfo(ephInfoToEphemeris(info)!, {
-            ura: info.ura,
-            iodc: info.iodc,
-          })
-        )!
-      )
-    )!;
-    const { l2Codes, l2PFlag, fitInterval, tgd, ...rest } = content(info);
-    void l2Codes;
-    void l2PFlag;
-    void fitInterval;
-    void tgd; // ephInfoToEphemeris drops these
-    expect(content(rebuilt)).toMatchObject(rest);
+  it('carries the original message content, every field', () => {
+    // ephInfoToEphemeris used to drop TGD, IODC, L2 codes/P flag, fit
+    // interval and URA; they are now Ephemeris (RINEX) fields.
+    for (const type of [1019, 1042, 1044, 1045, 1046]) {
+      for (const f of frames.filter((x) => x.messageType === type)) {
+        const info = { ...decodeEphemeris(f)!, lastReceived: ref };
+        const rebuilt = reframe(
+          encodeEphemeris(ephemerisToInfo(ephInfoToEphemeris(info)!))!
+        );
+        expect(rebuilt.payload, `${type} ${info.prn}`).toEqual(f.payload);
+      }
+    }
   });
 });

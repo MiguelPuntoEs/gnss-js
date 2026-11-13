@@ -12,6 +12,7 @@ import { MILLISECONDS_IN_WEEK, START_GPS_TIME } from '../constants/time';
 import type { Ephemeris, KeplerEphemeris } from '../rinex/nav';
 import type { EphemerisInfo } from './ephemeris';
 import { BitWriter, frameRtcm3 } from './writer';
+import { gpsFitFlag, sisaIndex, uraIndex } from './accuracy';
 
 const PI = Math.PI;
 
@@ -319,15 +320,19 @@ export function encodeEphemeris(info: EphemerisInfo): Uint8Array | null {
 
 /** Fields a receiver-decoded `Ephemeris` does not carry. */
 export interface EphemerisInfoExtras {
-  /** URA / SISA index. Default: 0 (GPS/QZSS/BDS/NavIC), 107 (Galileo, the value its satellites broadcast). */
+  /** URA / SISA index. Default: from `svAccuracy` (metres), else 0
+   *  (GPS/QZSS/BDS/NavIC) or 107 (Galileo, the value its satellites
+   *  broadcast). */
   ura?: number;
-  /** GPS/QZSS IODC. Default: the IODE (LNAV ties its low 8 bits to IODE). */
+  /** GPS/QZSS IODC. Default: the ephemeris' `iodc`, else the IODE (LNAV
+   *  ties its low 8 bits to IODE). */
   iodc?: number;
-  /** Galileo message: 1045 F/NAV or 1046 I/NAV (default). */
+  /** Galileo message: 1045 F/NAV or 1046 I/NAV. Default: F/NAV when
+   *  `dataSources` bit 1 is set, else I/NAV. */
   galileoType?: 1045 | 1046;
-  /** Galileo BGD E5b/E1 (s); BGD E5a/E1 is taken from `tgd`. */
+  /** Galileo BGD E5b/E1 (s). Default: `tgd2`, else `tgd` (E5a/E1). */
   bgdE5bE1?: number;
-  /** BeiDou TGD2 (s); TGD1 is taken from `tgd`. */
+  /** BeiDou TGD2 (s). Default: `tgd2`; TGD1 is `tgd`. */
   tgd2?: number;
 }
 
@@ -409,7 +414,34 @@ export function ephemerisToInfo(
 
   const k = eph as KeplerEphemeris; // R and S returned above
   const sys = k.system;
-  const galileoType = extras.galileoType ?? 1046;
+  // Galileo: F/NAV when data sources say so (RINEX bit 1), else I/NAV
+  const galileoType =
+    extras.galileoType ?? (((k.dataSources ?? 0) & 2) !== 0 ? 1045 : 1046);
+  const sv = k.svHealth;
+  const acc = k.svAccuracy;
+  const ura =
+    extras.ura ??
+    (sys === 'E'
+      ? acc !== undefined
+        ? sisaIndex(acc)
+        : 107
+      : acc !== undefined
+        ? uraIndex(acc)
+        : 0);
+  // Galileo SV health: the RINEX bit field (Table A8) when the
+  // ephemeris has data sources (RINEX / RTCM / receiver I/NAV-F/NAV),
+  // unpacked into the message's signal health + data-validity bits.
+  const galHealth =
+    sys !== 'E'
+      ? { health: sv }
+      : galileoType === 1045
+        ? { health: (sv >> 4) & 3, e5aDataInvalid: (sv >> 3) & 1 }
+        : {
+            health: (sv >> 7) & 3,
+            e5bDataInvalid: (sv >> 6) & 1,
+            e1bHealth: (sv >> 1) & 3,
+            e1bDataInvalid: sv & 1,
+          };
   return {
     ...base,
     constellation: {
@@ -420,9 +452,9 @@ export function ephemerisToInfo(
       I: 'NavIC',
     }[sys],
     messageType: sys === 'E' ? galileoType : DEFAULT_TYPE[sys]!,
-    health: k.svHealth,
+    ...galHealth,
     week: rtcmWeek(sys, k.tocDate.getTime()),
-    ura: extras.ura ?? (sys === 'E' ? 107 : 0),
+    ura,
     toc: k.toc,
     toe: k.toe,
     sqrtA: k.sqrtA,
@@ -445,12 +477,25 @@ export function ephemerisToInfo(
     af2: k.af2,
     iode: k.iode,
     ...(sys === 'G' || sys === 'J'
-      ? { iodc: extras.iodc ?? k.iode, tgd: k.tgd }
+      ? {
+          iodc: extras.iodc ?? k.iodc ?? k.iode,
+          tgd: k.tgd,
+          l2Codes: k.l2Codes ?? 0,
+          l2PFlag: k.l2pFlag ?? 0,
+          fitInterval:
+            sys === 'J' ? (k.fitInterval ?? 0) : gpsFitFlag(k.fitInterval),
+        }
       : {}),
     ...(sys === 'I' ? { tgd: k.tgd } : {}),
     ...(sys === 'E'
-      ? { bgdE5aE1: k.tgd, bgdE5bE1: extras.bgdE5bE1 ?? k.tgd }
+      ? { bgdE5aE1: k.tgd, bgdE5bE1: extras.bgdE5bE1 ?? k.tgd2 ?? k.tgd }
       : {}),
-    ...(sys === 'C' ? { tgd1: k.tgd, tgd2: extras.tgd2 ?? 0 } : {}),
+    ...(sys === 'C'
+      ? {
+          tgd1: k.tgd,
+          tgd2: extras.tgd2 ?? k.tgd2 ?? 0,
+          ...(k.aodc !== undefined && { aodc: k.aodc }),
+        }
+      : {}),
   };
 }
