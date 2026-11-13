@@ -82,7 +82,13 @@ export function keplerOrbitRows(eph: KeplerEphemeris): (number | null)[][] {
   ];
   if (gpsLike) {
     rows.push(
-      [eph.idot, eph.l2Codes ?? 0, eph.week, eph.l2pFlag ?? 0],
+      [
+        eph.idot,
+        eph.l2Codes ?? 0,
+        eph.week,
+        // QZSS: "L2P data flag set to 1" (RINEX 3.05 Table A12)
+        eph.l2pFlag ?? (sys === 'J' ? 1 : 0),
+      ],
       // IODC is not in every decoder's output; LNAV ties its 8 LSBs to
       // IODE (IS-GPS-200 20.3.4.4), the same default ephemerisToInfo uses.
       [eph.svAccuracy ?? 0, eph.svHealth, eph.tgd, eph.iodc ?? eph.iode],

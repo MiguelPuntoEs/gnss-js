@@ -74,3 +74,5 @@
 !/test-fixtures/state_plane_be_pl_proj.json
 !/test-fixtures/swiss_proj.json
 !/test-fixtures/iberia_ireland_proj.json
+# RTKLIB 2.4.2p13 convbin RINEX nav of the raw fixtures (nav oracle)
+!/test-fixtures/convbin
