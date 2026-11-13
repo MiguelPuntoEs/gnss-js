@@ -256,4 +256,33 @@ describe('solveDdNetwork (simulated network)', () => {
     expect(Math.sqrt(nt / nn)).toBeLessThan(0.05);
     expect(res.solution.sigma0).toBeGreaterThan(0);
   });
+
+  it('the NEQ plus the same datum/ZTD constraints reproduces the solution', () => {
+    const { N, b, params, sigma0Apriori: s0 } = res.neq;
+    const n = params.length;
+    const A = Float64Array.from(N);
+    params.forEach((p, i) => {
+      if (p.type === 'TROTOT') A[i * n + i]! += (s0 / 1) ** 2;
+    });
+    // No-net-translation on the a-priori (σ 0.1 mm), as solveDdNetwork does.
+    for (const t of ['STAX', 'STAY', 'STAZ']) {
+      const idx = params.flatMap((p, i) => (p.type === t ? [i] : []));
+      for (const r of idx)
+        for (const c of idx) A[r * n + c]! += (s0 / 1e-4) ** 2;
+    }
+    // Gaussian elimination.
+    const x = Float64Array.from(b);
+    for (let c = 0; c < n; c++)
+      for (let r = c + 1; r < n; r++) {
+        const f = A[r * n + c]! / A[c * n + c]!;
+        for (let k = c; k < n; k++) A[r * n + k]! -= f * A[c * n + k]!;
+        x[r]! -= f * x[c]!;
+      }
+    for (let r = n - 1; r >= 0; r--) {
+      for (let k = r + 1; k < n; k++) x[r]! -= A[r * n + k]! * x[k]!;
+      x[r]! /= A[r * n + r]!;
+    }
+    for (let i = 0; i < n; i++)
+      expect(Math.abs(x[i]! - res.solution.dx[i]!)).toBeLessThan(1e-5);
+  });
 });
