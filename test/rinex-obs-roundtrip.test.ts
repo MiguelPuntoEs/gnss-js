@@ -705,3 +705,86 @@ describe('RINEX 3.04 data section is line-identical to the source', () => {
     expect(body(ours)).toEqual(body(original));
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Convention locks                                                   */
+/* ------------------------------------------------------------------ */
+
+describe('convention locks', () => {
+  it('ANTENNA: DELTA H/E/N is [Up, East, North] in every version', async () => {
+    // RINEX 3.04 Table A2: "Antenna height: Height of the antenna reference
+    // point (ARP) above the marker" F14.4, then "Horizontal eccentricity of
+    // ARP relative to the marker (east/north)" 2F14.4. Positioning takes
+    // [E, N, U] (antDeltaEnu = [d[1], d[2], d[0]]); a swap here is the
+    // ANTEX N/E bug again.
+    const src = subset(await fixture('sur4_obs_slice.rnx'), { G: ['C1C'] });
+    src.header = { ...src.header, antDelta: [1.2345, -0.0123, 0.0456] };
+    for (const w of [W2, W3, W4, CRX(W2), CRX(W3)]) {
+      const t = await w(src);
+      const line = t
+        .split('\n')
+        .find((l) => l.includes('ANTENNA: DELTA H/E/N'))!;
+      expect(line.slice(0, 42)).toBe(
+        '        1.2345       -0.0123        0.0456'
+      );
+      const h = (await reread(t)).header;
+      expect(h.antDelta).toEqual([1.2345, -0.0123, 0.0456]);
+      const [up, east, north] = h.antDelta!;
+      expect({ up, east, north }).toEqual({
+        up: 1.2345,
+        east: -0.0123,
+        north: 0.0456,
+      });
+    }
+  });
+
+  it('APPROX POSITION XYZ is ECEF metres (SUR4 ≈ 6.36e6 m from the geocentre)', async () => {
+    const { header } = await fixture('sur4_obs_slice.rnx');
+    expect(header.approxPosition).toEqual([
+      2959057.2428, 1341058.4979, 5470426.8032,
+    ]);
+    const r = Math.hypot(...header.approxPosition!);
+    expect(r).toBeGreaterThan(6.35e6);
+    expect(r).toBeLessThan(6.39e6);
+    const back = (
+      await reread(
+        await W2(subset(await fixture('sur4_obs_slice.rnx'), { G: ['C1C'] }))
+      )
+    ).header;
+    expect(back.approxPosition).toEqual(header.approxPosition);
+  });
+
+  it('GLONASS-only file in GLO (UTC) time: tags written as given, no 18 s / 3 h shift', async () => {
+    // 3.04 section 3.1/Table A2: pure GLONASS files default to GLO = UTC(SU)
+    // aligned UTC. A writer must not move tags between time scales.
+    const sur4 = await fixture('sur4_obs_slice.rnx');
+    const glo = subset(sur4, { R: ['C1C', 'L1C'] });
+    glo.header = { ...glo.header, timeSystem: 'GLO', satSystem: 'R' };
+    for (const w of [W2, W3, W4]) {
+      const t = await w(glo);
+      const first = t.split('\n').find((l) => l.includes('TIME OF FIRST OBS'))!;
+      expect(first.slice(48, 51)).toBe('GLO');
+      const back = await reread(t);
+      expect(back.header.timeSystem).toBe('GLO');
+      expect(back.epochs.map((e) => e.time)).toEqual(
+        glo.epochs.map((e) => e.time)
+      );
+    }
+  });
+
+  it('receiver clock offset is seconds (F15.12 / F12.9), sign kept', async () => {
+    const src = subset(await fixture('sur4_obs_slice.rnx'), { G: ['C1C'] });
+    src.epochs[0]!.clockOffset = -0.000412345678;
+    const v3 = await W3(src);
+    expect(v3).toContain(
+      '> 2026 11 04 00 00  0.0000000  0 10      -0.000412345678'
+    );
+    const v2 = await W2(src);
+    expect(
+      v2
+        .split('\n')
+        .find((l) => l.startsWith(' 26 11  4  0  0'))!
+        .slice(68)
+    ).toBe('-0.000412346');
+  });
+});
