@@ -474,8 +474,8 @@ export const ATTITUDE_PARAMS = {
   bds3Window: 6.75 * DEG,
   /** QZS-1: orbit-normal when |β| < 20° (Ishijima et al. 2009). */
   qzs1OnBeta: 20 * DEG,
-  /** QZS-2 IGSO/QZO: modified yaw steering near noon/midnight (Cabinet
-   *  Office QZSS metadata); a max-rate turn here. */
+  /** QZS-2I (QZS-2, QZS-4): a max-rate turn lagging the nominal; rate
+   *  fitted to CODE's ORBEX (0.050–0.059°/s seen: 3° RMS). */
   qzs2Rate: 0.055 * DEG,
 };
 const P = ATTITUDE_PARAMS;
@@ -693,8 +693,9 @@ export function attitudeLaw(
     case 'QZS-1':
       return Math.abs(g.betaRad) < P.qzs1OnBeta ? on : nom(g);
     case 'QZS-2I':
-    case 'QZS-2A':
       return maxRateBoth(g, P.qzs2Rate);
+    // QZS-2A (QZS-3, GEO-capable bus at IGSO): CODE and GFZ both keep
+    // nominal yaw steering through |β| ≈ 4°.
     default:
       return nom(g);
   }
@@ -717,7 +718,8 @@ export interface SatAttitudeOptions {
   mode: SatAttitudeSource;
   /** Attitude quaternions consistent with the orbit/clock product. */
   orbex?: OrbexFile;
-  /** PRN → block; default the ORBEX header's types, else built-in. */
+  /** PRN → block; default the built-in table (igs20.atx), then the ORBEX
+   *  header's types for PRNs it doesn't know. */
   blocks?: SatBlockTable;
   /** Drop GPS IIA observations in shadow and for 30 min after (their yaw
    *  is poorly predictable there; Kouba 2009 recommends it). Default true. */
@@ -744,7 +746,7 @@ export function createSatAttitude(
   const table = opts.blocks ?? builtinBlockTable();
   const obxTable = opts.orbex ? blockTableFromOrbex(opts.orbex) : null;
   const blockOf = (prn: string, t: number) =>
-    obxTable?.block(prn, t) ?? table.block(prn, t);
+    table.block(prn, t) ?? obxTable?.block(prn, t) ?? null;
   const excludeIIa = opts.excludeIIaShadow ?? true;
   return {
     mode: opts.mode,
