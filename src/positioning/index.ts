@@ -743,3 +743,13 @@ export type {
   NetworkFcbSummary,
 } from './ppp-fcb';
 export * from './ocean-loading';
+export { solveDdNetwork } from './dd-network';
+export type {
+  DdStationInput,
+  DdNetworkOptions,
+  DdArOptions,
+  DdNetworkResult,
+  DdStationResult,
+  DdBaselineReport,
+  DdSolution,
+} from './dd-network';

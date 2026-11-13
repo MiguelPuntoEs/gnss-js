@@ -17,3 +17,4 @@ export * from './baseline-network';
 export * from './quantiles';
 export * from './multipath-reference';
 export * from './normal-equations';
+export * from './baseline-selection';
