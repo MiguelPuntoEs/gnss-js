@@ -459,6 +459,47 @@ describe.skipIf(!HAS_DATA)('static float PPP (ABMF)', () => {
   );
 });
 
+describe.skipIf(!HAS_DATA)('cycle-slip detection (ABMF, SP3 clocks)', () => {
+  // The time-differenced test needs a clock-free confirmation since it also
+  // sees the satellite clocks' interpolation error; slips of every kind
+  // must still be caught, (1,1) included — the wide-lane cannot see it.
+  for (const [n1, n2] of [
+    [1, 1],
+    [1, 0],
+    [3, 2],
+  ] as const)
+    it(`flags an injected (${n1},${n2}) slip`, async () => {
+      const { epochs, truth } = await load();
+      const sp3 = parseSp3(readFileSync(join(FIX, 'ESA_MGEX.sp3'), 'utf8'));
+      const t0 = epochs[0]!.timeMs;
+      const span = epochs.filter((e) => e.timeMs < t0 + 3 * 3600_000);
+      // A GPS satellite seen through the middle of the span.
+      const mid = span[Math.floor(span.length / 2)]!;
+      const prn = mid.obs.find(
+        (o) =>
+          o.prn[0] === 'G' &&
+          span.filter((e) => e.obs.some((x) => x.prn === o.prn)).length >
+            span.length * 0.8
+      )!.prn;
+      const eps = span.map((e) => ({
+        timeMs: e.timeMs,
+        obs: e.obs.map((o) =>
+          o.prn === prn && e.timeMs >= mid.timeMs
+            ? { ...o, l1: o.l1 + n1, l2: o.l2 + n2 }
+            : o
+        ),
+      }));
+      const sol = solvePpp(eps, sp3, {
+        aprioriPos: truth,
+        elevationMaskDeg: 10,
+        diagnostics: true,
+      });
+      const at = sol.series.find((s) => s.timeMs === mid.timeMs)!;
+      const d = at.diagnostics!.sats.find((x) => x.prn === prn)!;
+      expect(d.slip).toBe(true);
+    }, 60_000);
+});
+
 describe.skipIf(!HAS_DATA)('cycle-slip repair (ABMF)', () => {
   it('bridges a 60 s total outage without re-convergence (kinematic)', async () => {
     const { epochs, truth } = await load();
