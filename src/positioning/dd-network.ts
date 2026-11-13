@@ -102,14 +102,14 @@ export interface DdArOptions {
 }
 
 export interface DdNetworkOptions {
-  /** Elevation cutoff (deg). Default 10. */
+  /** Elevation cutoff (deg). Default 5 (10 doubled the height error on EPN week 2297; 3 is worse with Niell). */
   elevationMaskDeg?: number;
   /** Observation sampling of the adjustment (s); pre-processing uses
    *  every epoch. Default 30. */
   sampleS?: number;
   /** Zero-difference iono-free phase σ at zenith (m); also σ₀. Default 0.003. */
   phaseSigmaM?: number;
-  /** ZTD node spacing (h), piecewise linear. Default 2. */
+  /** ZTD node spacing (h), piecewise linear. Default 1 (as EUREF). */
   ztdIntervalH?: number;
   /** Estimate N/E troposphere gradients. Default true. */
   gradients?: boolean;
@@ -142,7 +142,7 @@ export interface DdNetworkOptions {
   /** Solve-time a-priori σ on ZTD nodes and gradients (m). Defaults 1 / 0.01. */
   constraints?: { ztdSigmaM?: number; gradientSigmaM?: number };
   /** Residual screening: reject |v| > k·σ̂ (per baseline). Default 4;
-   *  `iterations` re-solves. Default 2. */
+   *  `iterations` re-solves. Default 3. */
   screening?: { k?: number; iterations?: number };
 }
 
@@ -343,6 +343,10 @@ function modelStation(
     mwMean: number;
     mwM2: number;
     gf: { t: number; v: number }[];
+    /** Running mean square of the geometry-free prediction error (m²):
+     *  the threshold follows the arc's own noise (low elevations,
+     *  scintillation at high latitude) instead of a fixed 4 cm. */
+    gfMs: number;
     startT: number;
   }
   const tracks = new Map<string, Track>();
@@ -467,8 +471,17 @@ function modelStation(
           // one point: only gross jumps — the MW test carries a fresh arc).
           const pred = polyPredict(h, t, h.length >= 5 ? 2 : h.length - 1);
           const gapMin = (t - tk.lastT) / 60_000;
-          const thr = h.length === 1 ? 1 : 0.04 + 0.01 * gapMin;
-          if (Math.abs(gf - pred) > thr) slip = true;
+          const thr =
+            h.length === 1
+              ? 1
+              : Math.min(
+                  0.15,
+                  Math.max(0.04, 5 * Math.sqrt(tk.gfMs)) + 0.01 * gapMin
+                );
+          const err = gf - pred;
+          if (Math.abs(err) > thr) slip = true;
+          else if (h.length >= 3)
+            tk.gfMs += (Math.min(err * err, thr * thr) - tk.gfMs) / 20;
           if (slip) slips++;
         }
         if (slip) {
@@ -484,6 +497,7 @@ function modelStation(
             mwMean: 0,
             mwM2: 0,
             gf: [],
+            gfMs: tk?.gfMs ?? 0.01 ** 2,
             startT: t,
           };
           arcSpan.push({ startT: t, endT: t, n: 0 });
@@ -1268,7 +1282,7 @@ export function solveDdNetwork(
     tic = now;
   };
   const o = {
-    elevationMaskDeg: 10,
+    elevationMaskDeg: 5,
     systems: 'GE',
     maxGapS: 180,
     minArcS: 600,
@@ -1302,7 +1316,7 @@ export function solveDdNetwork(
       tMin = Math.min(tMin, s.times[0]!);
       tMax = Math.max(tMax, s.times.at(-1)!);
     }
-  const ztdDtMs = (opts.ztdIntervalH ?? 2) * 3_600_000;
+  const ztdDtMs = (opts.ztdIntervalH ?? 1) * 3_600_000;
   const t0 = Math.floor(tMin / ztdDtMs) * ztdDtMs;
   const nZtd = Math.max(2, Math.ceil((tMax - t0) / ztdDtMs) + 1);
   const useGrad = opts.gradients ?? true;
@@ -1372,7 +1386,7 @@ export function solveDdNetwork(
   // 4–5. Float network with residual screening.
   const G = st.length * L.nb;
   const k = opts.screening?.k ?? 4;
-  const iters = opts.screening?.iterations ?? 2;
+  const iters = opts.screening?.iterations ?? 3;
   let locals: LocalNeq[] = [];
   let net!: NetNeq;
   let sol!: Solved;
