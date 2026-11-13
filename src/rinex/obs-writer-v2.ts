@@ -8,7 +8,11 @@
 import type { RinexHeader } from './parser';
 import type { CompactEpoch } from './obs-writer';
 import { padL, padR, fmtF, hdrLine } from './format';
-import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
+import {
+  createGzipLineSink,
+  obsField,
+  stationHeaderLines,
+} from './obs-writer-common';
 
 /* ── RINEX 3 → 2 code mapping ──────────────────────────────────── */
 
@@ -231,27 +235,25 @@ export async function writeRinex2ObsBlob(
       const sys = prn[0]!;
       const sysCodes3 = obsTypes.get(sys) ?? [];
       const valArr = epoch.sats.get(prn)!;
+      const lli = epoch.lli?.get(prn);
 
       // Build v2 values array
       const v2Vals: number[] = new Array<number>(v2Codes.length).fill(NaN);
+      const v2Lli: number[] = new Array<number>(v2Codes.length).fill(0);
       for (let j = 0; j < sysCodes3.length; j++) {
         const v2Idx = v3ToV2Map.get(sysCodes3[j]!);
         if (v2Idx != null && j < valArr.length && !isNaN(valArr[j]!)) {
           v2Vals[v2Idx] = valArr[j]!;
+          v2Lli[v2Idx] = lli?.[j] ?? 0;
         }
       }
 
       // Write in groups of 5
       let line = '';
       for (let j = 0; j < v2Codes.length; j++) {
-        const val = v2Vals[j]!;
-        if (!isNaN(val)) {
-          line += fmtF(val, 14, 3) + '  ';
-        } else {
-          line += ' '.repeat(16);
-        }
+        line += obsField(v2Vals[j]!, v2Lli[j]);
         if ((j + 1) % 5 === 0 || j === v2Codes.length - 1) {
-          sink.push(line);
+          sink.push(line.trimEnd());
           line = '';
         }
       }

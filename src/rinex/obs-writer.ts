@@ -13,7 +13,11 @@
 import type { RinexHeader } from './parser';
 import type { SatValues } from './epoch-sats';
 import { padL, padR, fmtF, hdrLine } from './format';
-import { createGzipLineSink, stationHeaderLines } from './obs-writer-common';
+import {
+  createGzipLineSink,
+  obsField,
+  stationHeaderLines,
+} from './obs-writer-common';
 
 /* ================================================================== */
 /*  Types                                                              */
@@ -193,17 +197,14 @@ export async function writeModernObsBlob(
       if (!sysTypes) continue;
 
       const valArr = epoch.sats.get(prn)!;
+      const lli = epoch.lli?.get(prn);
       let line = prn;
 
       for (let i = 0; i < sysTypes.length; i++) {
         const val = i < valArr.length ? valArr[i]! : NaN;
-        if (!isNaN(val)) {
-          line += fmtF(val, 14, 3) + '  ';
-        } else {
-          line += ' '.repeat(16);
-        }
+        line += obsField(val, lli?.[i]);
       }
-      sink.push(line);
+      sink.push(line.trimEnd());
     }
 
     epochCount++;

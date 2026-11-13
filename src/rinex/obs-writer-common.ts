@@ -83,3 +83,18 @@ export function stationHeaderLines(header: RinexHeader): string[] {
     ),
   ];
 }
+
+/**
+ * One observation field: F14.3 value, then the loss-of-lock indicator
+ * (I1, column 15) and the signal strength indicator (I1, column 16), blank
+ * when 0 or absent — RINEX 2.11 Table A2, 3.04/4.01 Table A3. A missing
+ * value is 16 blanks.
+ */
+export function obsField(val: number, lli = 0, ssi = 0): string {
+  if (Number.isNaN(val)) return ' '.repeat(16);
+  return (
+    fmtF(val, 14, 3) +
+    (lli ? String(lli % 10) : ' ') +
+    (ssi ? String(ssi % 10) : ' ')
+  );
+}
