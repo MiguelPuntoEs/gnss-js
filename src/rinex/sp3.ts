@@ -31,7 +31,9 @@ export interface Sp3File {
   satellites: Record<string, (Sp3Sample | null)[]>;
 }
 
-const BAD_CLOCK = 999999.999999;
+/** Bad/absent clock: "the six integer nines are required, whereas the
+ *  fractional part nines are optional" (SP3-c/-d), so ≥ 999999 is bad. */
+const BAD_CLOCK = 999999;
 
 export function parseSp3(text: string): Sp3File {
   const lines = text.split('\n');
