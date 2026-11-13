@@ -77,3 +77,23 @@
 !/test-fixtures/clk304_example_a17_1.clk
 !/test-fixtures/clk304_example_a17_2.clk
 !/test-fixtures/clk304_example_a18.clk
+# Bias-SINEX writer round trip: header blocks + every Galileo C1C–C5Q DSB
+# + 4 records of each other group of ESA's rolling ESA0OPSFIN_DCB.BIA
+# (fetched 2026-11-13, header count set to the slice's 93), and the first
+# 30 s of CNES PPP-Wizard post_2024001 GBM0MGXRAP…_ABS.BIA (G+E OSBs).
+!/test-fixtures/esa_dcb_slice.bia
+!/test-fixtures/cnes_osb_slice.bia
+# BLQ round trip + HARDISP oracle: header + ONSA/REYK/WTZR of the Onsala
+# FES2004 BLQ in DSOlab/iers2010 data/NTUA.BLQ.
+!/test-fixtures/ntua_blq_slice.blq
+# ERP version 2 round trip: IGS final (week 2390), ESA final (2025/299),
+# CODE MGEX 3-day com22370 — whole files from BKG / ESA navigation office.
+!/test-fixtures/IGS0OPSFIN_20252990000_07D_01D_ERP.ERP
+!/test-fixtures/ESA0OPSFIN_20252990000_01D_01D_ERP.ERP
+!/test-fixtures/com22370.erp
+# RINEX met round trip: header + first records of EUREF met files from
+# BKG (EUREF/obs): BORJ 2015/100 (2.11), BORJ/TUBO/TUC2 2025/299 (3.0x).
+!/test-fixtures/borj_met_v211_slice.15m
+!/test-fixtures/borj_met_v305_slice.rnx
+!/test-fixtures/tubo_met_v303_slice.rnx
+!/test-fixtures/tuc2_met_v305_slice.rnx
