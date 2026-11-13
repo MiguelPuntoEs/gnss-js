@@ -7,10 +7,13 @@
 
 import type { RinexHeader } from './parser';
 import type { CompactEpoch } from './obs-writer';
-import { padL, padR, hdrLine } from './format';
+import { padL, padR, fmtF, hdrLine } from './format';
+import { modalIntervalS } from './obs-writer';
 import {
+  clockOffsApplLine,
   createGzipLineSink,
   epochLines2,
+  leapSecondsLine,
   obsField,
   obsTimeSystem,
   timeOfObs,
@@ -171,7 +174,7 @@ export async function writeRinex2ObsBlob(
   );
 
   sink.push(hdrLine('Converted from RINEX 3 by GNSSCalc', 'COMMENT'));
-  for (const line of stationHeaderLines(header)) sink.push(line);
+  for (const line of stationHeaderLines(header, 2)) sink.push(line);
 
   sink.push(hdrLine('     1     1', 'WAVELENGTH FACT L1/2'));
 
@@ -192,10 +195,22 @@ export async function writeRinex2ObsBlob(
     (e) => !Number.isNaN(e.time) && (e.flag ?? 0) < 2
   );
   const timeSys = obsTimeSystem(header, [...hasSystems]);
-  if (tagged.length > 0)
+  const interval = modalIntervalS(tagged);
+  if (interval !== null && interval < 3600)
+    sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
+  if (tagged.length > 0) {
     sink.push(
       hdrLine(timeOfObs(tagged[0]!.time, timeSys), 'TIME OF FIRST OBS')
     );
+    sink.push(
+      hdrLine(
+        timeOfObs(tagged[tagged.length - 1]!.time, timeSys),
+        'TIME OF LAST OBS'
+      )
+    );
+  }
+  for (const l of clockOffsApplLine(header, tagged)) sink.push(l);
+  for (const l of leapSecondsLine(header)) sink.push(l);
 
   sink.push(hdrLine('', 'END OF HEADER'));
   await sink.flush();

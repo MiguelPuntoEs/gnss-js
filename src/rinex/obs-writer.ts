@@ -14,8 +14,10 @@ import type { RinexHeader } from './parser';
 import type { SatValues } from './epoch-sats';
 import { padL, padR, fmtF, hdrLine } from './format';
 import {
+  clockOffsApplLine,
   createGzipLineSink,
   epochLine3,
+  leapSecondsLine,
   obsField,
   obsTimeSystem,
   timeOfObs,
@@ -130,7 +132,7 @@ export async function writeModernObsBlob(
   );
 
   sink.push(hdrLine(opts.comment, 'COMMENT'));
-  for (const line of stationHeaderLines(header)) sink.push(line);
+  for (const line of stationHeaderLines(header, 3)) sink.push(line);
 
   for (const [sys, types] of obsTypes) {
     for (let i = 0; i < types.length; i += 13) {
@@ -145,6 +147,11 @@ export async function writeModernObsBlob(
       sink.push(hdrLine(content, 'SYS / # / OBS TYPES'));
     }
   }
+
+  if (header.signalStrengthUnit)
+    sink.push(
+      hdrLine(padL(header.signalStrengthUnit, 20), 'SIGNAL STRENGTH UNIT')
+    );
 
   const timeSys = obsTimeSystem(header, systems);
   const tagged = epochs.filter(
@@ -162,10 +169,11 @@ export async function writeModernObsBlob(
     );
   }
 
-  const interval = modalIntervalS(epochs);
+  const interval = modalIntervalS(tagged);
   if (interval !== null && interval < 3600) {
     sink.push(hdrLine(fmtF(interval, 10, 3), 'INTERVAL'));
   }
+  for (const l of clockOffsApplLine(header, tagged)) sink.push(l);
 
   if (header.glonassSlots && Object.keys(header.glonassSlots).length > 0) {
     const entries = Object.entries(header.glonassSlots).sort(
@@ -181,6 +189,7 @@ export async function writeModernObsBlob(
     }
   }
 
+  for (const l of leapSecondsLine(header)) sink.push(l);
   sink.push(hdrLine('', 'END OF HEADER'));
   await sink.flush();
 

@@ -13,7 +13,9 @@ OBSERVER            AGENCY                                  OBSERVER / AGENCY
         0.1000        0.0200        0.0030                  ANTENNA: DELTA H/E/N
      1     1                                                WAVELENGTH FACT L1/2
      3    C1    L1    S1                                    # / TYPES OF OBSERV 
+    30.000                                                  INTERVAL            
   2024     1     1    10     0    0.0000000     GPS         TIME OF FIRST OBS   
+  2024     1     1    10     0   30.0000000     GPS         TIME OF LAST OBS    
                                                             END OF HEADER       
  24  1  1 10  0  0.0000000  0  3G01G07R05
   20000123.456   105123456.789          45.200

@@ -52,15 +52,19 @@ export function createGzipLineSink() {
 }
 
 /**
- * Station / receiver / antenna header block — byte-identical across
- * RINEX 2.11, 3.04, and 4.01.
+ * Station / receiver / antenna header block, shared by RINEX 2.11, 3.04 and
+ * 4.01. MARKER TYPE exists from RINEX 3 (`version` ≥ 3) and is written when
+ * known (Table A2: required except for GEODETIC / NON_GEODETIC markers).
  */
-export function stationHeaderLines(header: RinexHeader): string[] {
+export function stationHeaderLines(header: RinexHeader, version = 3): string[] {
   const pos = header.approxPosition ?? [0, 0, 0];
   const delta = header.antDelta ?? [0, 0, 0];
   return [
     hdrLine(header.markerName || 'UNKNOWN', 'MARKER NAME'),
-    hdrLine('', 'MARKER NUMBER'),
+    hdrLine(padL(header.markerNumber ?? '', 20), 'MARKER NUMBER'),
+    ...(version >= 3 && header.markerType
+      ? [hdrLine(padL(header.markerType, 20), 'MARKER TYPE')]
+      : []),
     hdrLine(
       `${padL(header.observer || '', 20)}${padL(header.agency || '', 40)}`,
       'OBSERVER / AGENCY'
@@ -90,6 +94,31 @@ export function stationHeaderLines(header: RinexHeader): string[] {
  * when 0 or absent — RINEX 2.11 Table A2, 3.04/4.01 Table A3. A missing
  * value is 16 blanks.
  */
+/**
+ * Optional header records after the time-of-observation block, in Table A2
+ * order: RCV CLOCK OFFS APPL (required when epochs report clock offsets).
+ */
+export function clockOffsApplLine(
+  header: RinexHeader,
+  epochs: readonly { clockOffset?: number | null }[]
+): string[] {
+  const reported = epochs.some((e) => e.clockOffset != null);
+  if (header.rcvClockOffsApplied === undefined && !reported) return [];
+  return [
+    hdrLine(
+      padR(header.rcvClockOffsApplied ? '1' : '0', 6),
+      'RCV CLOCK OFFS APPL'
+    ),
+  ];
+}
+
+/** LEAP SECONDS (current number, I6) when known. */
+export function leapSecondsLine(header: RinexHeader): string[] {
+  return header.leapSeconds === undefined
+    ? []
+    : [hdrLine(padR(String(header.leapSeconds), 6), 'LEAP SECONDS')];
+}
+
 export function obsField(val: number, lli = 0, ssi = 0): string {
   if (Number.isNaN(val)) return ' '.repeat(16);
   return (

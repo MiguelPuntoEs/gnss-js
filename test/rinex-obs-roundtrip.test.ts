@@ -251,3 +251,53 @@ describe('TIME OF FIRST OBS time system (RINEX 3.04 Table A2)', () => {
     expect(firstObs(await W2({ ...d, header })).slice(48, 51)).toBe('GAL');
   });
 });
+
+describe('station header records survive every writer', () => {
+  // SUR4's header (RINEX 3.04 Table A2 records) with a marker type set;
+  // MARKER TYPE and SIGNAL STRENGTH UNIT do not exist in RINEX 2.11.
+  for (const [name, w, v3] of [
+    ['RINEX 3.04', W3, true],
+    ['RINEX 4.01', W4, true],
+    ['RINEX 2.11', W2, false],
+    ['CRINEX 3.0', CRX(W3), true],
+    ['CRINEX 1.0', CRX(W2), false],
+  ] as const) {
+    it(name, async () => {
+      const sur4 = await fixture('sur4_obs_slice.rnx');
+      const src = subset(sur4, { G: ['C1C', 'L1C'] });
+      src.header = { ...src.header, markerType: 'GEODETIC' };
+      src.epochs[1]!.clockOffset = 0.000000123;
+      const h = (await reread(await w(src))).header;
+      const pick = (x: typeof h) => ({
+        markerName: x.markerName,
+        markerNumber: x.markerNumber,
+        observer: x.observer,
+        agency: x.agency,
+        receiverNumber: x.receiverNumber,
+        receiverType: x.receiverType,
+        receiverVersion: x.receiverVersion,
+        antNumber: x.antNumber,
+        antType: x.antType,
+        approxPosition: x.approxPosition,
+        antDelta: x.antDelta,
+        interval: x.interval,
+        timeOfFirstObs: x.timeOfFirstObs,
+        timeSystem: x.timeSystem,
+        leapSeconds: x.leapSeconds,
+        rcvClockOffsApplied: x.rcvClockOffsApplied,
+        ...(v3
+          ? {
+              markerType: x.markerType,
+              signalStrengthUnit: x.signalStrengthUnit,
+            }
+          : {}),
+      });
+      expect(pick(h)).toEqual(pick(src.header));
+      // The slice ends before the day the source header states.
+      expect(h.timeOfLastObs!.getTime()).toBe(src.epochs.at(-1)!.time);
+      expect(h.markerNumber).toBe('10601M002');
+      expect(h.leapSeconds).toBe(18);
+      if (v3) expect(h.markerType).toBe('GEODETIC');
+    });
+  }
+});
