@@ -236,22 +236,25 @@ export async function writeRinex2ObsBlob(
       const sysCodes3 = obsTypes.get(sys) ?? [];
       const valArr = epoch.sats.get(prn)!;
       const lli = epoch.lli?.get(prn);
+      const ssi = epoch.ssi?.get(prn);
 
       // Build v2 values array
       const v2Vals: number[] = new Array<number>(v2Codes.length).fill(NaN);
       const v2Lli: number[] = new Array<number>(v2Codes.length).fill(0);
+      const v2Ssi: number[] = new Array<number>(v2Codes.length).fill(0);
       for (let j = 0; j < sysCodes3.length; j++) {
         const v2Idx = v3ToV2Map.get(sysCodes3[j]!);
         if (v2Idx != null && j < valArr.length && !isNaN(valArr[j]!)) {
           v2Vals[v2Idx] = valArr[j]!;
           v2Lli[v2Idx] = lli?.[j] ?? 0;
+          v2Ssi[v2Idx] = ssi?.[j] ?? 0;
         }
       }
 
       // Write in groups of 5
       let line = '';
       for (let j = 0; j < v2Codes.length; j++) {
-        line += obsField(v2Vals[j]!, v2Lli[j]);
+        line += obsField(v2Vals[j]!, v2Lli[j], v2Ssi[j]);
         if ((j + 1) % 5 === 0 || j === v2Codes.length - 1) {
           sink.push(line.trimEnd());
           line = '';

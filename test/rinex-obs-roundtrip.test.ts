@@ -135,3 +135,26 @@ describe('LLI survives every writer', () => {
     });
   }
 });
+
+describe('signal strength indicator survives every writer', () => {
+  // SSI is column 16 of each field (1–9, RINEX 3.04 Table A3). SUR4's Leica
+  // GR50 maps its C/N0 into it (header COMMENT: "< 12dBHz -> 1 …").
+  for (const [name, w] of [
+    ['RINEX 3.04', W3],
+    ['RINEX 4.01', W4],
+    ['RINEX 2.11', W2],
+    ['CRINEX 3.0', CRX(W3)],
+    ['CRINEX 1.0', CRX(W2)],
+  ] as const) {
+    it(name, async () => {
+      const src = subset(await fixture('sur4_obs_slice.rnx'), {
+        G: ['C1C', 'L1C', 'C2W', 'L2W', 'S1C'],
+      });
+      const out = await reread(await w(src));
+      expect(flagCount(src.epochs, 'ssi')).toBeGreaterThan(50);
+      expect(plain(out.epochs).map((e) => e.sats.map((s) => s[3]))).toEqual(
+        plain(src.epochs).map((e) => e.sats.map((s) => s[3]))
+      );
+    });
+  }
+});

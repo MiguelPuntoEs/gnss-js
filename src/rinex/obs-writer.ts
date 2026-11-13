@@ -198,11 +198,12 @@ export async function writeModernObsBlob(
 
       const valArr = epoch.sats.get(prn)!;
       const lli = epoch.lli?.get(prn);
+      const ssi = epoch.ssi?.get(prn);
       let line = prn;
 
       for (let i = 0; i < sysTypes.length; i++) {
         const val = i < valArr.length ? valArr[i]! : NaN;
-        line += obsField(val, lli?.[i]);
+        line += obsField(val, lli?.[i], ssi?.[i]);
       }
       sink.push(line.trimEnd());
     }
