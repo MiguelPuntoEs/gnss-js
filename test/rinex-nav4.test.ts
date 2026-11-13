@@ -36,8 +36,10 @@ function expectSameRecords(
   b: readonly (Ephemeris | RinexCnavEphemeris)[]
 ) {
   expect(b.length).toBe(a.length);
+  // Galileo I/NAV and F/NAV sets share PRN and epoch: the data-sources
+  // field tells them apart (FNAV records are written before INAV).
   const keyOf = (e: Ephemeris | RinexCnavEphemeris) =>
-    `${e.prn}_${e.tocDate.getTime()}`;
+    `${e.prn}_${e.tocDate.getTime()}_${'dataSources' in e ? e.dataSources : ''}`;
   const sa = [...a].sort((x, y) => keyOf(x).localeCompare(keyOf(y)));
   const sb = [...b].sort((x, y) => keyOf(x).localeCompare(keyOf(y)));
   for (let i = 0; i < sa.length; i++) {
@@ -233,6 +235,23 @@ describe('writeRinexNav4', () => {
     expect(out).toContain('> EPH E03 INAV');
     expect(out).toContain('> EPH C06 D1');
     expect(out).toContain('> EPH S36 SBAS');
+  });
+
+  it('labels Galileo F/NAV records FNAV (data sources bit 1)', () => {
+    // brdc_v4_dlr.nav "> EPH E02 FNAV": data sources 2.580000000000e+02
+    // = bits 1 (F/NAV E5a-I) + 8 (af0-af2 for E5a,E1). Labelling it
+    // INAV told readers it was the E5b,E1 clock set.
+    const e = parsed.ephemerides.find((x) => x.system === 'E')!;
+    const nav: NavResult = {
+      header: parsed.header,
+      ephemerides: [
+        { ...e, dataSources: 258 } as Ephemeris,
+        { ...e, dataSources: 517, prn: 'E05' } as Ephemeris,
+      ],
+    };
+    const out = writeRinexNav4(nav);
+    expect(out).toContain(`> EPH ${e.prn} FNAV`);
+    expect(out).toContain('> EPH E05 INAV');
   });
 
   it('writes BDS GEO satellites as D2', () => {

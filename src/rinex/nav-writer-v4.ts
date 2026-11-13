@@ -82,14 +82,16 @@ const BDS_GEO = new Set([
 
 /**
  * RINEX 4 navigation message label for a classic ephemeris (Table 20).
- * Galileo is labelled INAV: the parsed KeplerEphemeris does not retain
- * the data-source flags, and the INAV/FNAV record layouts are
- * identical, so INAV is used as the generic label.
+ * Galileo: FNAV when the data-sources field says F/NAV E5a-I (bit 1;
+ * RINEX 3.05 Table A8), else INAV — the layouts are identical but the
+ * clock set and BGD validity differ.
  */
 function msgLabel(eph: Ephemeris): string {
   switch (eph.system) {
     case 'E':
-      return 'INAV';
+      return (((eph as KeplerEphemeris).dataSources ?? 0) & 2) !== 0
+        ? 'FNAV'
+        : 'INAV';
     case 'C':
       return BDS_GEO.has(eph.prn) ? 'D2' : 'D1';
     case 'R':
