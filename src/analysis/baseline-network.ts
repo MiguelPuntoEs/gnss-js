@@ -1,6 +1,6 @@
 /**
- * Least-squares adjustment of a GNSS baseline network — what Bernese and
- * survey software do with one session's static baselines: the free points'
+ * Least-squares adjustment of a GNSS baseline network — what network
+ * adjustment and survey software do with one session's static baselines: the free points'
  * coordinates from every baseline at once, with their covariance, the
  * a-posteriori variance factor and its χ² test, Baarda's w-test on every
  * baseline component (data snooping: the worst failing baseline is dropped
