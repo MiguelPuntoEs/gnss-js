@@ -106,6 +106,14 @@ export interface PppOptions {
    *  `{ C: { phase: 2 } }` to down-weight a constellation whose orbits and
    *  clocks are less accurate. Default 1 for every system. */
   systemSigmaScale?: Record<string, { code?: number; phase?: number }>;
+  /**
+   * Elevation-dependent observation weighting (the variance at zenith ×
+   * f(elevation)). 'sin2' (default): σ²/sin²e with sin e floored at 0.1
+   * (≈5.7°) — the usual 1/cos²z weighting, flattened below ~6°.
+   * 'sin2-full': σ²/sin²e down to the cut-off (cos²z exactly).
+   * 'sin': σ²/sin e (milder). 'rtklib': σ²(1 + 1/sin²e)/2.
+   */
+  elevationWeighting?: PppElevationWeighting;
   /** Wet-troposphere random-walk process noise (m²/epoch). Default 1e-8. */
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
@@ -207,6 +215,26 @@ export interface PppOptions {
          *  `ar.position` is null. Default 0.03. */
         maxFloatGapM?: number;
       };
+}
+
+export type PppElevationWeighting = 'sin2' | 'sin2-full' | 'sin' | 'rtklib';
+
+/** Variance factor (relative to zenith) of an observation at elevation `el`. */
+export function elevationVarianceFactor(
+  el: number,
+  w: PppElevationWeighting = 'sin2'
+): number {
+  const s = Math.max(Math.sin(el), 0.01);
+  switch (w) {
+    case 'sin2-full':
+      return 1 / (s * s);
+    case 'sin':
+      return 1 / s;
+    case 'rtklib':
+      return (1 + 1 / (s * s)) / 2;
+    default:
+      return 1 / Math.max(s, 0.1) ** 2;
+  }
 }
 
 /** A troposphere model the PPP engine can use (structurally the
@@ -1561,7 +1589,7 @@ export class PppEngine {
       const ci = clockOf(v.prn[0]!);
       const common =
         rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
-      const sinEl = Math.max(Math.sin(v.elRad), 0.1);
+      const wEl = elevationVarianceFactor(v.elRad, opts.elevationWeighting);
       const h = new Array<number>(x.length).fill(0);
       h[IDX_X] = -v.e[0];
       h[IDX_Y] = -v.e[1];
@@ -1577,16 +1605,17 @@ export class PppEngine {
       const kC = opts.systemSigmaScale?.[v.prn[0]!]?.code ?? 1;
       if (
         Math.abs(innov) < 1e6 &&
-        ekfUpdateScalar(x, P, h, innov, ((kC * codeSigma) / sinEl) ** 2, 4)
+        ekfUpdateScalar(x, P, h, innov, (kC * codeSigma) ** 2 * wEl, 4)
       )
         codeUsed.add(v.prn);
     };
 
     const phaseUpdate = (v: Vis, ai: number): void => {
       const ci = clockOf(v.prn[0]!);
-      const sinEl = Math.max(Math.sin(v.elRad), 0.1);
       const kP = opts.systemSigmaScale?.[v.prn[0]!]?.phase ?? 1;
-      const rPhase = ((kP * phaseSigma) / sinEl) ** 2;
+      const rPhase =
+        (kP * phaseSigma) ** 2 *
+        elevationVarianceFactor(v.elRad, opts.elevationWeighting);
       const commonPh =
         rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       const innov = v.lIf - (commonPh + v.windupM + x[ai]!);

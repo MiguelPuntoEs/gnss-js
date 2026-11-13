@@ -40,6 +40,37 @@ describe.skipIf(!HAS_GRID)('GPT3 (5° grid)', () => {
     ? parseGpt3Grid(readFileSync(join(FIX, 'gpt3_5.grd'), 'utf8'))
     : null!;
 
+  it('matches TU Wien gpt3_5_fast.py to 1e-10', () => {
+    // [MJD, lat°, lon°, h (m), p (hPa), e (hPa), ah, aw, Gn_h (m)] from
+    // vmf.geo.tuwien.ac.at/codes/Python_Tools_Adavi/gpt3_5_fast.py.
+    const REF = [
+      [
+        60323.0, 49.144, 12.879, 666, 943.204320634429, 4.30756032066748,
+        0.00120730081274304, 0.000526572240536587, -0.0002546530771665,
+      ],
+      [
+        60323.25, -33.9, 18.4, 50, 1011.62676638869, 17.1256539104264,
+        0.00126396701736688, 0.000537285046475919, 0.000228027134161268,
+      ],
+      [
+        60450.5, 0.3, -78.5, 2800, 735.74988294577, 10.1237476689715,
+        0.00127538335587018, 0.000623416055605011, 6.8053385024691e-6,
+      ],
+      [
+        60600.75, 0.3, -78.5, 2800, 735.206107729953, 9.7320552688718,
+        0.00127499011381588, 0.000616063851382941, 9.61480422062451e-6,
+      ],
+    ] as const;
+    for (const [mjd, lat, lon, h, p, e, ah, aw, gn] of REF) {
+      const r = gpt3(grid, (mjd - 40587) * 86_400_000, lat * deg, lon * deg, h);
+      expect(r.p).toBeCloseTo(p, 9);
+      expect(r.e).toBeCloseTo(e, 9);
+      expect(r.ah).toBeCloseTo(ah, 15);
+      expect(r.aw).toBeCloseTo(aw, 15);
+      expect(r.Gn_h).toBeCloseTo(gn, 15);
+    }
+  });
+
   it('gives Wettzell a plausible climate', () => {
     const jan = gpt3(grid, Date.UTC(2024, 0, 15), LAT, LON, H);
     const jul = gpt3(grid, Date.UTC(2024, 6, 15), LAT, LON, H);
