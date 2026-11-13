@@ -583,6 +583,8 @@ interface SatState {
   y: number;
   z: number;
   clkM: number; // c·(dt_sat + relativistic), metres
+  /** ECEF velocity at emission (m/s), for the attitude models. */
+  vel?: [number, number, number];
 }
 
 /** Rotate an ECEF vector by Earth rotation during signal travel (Sagnac). */
@@ -641,6 +643,7 @@ function satStateAtEmission(
         y: pos[1],
         z: pos[2],
         clkM: C_LIGHT * (s.clkS + relS),
+        vel: [s.vx, s.vy, s.vz],
       },
       travelS,
     };
@@ -651,12 +654,14 @@ function satStateAtEmission(
   let sz = 0;
   let clkS: number | null = null;
   let velDotPos = 0;
+  let vel: [number, number, number] | undefined;
   for (let iter = 0; iter < 3; iter++) {
     const tEmit = recvTimeMs - travelS * 1000;
     const s = source.satState(prn, tEmit);
     if (!s) return null;
     // r·v (un-rotated) for the periodic relativistic term.
     velDotPos = s.x * s.vx + s.y * s.vy + s.z * s.vz;
+    vel = [s.vx, s.vy, s.vz];
     clkS = s.clkS;
     const [rx, ry, rz] = sagnacRotate(s.x, s.y, s.z, travelS);
     sx = rx;
@@ -672,7 +677,7 @@ function satStateAtEmission(
   // Periodic relativistic correction −2·(r·v)/c²  (seconds).
   const relS = (-2 * velDotPos) / (C_LIGHT * C_LIGHT);
   const clkM = C_LIGHT * (clkS + relS);
-  return { state: { x: sx, y: sy, z: sz, clkM }, travelS };
+  return { state: { x: sx, y: sy, z: sz, clkM, vel }, travelS };
 }
 
 /* ================================================================== */
@@ -1275,6 +1280,7 @@ export class PppEngine {
       const geom: SatGeom = {
         prn: o.prn,
         satEcef: [sat.state.x, sat.state.y, sat.state.z],
+        ...(sat.state.vel ? { satVel: sat.state.vel } : {}),
         rcvEcef: rcv,
         los: e,
         elRad,
@@ -1288,6 +1294,8 @@ export class PppEngine {
       const corr = corrections
         ? applyCorrections(corrections, geom, epochCtx)
         : { rangeM: 0, phaseWindupM: 0 };
+      // Attitude models: e.g. GPS IIA in shadow + 30 min (unpredictable yaw).
+      if (corr.exclude) continue;
 
       vis.push({
         prn: o.prn,

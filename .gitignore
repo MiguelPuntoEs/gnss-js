@@ -107,3 +107,5 @@
 # RTKLIB 2.4.2p13 convbin RINEX nav of the raw fixtures (nav oracle)
 !/test-fixtures/convbin
 !/test-fixtures/eur2297_neq_6sta.json
+!/test-fixtures/attitude_samples.json
+!/test-fixtures/attitude_*.obx
