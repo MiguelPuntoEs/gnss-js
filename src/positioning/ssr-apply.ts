@@ -99,11 +99,14 @@ export function applyOrbitClock(
   const p: [number, number, number] = [s.x, s.y, s.z];
   const v: [number, number, number] = [s.vx, s.vy, s.vz];
 
-  // Satellite RAC unit vectors: radial (out), cross-track (orbit normal),
-  // along-track (= cross × radial, ~velocity direction).
-  const er = unit(p);
+  // Satellite RAC unit vectors, from the broadcast ECEF position + velocity
+  // (HAS SIS ICD §7.2 Eq. 18–20; RTCM 10403.3 eq. 3.12-2…4): along = the
+  // velocity direction, cross = r × v, radial = along × cross. Not r̂: RTCM's
+  // note 188 warns it differs by the flight-path angle (~e rad, ≈ 4° on a
+  // QZSS IGSO orbit).
+  const ea = unit(v);
   const en = unit(cross(p, v));
-  const ea = cross(en, er);
+  const er = cross(ea, en);
 
   const dr = corr.radial + (corr.dotRadial ?? 0) * age;
   const da = corr.along + (corr.dotAlong ?? 0) * age;

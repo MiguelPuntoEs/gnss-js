@@ -199,3 +199,43 @@ describe('hasToOrbitClock', () => {
     expect(c.clockC0).toBe(0);
   });
 });
+
+describe('applyOrbitClock RAC frame on an eccentric orbit', () => {
+  // RTCM 10403.3 eq. 3.12-2…4 and HAS SIS ICD §7.2 eq. 18–20: e_along =
+  // ṙ/|ṙ|, e_cross = r×ṙ/|r×ṙ|, e_radial = e_along × e_cross — not r̂
+  // (RTCM note 188). QZSS-IGSO-like e = 0.075 makes the two differ by ~4°,
+  // so a pure along-track correction must move the satellite along ṙ.
+  const ecc: KeplerEphemeris = { ...eph, e: 0.075, m0: 1.2, omega: -1.6 };
+  const unitV = (a: number[]) => {
+    const n = Math.hypot(a[0]!, a[1]!, a[2]!);
+    return a.map((x) => x / n);
+  };
+  const crossV = (a: number[], b: number[]) => [
+    a[1]! * b[2]! - a[2]! * b[1]!,
+    a[2]! * b[0]! - a[0]! * b[2]!,
+    a[0]! * b[1]! - a[1]! * b[0]!,
+  ];
+  const shiftOf = (c: Partial<OrbitClockCorrection>) => {
+    const b = computeSatPosition(ecc, T0);
+    const o = applyOrbitClock(ecc, baseCorr(c), T0)!;
+    return { s: [o.x - b.x, o.y - b.y, o.z - b.z], b };
+  };
+
+  it('along = velocity, cross = r × v, radial = along × cross', () => {
+    const { s: sa, b } = shiftOf({ along: 1 });
+    const { s: sc } = shiftOf({ cross: 1 });
+    const { s: sr } = shiftOf({ radial: 1 });
+    const ea = unitV([b.vx, b.vy, b.vz]);
+    const ec = unitV(crossV([b.x, b.y, b.z], [b.vx, b.vy, b.vz]));
+    const er = crossV(ea, ec);
+    for (let k = 0; k < 3; k++) {
+      expect(sa[k]!).toBeCloseTo(ea[k]!, 6);
+      expect(sc[k]!).toBeCloseTo(ec[k]!, 6);
+      expect(sr[k]!).toBeCloseTo(er[k]!, 6);
+    }
+    // ...and that radial is measurably not r̂ on this orbit (> 1°).
+    const rh = unitV([b.x, b.y, b.z]);
+    const cosAng = er[0]! * rh[0]! + er[1]! * rh[1]! + er[2]! * rh[2]!;
+    expect(Math.acos(Math.min(1, cosAng))).toBeGreaterThan(Math.PI / 180);
+  });
+});
