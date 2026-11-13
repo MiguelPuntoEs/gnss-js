@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { selectBaselines } from '../src/analysis/baseline-selection';
-import { solveDdNetwork } from '../src/positioning/dd-network';
+import {
+  prepareDdStation,
+  solveDdNetwork,
+} from '../src/positioning/dd-network';
 import type {
   PppEpoch,
   PppEphemerisSource,
@@ -284,5 +287,19 @@ describe('solveDdNetwork (simulated network)', () => {
     }
     for (let i = 0; i < n; i++)
       expect(Math.abs(x[i]! - res.solution.dx[i]!)).toBeLessThan(1e-5);
+  });
+
+  it('prepared stations (raw observations released) give the same solution', () => {
+    const opts = {
+      systems: 'G',
+      ztdIntervalH: 1,
+      gradients: false,
+      elevationMaskDeg: 10,
+      ar: { minArcS: 1200 },
+    };
+    const prepared = inputs.map((s) => prepareDdStation(s, source, opts));
+    const again = solveDdNetwork(prepared, source, opts);
+    for (let i = 0; i < res.solution.dx.length; i++)
+      expect(again.solution.dx[i]).toBeCloseTo(res.solution.dx[i]!, 9);
   });
 });

@@ -211,30 +211,49 @@ export interface DdNetworkResult {
 /*  Zero-difference modelling + pre-processing                         */
 /* ================================================================== */
 
-interface Zd {
-  arc: number;
-  prn: string;
-  f1: number;
-  f2: number;
-  omcP: number;
-  mw: number;
-  el: number;
-  e: V3;
-  mwet: number;
-  mgN: number;
-  mgE: number;
-}
+/** Satellite id → small integer (system × 100 + number), so the zero
+ *  differences pack into typed arrays and sort by satellite. */
+const SYS_CODES = 'GERCJIS';
+const satIndex = (prn: string) =>
+  SYS_CODES.indexOf(prn[0]!) * 100 + Number(prn.slice(1));
+const satPrn = (i: number) =>
+  SYS_CODES[Math.floor(i / 100)]! + String(i % 100).padStart(2, '0');
 
+/** Number of float32 geometry values per zero difference:
+ *  elevation, LOS (3), wet mapping, gradient partials N/E. */
+const NGEO = 7;
+
+/**
+ * One station's modelled, pre-processed zero differences — packed into
+ * typed arrays (about 60 bytes per observation), so a 40-station day fits
+ * in a few hundred MB and the raw observations can be released as soon as
+ * a station is modelled ({@link prepareDdStation}).
+ */
 interface StationZd {
   id: string;
   apriori: V3;
-  times: number[];
-  obs: Map<string, Zd>[];
+  times: Float64Array;
   timeIndex: Map<number, number>;
+  /** Observations of epoch i: [start[i], start[i+1]), sorted by satellite. */
+  start: Int32Array;
+  sat: Int16Array;
+  arc: Int32Array;
+  omcP: Float64Array;
+  mw: Float64Array;
+  geo: Float32Array;
+  /** Carrier frequencies per satellite index. */
+  freq: Map<number, [number, number]>;
   zhdZenith: (tMs: number) => number;
   arcs: number;
   slips: number;
   codeOutliers: number;
+}
+
+/** A station modelled by {@link prepareDdStation}, ready for the network. */
+export interface DdStationData {
+  readonly id: string;
+  /** Opaque: the packed zero differences. */
+  readonly zd: unknown;
 }
 
 const gradientMapping = (el: number) =>
@@ -354,7 +373,13 @@ function modelStation(
   let slips = 0;
   let codeOutliers = 0;
   const times: number[] = [];
-  const obs: Map<string, Zd>[] = [];
+  const start: number[] = [];
+  const cSat: number[] = [];
+  const cArc: number[] = [];
+  const cOmc: number[] = [];
+  const cMw: number[] = [];
+  const cGeo: number[] = [];
+  const freq = new Map<number, [number, number]>();
 
   for (const ep of st.epochs) {
     const t = ep.timeMs;
@@ -440,7 +465,13 @@ function modelStation(
     }
     // Code clock synchronisation: the epoch's receiver clock is the median
     // code residual; code outliers (> 30 m from it) are dropped.
-    const map = new Map<string, Zd>();
+    const epochObs: {
+      sat: number;
+      arc: number;
+      omc: number;
+      mw: number;
+      geo: number[];
+    }[] = [];
     if (cands.length >= 2) {
       const clk = median(cands.map((c) => c.omcC));
       for (const c of cands) {
@@ -515,43 +546,89 @@ function modelStation(
         arcSpan[tk!.arc]!.n++;
         const g = (r.f1 * r.f1) / (r.f1 * r.f1 - r.f2 * r.f2);
         const lIf = c.lIfRaw - (g * lam1 * tk!.o1 - (g - 1) * lam2 * tk!.o2);
-        map.set(r.prn, {
+        const si = satIndex(r.prn);
+        if (!freq.has(si)) freq.set(si, [r.f1, r.f2]);
+        epochObs.push({
+          sat: si,
           arc: tk!.arc,
-          prn: r.prn,
-          f1: r.f1,
-          f2: r.f2,
-          omcP: lIf - c.modelP,
+          omc: lIf - c.modelP,
           mw,
-          el: c.el,
-          e: c.e,
-          mwet: c.mwet,
-          mgN: c.mgN,
-          mgE: c.mgE,
+          geo: [c.el, ...c.e, c.mwet, c.mgN, c.mgE],
         });
       }
     }
+    epochObs.sort((a, b) => a.sat - b.sat);
     times.push(t);
-    obs.push(map);
+    start.push(cSat.length);
+    for (const z of epochObs) {
+      cSat.push(z.sat);
+      cArc.push(z.arc);
+      cOmc.push(z.omc);
+      cMw.push(z.mw);
+      cGeo.push(...z.geo);
+    }
   }
-  // Drop short arcs.
-  const short = new Set<number>();
-  arcSpan.forEach((a, i) => {
-    if (a.endT - a.startT < o.minArcS * 1000 || a.n < 10) short.add(i);
-  });
-  for (const m of obs)
-    for (const [prn, z] of m) if (short.has(z.arc)) m.delete(prn);
-  const zenith = (tMs: number) => tropo(tMs, Math.PI / 2, 0).zhd;
-  return {
+  start.push(cSat.length);
+  // Drop short arcs while packing.
+  const short = arcSpan.map(
+    (a) => a.endT - a.startT < o.minArcS * 1000 || a.n < 10
+  );
+  const keep = cArc.map((a) => !short[a]);
+  const nKeep = keep.filter(Boolean).length;
+  const zd: StationZd = {
     id: st.id,
     apriori: rcv,
-    times,
-    obs,
+    times: Float64Array.from(times),
     timeIndex: new Map(times.map((t, i) => [t, i])),
-    zhdZenith: zenith,
-    arcs: arcSpan.length - short.size,
+    start: new Int32Array(times.length + 1),
+    sat: new Int16Array(nKeep),
+    arc: new Int32Array(nKeep),
+    omcP: new Float64Array(nKeep),
+    mw: new Float64Array(nKeep),
+    geo: new Float32Array(nKeep * NGEO),
+    freq,
+    zhdZenith: (tMs: number) => tropo(tMs, Math.PI / 2, 0).zhd,
+    arcs: short.filter((x) => !x).length,
     slips,
     codeOutliers,
   };
+  let k = 0;
+  for (let i = 0; i < times.length; i++) {
+    zd.start[i] = k;
+    for (let j = start[i]!; j < start[i + 1]!; j++) {
+      if (!keep[j]) continue;
+      zd.sat[k] = cSat[j]!;
+      zd.arc[k] = cArc[j]!;
+      zd.omcP[k] = cOmc[j]!;
+      zd.mw[k] = cMw[j]!;
+      for (let g = 0; g < NGEO; g++) zd.geo[k * NGEO + g] = cGeo[j * NGEO + g]!;
+      k++;
+    }
+  }
+  zd.start[times.length] = k;
+  return zd;
+}
+
+/** Merge-join two stations' observations of one common epoch: calls
+ *  `f(ka, kb)` for every satellite both observed. */
+function forCommon(
+  A: StationZd,
+  i: number,
+  B: StationZd,
+  j: number,
+  f: (ka: number, kb: number) => void
+): void {
+  let ka = A.start[i]!;
+  let kb = B.start[j]!;
+  const ea = A.start[i + 1]!;
+  const eb = B.start[j + 1]!;
+  while (ka < ea && kb < eb) {
+    const sa = A.sat[ka]!;
+    const sb = B.sat[kb]!;
+    if (sa === sb) f(ka++, kb++);
+    else if (sa < sb) ka++;
+    else kb++;
+  }
 }
 
 /* ================================================================== */
@@ -605,7 +682,7 @@ function buildBaseline(
   sigma0: number,
   sigma: number
 ): Baseline {
-  const ambKey = new Map<string, number>();
+  const ambKey = new Map<number, number>();
   const ambs: AmbInfo[] = [];
   const ep: number[] = [];
   const amb: number[] = [];
@@ -617,22 +694,19 @@ function buildBaseline(
     const t = A.times[i]!;
     const j = B.timeIndex.get(t);
     if (j === undefined) continue;
-    const ma = A.obs[i]!;
-    const mb = B.obs[j]!;
     const sampled = Math.round(t / 1000) % Math.round(sampleMs / 1000) === 0;
     let eIdx = -1;
-    for (const [prn, za] of ma) {
-      const zb = mb.get(prn);
-      if (!zb) continue;
-      const key = `${za.arc}|${zb.arc}`;
+    forCommon(A, i, B, j, (ka, kb) => {
+      const key = A.arc[ka]! * 1e6 + B.arc[kb]!;
       let k = ambKey.get(key);
       if (k === undefined) {
         k = ambs.length;
         ambKey.set(key, k);
+        const [f1, f2] = A.freq.get(A.sat[ka]!)!;
         ambs.push({
-          prn,
-          f1: za.f1,
-          f2: za.f2,
+          prn: satPrn(A.sat[ka]!),
+          f1,
+          f2,
           nObs: 0,
           mwN: 0,
           mwSum: 0,
@@ -642,12 +716,12 @@ function buildBaseline(
         });
       }
       const a = ambs[k]!;
-      const mw = za.mw - zb.mw;
+      const mw = A.mw[ka]! - B.mw[kb]!;
       a.mwN++;
       a.mwSum += mw;
       a.mwSq += mw * mw;
       a.endT = t;
-      if (!sampled) continue;
+      if (!sampled) return;
       if (eIdx < 0) {
         eIdx = epTimes.length;
         epTimes.push(t);
@@ -655,21 +729,28 @@ function buildBaseline(
       a.nObs++;
       ep.push(eIdx);
       amb.push(k);
-      y.push(za.omcP - zb.omcP);
+      y.push(A.omcP[ka]! - B.omcP[kb]!);
+      const ga = ka * NGEO;
+      const gb = kb * NGEO;
       const var_ =
-        sigma ** 2 * (1 / Math.sin(za.el) ** 2 + 1 / Math.sin(zb.el) ** 2);
+        sigma ** 2 *
+        (1 / Math.sin(A.geo[ga]!) ** 2 + 1 / Math.sin(B.geo[gb]!) ** 2);
       w.push(sigma0 ** 2 / var_);
       part.push(
-        ...za.e,
-        ...zb.e,
-        za.mwet,
-        zb.mwet,
-        za.mgN,
-        za.mgE,
-        zb.mgN,
-        zb.mgE
+        A.geo[ga + 1]!,
+        A.geo[ga + 2]!,
+        A.geo[ga + 3]!,
+        B.geo[gb + 1]!,
+        B.geo[gb + 2]!,
+        B.geo[gb + 3]!,
+        A.geo[ga + 4]!,
+        B.geo[gb + 4]!,
+        A.geo[ga + 5]!,
+        A.geo[ga + 6]!,
+        B.geo[gb + 5]!,
+        B.geo[gb + 6]!
       );
-    }
+    });
   }
   const ra = A.apriori;
   const rb = B.apriori;
@@ -1264,13 +1345,34 @@ function resolveBaseline(
 /*  Main entry                                                         */
 /* ================================================================== */
 
+const withDefaults = (opts: DdNetworkOptions) => ({
+  elevationMaskDeg: 5,
+  systems: 'GE',
+  maxGapS: 180,
+  minArcS: 600,
+  ...opts,
+});
+
+/**
+ * Model and pre-process one station ahead of {@link solveDdNetwork} (same
+ * `source` and options), so its raw observations can be released before the
+ * next station is read — what keeps a 40-station day small.
+ */
+export function prepareDdStation(
+  input: DdStationInput,
+  source: PppEphemerisSource,
+  opts: DdNetworkOptions = {}
+): DdStationData {
+  return { id: input.id, zd: modelStation(input, source, withDefaults(opts)) };
+}
+
 /**
  * Solve a network of stations from double-differenced carrier phase.
  * `source` is one precise orbit/clock source shared by every station
  * (e.g. `new Sp3EphemerisSource(sp3)`).
  */
 export function solveDdNetwork(
-  inputs: readonly DdStationInput[],
+  inputs: readonly (DdStationInput | DdStationData)[],
   source: PppEphemerisSource,
   opts: DdNetworkOptions = {}
 ): DdNetworkResult {
@@ -1281,13 +1383,7 @@ export function solveDdNetwork(
     timings[k] = (timings[k] ?? 0) + (now - tic);
     tic = now;
   };
-  const o = {
-    elevationMaskDeg: 5,
-    systems: 'GE',
-    maxGapS: 180,
-    minArcS: 600,
-    ...opts,
-  };
+  const o = withDefaults(opts);
   const sigma0 = opts.phaseSigmaM ?? 0.003;
   const sampleMs = (opts.sampleS ?? 30) * 1000;
   const arOpt: Required<DdArOptions> | null =
@@ -1305,7 +1401,9 @@ export function solveDdNetwork(
         };
 
   // 1–2. Zero differences + pre-processing.
-  const st = inputs.map((s) => modelStation(s, source, o));
+  const st = inputs.map((s) =>
+    'zd' in s ? (s.zd as StationZd) : modelStation(s, source, o)
+  );
   lap('model');
 
   // Parameter layout: a common ZTD / gradient node grid.
@@ -1345,8 +1443,7 @@ export function solveDdNetwork(
       if (Math.round(t / 1000) % Math.round(sampleMs / 1000)) continue;
       const j = B.timeIndex.get(t);
       if (j === undefined) continue;
-      const mb = B.obs[j]!;
-      for (const p of A.obs[i]!.keys()) if (mb.has(p)) n++;
+      forCommon(A, i, B, j, () => n++);
     }
     return n;
   };
