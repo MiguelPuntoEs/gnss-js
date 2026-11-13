@@ -284,6 +284,9 @@ function vmf3bc(
   };
 }
 
+let bcKey = '';
+let bcVal: ReturnType<typeof vmf3bc> | null = null;
+
 const marini = (sinEl: number, a: number, b: number, c: number) =>
   (1 + a / (1 + b / (1 + c))) / (sinEl + a / (sinEl + b / (sinEl + c)));
 
@@ -301,7 +304,14 @@ export function vmf3(
   hEll: number,
   elRad: number
 ): { mfh: number; mfw: number } {
-  const { bh, bw, ch, cw } = vmf3bc(utcMs, latRad, lonRad);
+  // b and c change with the season only: evaluate the degree-12 expansion
+  // once per station and hour (it is ~40× the cost of the rest).
+  const key = `${Math.floor(utcMs / 3_600_000)}|${latRad}|${lonRad}`;
+  if (key !== bcKey) {
+    bcVal = vmf3bc(utcMs, latRad, lonRad);
+    bcKey = key;
+  }
+  const { bh, bw, ch, cw } = bcVal!;
   const sinEl = Math.sin(elRad);
   const mfh0 = marini(sinEl, ah, bh, ch);
   const mfw = marini(sinEl, aw, bw, cw);
@@ -346,7 +356,14 @@ export interface TroposphereModel {
  * GPT3 + VMF3 troposphere for PPP. GPT3 is evaluated once per station-day
  * position and cached (it changes slowly).
  */
-export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
+export function createGpt3Troposphere(
+  grid: Gpt3Grid,
+  opts: {
+    /** Add GPT3's a-priori horizontal gradients. Default true. */
+    gradients?: boolean;
+  } = {}
+): TroposphereModel {
+  const withGradients = opts.gradients ?? true;
   let cacheKey = '';
   let cached: Gpt3Result | null = null;
   return {
@@ -363,10 +380,11 @@ export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
       // Chen & Herring (1997) gradient mapping.
       const sinEl = Math.sin(elRad);
       const mg = 1 / (sinEl * Math.tan(elRad) + 0.0032);
-      const gradient =
-        mg *
-        ((g.Gn_h + g.Gn_w) * Math.cos(azRad) +
-          (g.Ge_h + g.Ge_w) * Math.sin(azRad));
+      const gradient = !withGradients
+        ? 0
+        : mg *
+          ((g.Gn_h + g.Gn_w) * Math.cos(azRad) +
+            (g.Ge_h + g.Ge_w) * Math.sin(azRad));
       return {
         zhd: saastamoinenZhd(g.p, latRad, hEll),
         mh: mfh,
@@ -376,3 +394,4 @@ export function createGpt3Troposphere(grid: Gpt3Grid): TroposphereModel {
     },
   };
 }
+export * from './vmf3-grid';

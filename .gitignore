@@ -74,3 +74,7 @@
 !/test-fixtures/state_plane_be_pl_proj.json
 !/test-fixtures/swiss_proj.json
 !/test-fixtures/iberia_ireland_proj.json
+!/test-fixtures/vmf3_1x1_20240114_H00_europe.txt
+!/test-fixtures/vmf3_1x1_20240114_H06_europe.txt
+!/test-fixtures/vmf3_orography_ell_1x1_europe.txt
+!/test-fixtures/vmf3_sitewise_2024014_slice.vmf3_g
