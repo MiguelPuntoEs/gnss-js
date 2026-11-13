@@ -11,7 +11,7 @@ import type {
   KeplerEphemeris,
 } from '../src/rinex/nav';
 import { satClockCorrection } from '../src/positioning';
-import { parseNavFile } from '../src/rinex/nav';
+import { gloFrameTimeOfWeek, parseNavFile } from '../src/rinex/nav';
 import { navSecondsOfWeek } from '../src/navbits/index';
 import {
   encodeEphemeris,
@@ -135,6 +135,40 @@ describe('BeiDou epochs are on the BDT clock face (RINEX 3.05 Table A14)', () =>
 });
 
 describe('GLONASS message frame time (RINEX 3.05 Table A10)', () => {
+  it.skipIf(!hasFixture('brdc_v2_glo.nav'))(
+    'RINEX 2 t_k (seconds of day) is read as seconds of the UTC week',
+    () => {
+      // brdc_v2_glo.nav: " 1 26  1  1  2 45  0.0 … 0.900000000000D+04":
+      // R01 at 02:45 UTC Thursday, frame 02:30 of the day (2.11 Table
+      // A11). RINEX 3/4 and every decoder hold tk + nd·86400 in seconds
+      // of the week: 4·86400 + 9000. Kept raw, a 2.11 → 3.04 conversion
+      // wrote 9000 into the 3.04 field ("Sunday 02:30").
+      const nav = parseNavFile(readText('brdc_v2_glo.nav'));
+      const r01 = nav.ephemerides.find(
+        (e) =>
+          e.prn === 'R01' && e.tocDate.getTime() === Date.UTC(2026, 0, 1, 2, 45)
+      ) as GlonassEphemeris;
+      expect(r01.messageFrameTime).toBe(354600);
+      // Same record in the RINEX 3.04 IGS file of the same day
+      if (hasFixture('brdc_v3_igs.nav')) {
+        const v3 = parseNavFile(readText('brdc_v3_igs.nav'));
+        const same = v3.ephemerides.find(
+          (e) =>
+            e.prn === 'R01' && e.tocDate.getTime() === r01.tocDate.getTime()
+        ) as GlonassEphemeris;
+        expect(same.messageFrameTime).toBe(354600);
+      }
+      // A frame of the previous UTC day: epoch 00:15, t_k 23:45 → Wed
+      expect(gloFrameTimeOfWeek(Date.UTC(2026, 0, 1, 0, 15), 85500)).toBe(
+        3 * 86400 + 85500
+      );
+      // … and across the week boundary: Sun 00:15, t_k Sat 23:45
+      expect(gloFrameTimeOfWeek(Date.UTC(2026, 0, 4, 0, 15), 85500)).toBe(
+        6 * 86400 + 85500
+      );
+    }
+  );
+
   it('RTCM 1020 tk becomes the UTC seconds-of-week frame time', () => {
     // RTKLIB 2.4.2p13 convbin: R 3 2026 11  6  9 15  0 … .465240000000E+06
     // = Friday 09:14:00 UTC (tk), 60 s before tb.

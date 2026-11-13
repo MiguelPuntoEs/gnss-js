@@ -110,7 +110,9 @@ export interface GlonassEphemeris {
   tauN: number;
   /** Relative frequency bias (dimensionless). */
   gammaN: number;
-  /** Message frame time (seconds of UTC day). */
+  /** Message frame time t_k + nd·86400, seconds of the UTC week (RINEX
+   *  3/4; RINEX 2's seconds of the day are converted on reading). SBAS:
+   *  transmission time, seconds of the GPS week. */
   messageFrameTime: number;
   /** X position in km (PZ-90). */
   x: number;
@@ -425,6 +427,20 @@ function buildStateVectorEphemeris(
     zDot: d[9] ?? 0,
     zAcc: d[10] ?? 0,
   };
+}
+
+/**
+ * GLONASS message frame time in seconds of the UTC week (the RINEX 3/4
+ * field) from the frame's UTC time of day `tk` (the RINEX 2 field):
+ * tk + nd·86400, on the day of the ephemeris epoch unless that puts the
+ * frame more than 12 h from it (frames precede tb by minutes).
+ */
+export function gloFrameTimeOfWeek(tocDateMs: number, tk: number): number {
+  const tocSow = navSecondsOfWeek(tocDateMs);
+  let tof = tocSow - (tocSow % 86400) + tk;
+  if (tof - tocSow > 43200) tof -= 86400;
+  else if (tocSow - tof > 43200) tof += 86400;
+  return ((tof % SEC_PER_WEEK) + SEC_PER_WEEK) % SEC_PER_WEEK;
 }
 
 /**
@@ -855,9 +871,21 @@ export function parseNavFile(text: string): NavResult {
 
     if (dataLines.length === numDataLines) {
       if (sys === 'R' || sys === 'S') {
-        ephemerides.push(
-          buildStateVectorEphemeris(sys, prn, date, epochVals, dataLines)
+        const eph = buildStateVectorEphemeris(
+          sys,
+          prn,
+          date,
+          epochVals,
+          dataLines
         );
+        // RINEX 2 GLONASS t_k is seconds of the UTC day; RINEX 3/4 (and
+        // every receiver decoder) hold seconds of the UTC week.
+        if (isV2 && sys === 'R')
+          eph.messageFrameTime = gloFrameTimeOfWeek(
+            date.getTime(),
+            eph.messageFrameTime
+          );
+        ephemerides.push(eph);
       } else if (
         sys === 'G' ||
         sys === 'E' ||
