@@ -78,8 +78,14 @@ export function parseSp3(text: string): Sp3File {
       }
     } else if (line.startsWith('P') && epochIdx >= 0) {
       const prn = line.slice(1, 4).replace(/\s/g, '0');
-      const f = line.slice(4).trim().split(/\s+/).map(Number);
-      if (f.length < 3) continue;
+      // Fixed columns (SP3-c/d: x 5–18, y 19–32, z 33–46, clock 47–60):
+      // a large negative clock fills its field and touches z
+      // ("-5337.893301-431772.931600"), so whitespace splitting fails.
+      const f = [4, 18, 32, 46]
+        .map((c) => line.slice(c, c + 14).trim())
+        .filter((v) => v !== '')
+        .map(Number);
+      if (f.length < 3 || !f.slice(0, 3).every(Number.isFinite)) continue;
       const [xKm, yKm, zKm] = f as [number, number, number];
       let arr = satellites[prn];
       if (!arr) satellites[prn] = arr = [];

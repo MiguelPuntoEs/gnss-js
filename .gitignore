@@ -74,3 +74,5 @@
 !/test-fixtures/state_plane_be_pl_proj.json
 !/test-fixtures/swiss_proj.json
 !/test-fixtures/iberia_ireland_proj.json
+!/test-fixtures/attitude_samples.json
+!/test-fixtures/attitude_*.obx
