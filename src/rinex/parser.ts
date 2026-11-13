@@ -817,7 +817,7 @@ export async function parseRinexStream(
             crxEventSkipLines = info.numSats; // numSats = # of special records
             return;
           }
-          if (info.flag !== 0) {
+          if (info.flag > 1) {
             crxPrevEpochLine = epochLine;
             return;
           }
@@ -852,7 +852,7 @@ export async function parseRinexStream(
             crxEventSkipLines = info.numSats;
             return;
           }
-          if (info.flag !== 0) {
+          if (info.flag > 1) {
             crxPrevEpochLine = epochLine;
             return;
           }
@@ -909,7 +909,9 @@ export async function parseRinexStream(
           eventSkipLines = info.numSats;
           return;
         }
-        if (info.flag === 0) {
+        // 0 = OK, 1 = power failure since the previous epoch: both are
+        // followed by observation records (RINEX 2.11 Table A2, 3.04 A3).
+        if (info.flag === 0 || info.flag === 1) {
           resetEpochAccum(info);
           satLinesRemaining = info.numSats;
           if (info.numSats === 0) finishEpoch();
@@ -940,7 +942,9 @@ export async function parseRinexStream(
           eventSkipLines = info.numSats;
           return;
         }
-        if (info.flag === 0) {
+        // 0 = OK, 1 = power failure since the previous epoch: both are
+        // followed by observation records (RINEX 2.11 Table A2, 3.04 A3).
+        if (info.flag === 0 || info.flag === 1) {
           resetEpochAccum(info);
           v2SatIds = info.satIds ?? [];
           const v2ObsPerSat = (header.obsTypes['_v2'] ?? []).length;

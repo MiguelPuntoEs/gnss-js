@@ -92,13 +92,17 @@ describe('RINEX 3.x parser', () => {
     expect(result.stats.meanSnr).toBeGreaterThan(0);
   });
 
-  it('skips non-zero epoch flags', async () => {
-    const badEpoch = `> 2016  3 10 16 55 33.0000000  1  0
+  it('reads flag-1 (power failure) epochs, skips cycle-slip records', async () => {
+    // Flag 1 is an observation epoch (RINEX 3.04 Table A3); flag 6 is not.
+    const flag1 = `> 2016  3 10 16 55 33.0000000  1  0
 `;
-    const file = fileFrom(RINEX3_HEADER + RINEX3_EPOCH1 + badEpoch);
+    const flag6 = `> 2016  3 10 16 55 34.0000000  6  1
+G01         1.000
+`;
+    const file = fileFrom(RINEX3_HEADER + RINEX3_EPOCH1 + flag1 + flag6);
     const result = await parseRinexStream(file);
 
-    expect(result.epochs).toHaveLength(1);
+    expect(result.epochs).toHaveLength(2);
   });
 
   it('skips event records (flag 2-5) with embedded header lines', async () => {
