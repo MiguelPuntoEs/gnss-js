@@ -195,3 +195,16 @@ describe('S1/S2 atmospheric tide loading (IERS 2010 7.1.3)', () => {
     expect(peak(...sites.WTZR!)).toBeLessThan(1);
   });
 });
+
+describe('EOP from an IGS ERP file', () => {
+  it('parseErp records feed interpolateEop directly', async () => {
+    const { parseErp } = await import('../src/rinex/erp');
+    const erp = parseErp(fx('IGS0OPSFIN_20252990000_07D_01D_ERP.ERP'));
+    const r = erp.records[2]!;
+    // ERP epochs are MJD (UTC); at exactly that MJD we get its pole.
+    const t = (r.mjd - 40587) * 86_400_000 + 18_000;
+    const e = interpolateEop(erp.records, t)!;
+    expect(e.xp).toBeCloseTo(r.xp, 9);
+    expect(e.yp).toBeCloseTo(r.yp, 9);
+  });
+});

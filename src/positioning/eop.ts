@@ -8,8 +8,8 @@
  *    values, or Bulletin B where given with `bulletinB: true`).
  *  - {@link parseEopC04}: IERS EOP 20 C04 (`EOP_20_C04_one_file_1962-now.txt`,
  *    whitespace columns, `#` header).
- *  - IGS ERP files (published with the orbit products) parse with the
- *    library's ERP reader; map their rows to {@link EopRecord}.
+ *  - IGS ERP files (published with the orbit products): the records of
+ *    `parseErp` (gnss-js/rinex) are EopRecords as they are (mjd, xp, yp).
  *
  * {@link interpolateEop} interpolates linearly between daily values. The
  * diurnal/semidiurnal ocean-tide and libration terms of polar motion
