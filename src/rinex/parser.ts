@@ -34,6 +34,9 @@ export interface RinexHeader {
   antNumber: string;
   antType: string;
   approxPosition: [number, number, number] | null;
+  /** "ANTENNA: DELTA H/E/N" (m) in RINEX order: [Up (height), East, North]
+   *  of the ARP above the marker. NOT the [E, N, U] the positioning APIs take
+   *  — convert with {@link antDeltaToEnu}. */
   antDelta: [number, number, number] | null;
   interval: number | null;
   timeOfFirstObs: Date | null;
@@ -88,6 +91,17 @@ export const SYSTEM_ORDER = ['G', 'R', 'E', 'C', 'J', 'I', 'S'] as const;
 const SYSTEM_RANK: Record<string, number> = Object.fromEntries(
   SYSTEM_ORDER.map((s, i) => [s, i])
 );
+
+/**
+ * RINEX "ANTENNA: DELTA H/E/N" ([Up, East, North], RINEX 3.04 Table A2) →
+ * the local [East, North, Up] marker→ARP vector that `antDeltaEnu` (PPP) and
+ * `deltaEnu` (RTK) take. A missing delta is [0, 0, 0].
+ */
+export function antDeltaToEnu(
+  hen: readonly [number, number, number] | null | undefined
+): [number, number, number] {
+  return hen ? [hen[1], hen[2], hen[0]] : [0, 0, 0];
+}
 
 /** Compare two system codes (or PRNs) in canonical constellation order. */
 export function systemCmp(a: string, b: string): number {
