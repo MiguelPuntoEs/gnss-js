@@ -228,6 +228,11 @@ export interface PppEpochResult {
   ztdWet: number;
   /** A priori zenith hydrostatic delay (m, Saastamoinen). ZTD = this + ztdWet. */
   ztdHydrostatic: number;
+  /** Formal 1σ of the zenith wet (= total) delay after this epoch (m). */
+  ztdSigma?: number;
+  /** North/east troposphere gradients and their formal 1σ (m), when
+   *  `estimateGradients` — what troposphere SINEX calls TGNTOT/TGETOT. */
+  gradients?: { n: number; e: number; sigmaN: number; sigmaE: number };
   /** RMS of post-fit phase residuals this epoch (m). */
   phaseResRms: number;
   /** Formal 3D position σ after this epoch's update (m) — large when few
@@ -578,7 +583,7 @@ function applySatBiases(
 /*  Satellite state (position, velocity, clock) at emission            */
 /* ================================================================== */
 
-interface SatState {
+export interface SatState {
   x: number;
   y: number;
   z: number;
@@ -612,8 +617,11 @@ function sagnacRotate(
  * at the right instant. Timing the emission from the geometric range alone
  * misplaced them by the receiver clock offset — at 0.36 ms that was
  * ~11 cm of East error through Earth rotation (IGS station GRAZ).
+ *
+ * Exported for the network product estimators (analysis/network-clocks),
+ * so the network model is the user's PPP model.
  */
-function satStateAtEmission(
+export function satStateAtEmission(
   source: PppEphemerisSource,
   prn: string,
   recvTimeMs: number,
@@ -1870,6 +1878,17 @@ export class PppEngine {
       nSats,
       ztdWet: x[IDX_ZWD]!,
       ztdHydrostatic: epochZhd,
+      ztdSigma: Math.sqrt(P[IDX_ZWD]![IDX_ZWD]!),
+      ...(opts.estimateGradients
+        ? {
+            gradients: {
+              n: x[IDX_GN]!,
+              e: x[IDX_GE]!,
+              sigmaN: Math.sqrt(P[IDX_GN]![IDX_GN]!),
+              sigmaE: Math.sqrt(P[IDX_GE]![IDX_GE]!),
+            },
+          }
+        : {}),
       phaseResRms: nPhaseRes > 0 ? Math.sqrt(sumPhaseResSq / nPhaseRes) : 0,
       posSigma3d: Math.sqrt(
         P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!

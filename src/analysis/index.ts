@@ -20,3 +20,6 @@ export * from './normal-equations';
 export * from './neq';
 export * from './neq-datum';
 export * from './neq-combination';
+export * from './regional-iono';
+export * from './dense-ls';
+export * from './network-clocks';
