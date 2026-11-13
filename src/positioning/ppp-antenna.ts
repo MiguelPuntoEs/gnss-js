@@ -186,6 +186,32 @@ export function buildPppAntenna(antex: AntexFile): PppAntennaModel {
   };
 }
 
+/**
+ * A model whose *satellite* antennas come from `satellites` (for the PRNs it
+ * calibrates) and everything else from `base`. Precise clocks absorb the
+ * satellite phase-centre model they were estimated with, so PPP has to
+ * apply the same one: ESA's MGEX products, for instance, use their own
+ * BeiDou offsets (ESA14_2018: BeiDou-3 z-offsets 0.4–0.5 m larger than
+ * igs20's), and from 2025 the whole ESA23 model. `systems` limits the
+ * override to some constellations (letters, e.g. "C"); default all.
+ */
+export function withSatelliteAntennas(
+  base: PppAntennaModel,
+  satellites: PppAntennaModel,
+  systems?: string
+): PppAntennaModel {
+  return {
+    satOffset(prn, dateMs, band1, band2, f1, f2) {
+      const own =
+        !systems || systems.includes(prn[0]!)
+          ? satellites.satOffset(prn, dateMs, band1, band2, f1, f2)
+          : null;
+      return own ?? base.satOffset(prn, dateMs, band1, band2, f1, f2);
+    },
+    rcvOffset: (...a) => base.rcvOffset(...a),
+  };
+}
+
 /* ================================================================== */
 /*  Geometry helpers                                                   */
 /* ================================================================== */

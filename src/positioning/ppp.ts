@@ -100,6 +100,12 @@ export interface PppOptions {
   codeSigma?: number;
   /** IF phase σ at zenith (m). Default 0.01. */
   phaseSigma?: number;
+  /** Per-constellation factors on `codeSigma` / `phaseSigma`, e.g.
+   *  `{ R: { code: 10 } }` to let GLONASS code (frequency-dependent
+   *  receiver code biases of metres) carry almost no weight, or
+   *  `{ C: { phase: 2 } }` to down-weight a constellation whose orbits and
+   *  clocks are less accurate. Default 1 for every system. */
+  systemSigmaScale?: Record<string, { code?: number; phase?: number }>;
   /** Wet-troposphere random-walk process noise (m²/epoch). Default 1e-8. */
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
@@ -1511,9 +1517,10 @@ export class PppEngine {
       // Loose absolute bound (clock jumps up to ~ms); the S-based reject
       // gate (rejectK) does the real outlier screening once the clock is
       // pinned.
+      const kC = opts.systemSigmaScale?.[v.prn[0]!]?.code ?? 1;
       if (
         Math.abs(innov) < 1e6 &&
-        ekfUpdateScalar(x, P, h, innov, (codeSigma / sinEl) ** 2, 4)
+        ekfUpdateScalar(x, P, h, innov, ((kC * codeSigma) / sinEl) ** 2, 4)
       )
         codeUsed.add(v.prn);
     };
@@ -1521,7 +1528,8 @@ export class PppEngine {
     const phaseUpdate = (v: Vis, ai: number): void => {
       const ci = clockOf(v.prn[0]!);
       const sinEl = Math.max(Math.sin(v.elRad), 0.1);
-      const rPhase = (phaseSigma / sinEl) ** 2;
+      const kP = opts.systemSigmaScale?.[v.prn[0]!]?.phase ?? 1;
+      const rPhase = ((kP * phaseSigma) / sinEl) ** 2;
       const commonPh =
         rangeNow(v) + x[ci]! - v.satClkM + v.tropoFixed + wetSlant(x, v);
       const innov = v.lIf - (commonPh + v.windupM + x[ai]!);

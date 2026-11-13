@@ -190,16 +190,19 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
           geom.f1,
           geom.f2
         );
+        // An antenna without a calibration still stands on its height
+        // (and eccentricities) above the marker: apply the delta alone.
+        const pco = off?.pco ?? [0, 0, 0];
+        const total: [number, number, number] = [
+          // PCO is ANTEX North/East/Up; the delta and enuToEcef are ENU.
+          pco[1] + antDelta[0],
+          pco[0] + antDelta[1],
+          pco[2] + antDelta[2],
+        ];
+        const ecef = enuToEcef(total, latRad, lonRad);
+        // APC = marker + offset ⇒ range loses e·offset.
+        rangeM -= vdot(e, ecef);
         if (off) {
-          const total: [number, number, number] = [
-            // PCO is ANTEX North/East/Up; the delta and enuToEcef are ENU.
-            off.pco[1] + antDelta[0],
-            off.pco[0] + antDelta[1],
-            off.pco[2] + antDelta[2],
-          ];
-          const ecef = enuToEcef(total, latRad, lonRad);
-          // APC = marker + offset ⇒ range loses e·offset.
-          rangeM -= vdot(e, ecef);
           const zenithDeg = 90 - (geom.elRad * 180) / Math.PI;
           rangeM += interpPcv(off, zenithDeg, (geom.azRad * 180) / Math.PI);
         }
