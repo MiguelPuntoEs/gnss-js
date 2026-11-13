@@ -284,6 +284,9 @@ function vmf3bc(
   };
 }
 
+let bcKey = '';
+let bcVal: ReturnType<typeof vmf3bc> | null = null;
+
 const marini = (sinEl: number, a: number, b: number, c: number) =>
   (1 + a / (1 + b / (1 + c))) / (sinEl + a / (sinEl + b / (sinEl + c)));
 
@@ -301,7 +304,14 @@ export function vmf3(
   hEll: number,
   elRad: number
 ): { mfh: number; mfw: number } {
-  const { bh, bw, ch, cw } = vmf3bc(utcMs, latRad, lonRad);
+  // b and c change with the season only: evaluate the degree-12 expansion
+  // once per station and hour (it is ~40× the cost of the rest).
+  const key = `${Math.floor(utcMs / 3_600_000)}|${latRad}|${lonRad}`;
+  if (key !== bcKey) {
+    bcVal = vmf3bc(utcMs, latRad, lonRad);
+    bcKey = key;
+  }
+  const { bh, bw, ch, cw } = bcVal!;
   const sinEl = Math.sin(elRad);
   const mfh0 = marini(sinEl, ah, bh, ch);
   const mfw = marini(sinEl, aw, bw, cw);
