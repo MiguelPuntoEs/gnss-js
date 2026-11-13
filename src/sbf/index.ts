@@ -795,6 +795,9 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
     const len1 = data[i + 15]!;
     const len2 = data[i + 16]!;
     if ((data[i + 17]! & 0x80) !== 0) return; // scrambled measurements
+    // CommonFlags bit 6: Galileo E6 is E6B, not the default E6C (§4.1.10 ∗).
+    const e6b = (data[i + 17]! & 0x40) !== 0;
+    const e6 = (code: string) => (e6b && code === '6C' ? '6B' : code);
     const end = i + len;
     let p = i + 20;
     for (let b1 = 0; b1 < n1 && p + 20 <= end; b1++) {
@@ -814,7 +817,8 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
         p += len1 + len2 * n2; // skip block and its sub-blocks
         continue;
       }
-      const [sys, code] = sigDef;
+      const sys = sigDef[0];
+      const code = e6(sigDef[1]);
       const freq1 = carrierFreq(sys, code, fcn);
 
       const codeLsb = view.getUint32(p + 4, true);
@@ -865,7 +869,7 @@ export function parseSbfMeas(data: Uint8Array): SbfParseResult {
         if (sig2 === 31) sig2 = (info2 >> 3) + 32;
         const sigDef2 = MEAS2_SIG[sig2] ?? null;
         if (ant2 !== 0 || !sigDef2 || sigDef2[0] !== prn[0]) continue;
-        const code2 = sigDef2[1];
+        const code2 = e6(sigDef2[1]);
         const freq2 = carrierFreq(sys, code2, fcn);
 
         // OffsetsMSB: two's-complement 3-bit code + 5-bit Doppler MSBs

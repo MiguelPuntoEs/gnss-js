@@ -48,3 +48,19 @@ describe('SBF SVID numbering (§4.1.9)', () => {
     expect(c58!.pr).toBeGreaterThan(2e7);
   });
 });
+
+describe('MeasEpoch (4027) field tables, hand-decoded', () => {
+  it('labels Galileo E6 as 6B when CommonFlags bit 6 (E6B used) is set', () => {
+    // §4.1.10: signal 19 is "6C or 6B (∗) — see the E6B Used bit". The
+    // DLF500 MeasEpoch blocks carry CommonFlags 0x4D (bits 0, 2, 3, 6).
+    const start = bytes.findIndex(
+      (b, i) =>
+        b === 0x24 &&
+        bytes[i + 1] === 0x40 &&
+        ((bytes[i + 4]! | (bytes[i + 5]! << 8)) & 0x1fff) === 4027
+    );
+    expect(bytes[start + 17]).toBe(0x4d);
+    expect(res.obsCodes['E']).toContain('6B');
+    expect(res.obsCodes['E']).not.toContain('6C');
+  });
+});
