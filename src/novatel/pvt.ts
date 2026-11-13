@@ -14,6 +14,10 @@ const BESTPOS = 42;
 /** NovAtel BESTPOS position-type code → normalised solution mode. */
 function posTypeToMode(t: number): string {
   if (t === 0) return 'no-pvt';
+  // OEM7 Table 95: 1 FIXEDPOS (FIX position / position averaging — a base
+  // station's surveyed coordinates), 2 FIXEDHEIGHT.
+  if (t === 1) return 'fixed-location';
+  if (t === 2) return 'fixed-height';
   if (t === 16) return 'standalone';
   if (t === 17) return 'differential';
   if (t === 18 || t === 20) return 'sbas-aided'; // WAAS / OmniSTAR VBS
