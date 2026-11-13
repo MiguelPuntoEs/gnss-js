@@ -44,6 +44,7 @@ import type {
   KeplerEphemeris,
 } from '../rinex/nav';
 import { navSecondsOfWeek as sowOf } from '../navbits/index';
+import { sisaMeters } from '../rtcm3/accuracy';
 import { getGpsLeap } from '../time/utc';
 import { RETSVDATA, trimbleFrames } from './frame';
 
@@ -236,9 +237,10 @@ function decodeBdsEphemeris(
 /**
  * Decode a RETSVDATA Galileo ephemeris (subtype 11). Keplerian like
  * GPS/BeiDou but a distinct, more compact struct (184 bytes): svid u1
- * (+5), GPS/GST week u2 (+7), toe u4 (+9), IODnav u2 (+13), then the
- * orbit block crs f8 (+19) and the consecutive f8 series deltaN, m0, cuc,
- * e, cus, √a, cic, Ω₀, cis, i₀, crc, ω, Ω̇, i̇ (+27…+138), the clock af0/
+ * (+5), GPS/GST week u2 (+7), transmission time u4 (+9), IODnav u2
+ * (+13), toe u4 (+15), then the orbit block crs f8 (+19) and the consecutive f8 series deltaN, m0, cuc,
+ * e, cus, √a, cic, Ω₀, cis, i₀, crc, ω, Ω̇, i̇ (+27…+138), SISA u1 (+139),
+ * toc u4 (+142), the clock af0/
  * af1/af2 f8 (+146/+154/+162), and the two group delays BGD E5b/E1 f8
  * (+170) and BGD E5a/E1 f8 (+179, each followed by a 1-byte signal tag).
  * Semicircle angular/harmonic fields ×π, as for GPS. Every field was
@@ -255,8 +257,13 @@ function decodeGalEphemeris(
   if (svid < 1 || svid > 36) return null;
   const g = (o: number) => view.getFloat64(base + o, false);
   const week = view.getUint16(base + 7, false);
-  const toe = view.getUint32(base + 9, false);
-  const tocMs = gpsMs(week, toe); // GST ≈ GPST, toc = toe
+  // +9 is the transmission time (…:25/:55 s, I/NAV page epochs); toe is
+  // the u4 at +15 and toc the u4 at +142 (multiples of 60 s, = each
+  // other, as in the BRDC). Reading +9 as toe moved E04 ~2500 km.
+  const ttm = view.getUint32(base + 9, false);
+  const toe = view.getUint32(base + 15, false);
+  const tocs = view.getUint32(base + 142, false);
+  const tocMs = gpsMs(week, tocs); // GST ≈ GPST
   return {
     system: 'E',
     prn: `E${String(svid).padStart(2, '0')}`,
@@ -264,6 +271,8 @@ function decodeGalEphemeris(
     tocDate: new Date(tocMs),
     toe,
     week,
+    ttm,
+    svAccuracy: sisaMeters(view.getUint8(base + 139)), // SISA index
     iode: view.getUint16(base + 13, false), // IODnav
     af0: g(146),
     af1: g(154),
@@ -285,6 +294,7 @@ function decodeGalEphemeris(
     idot: g(131) * GPS_PI,
     svHealth: 0, // Galileo SISA/health word not located; observed sats healthy
     tgd: g(179), // BGD E5a/E1 (the RINEX Galileo tgd slot)
+    tgd2: g(170), // BGD E5b/E1
   };
 }
 

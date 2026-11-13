@@ -333,3 +333,43 @@ describe('BeiDou D1/D2 IODE slot = broadcast AODE (RINEX 3.05 Table A14)', () =>
     expect(() => encodeEphemeris(ephemerisToInfo(c08))).not.toThrow();
   });
 });
+
+describe('cross-decoder: the same satellite, two receivers, one orbit', () => {
+  it('every Keplerian ephemeris agrees with another decoder within 1 km', () => {
+    // Independent decoders of the same broadcast (u-blox, Septentrio,
+    // NovAtel, Trimble, RTCM) must put a satellite at the same place:
+    // a mis-read toe/time scale shows as hundreds of km. Pairs within
+    // 2 h of each other, compared at the later epoch.
+    const src = rawSources();
+    const keys = Object.keys(src);
+    let pairs = 0;
+    for (let a = 0; a < keys.length; a++)
+      for (let b = a + 1; b < keys.length; b++)
+        for (const ea of src[keys[a]!]!.filter(isKepler))
+          for (const eb of src[keys[b]!]!.filter(isKepler)) {
+            if (ea.prn !== eb.prn) continue;
+            const ta = gpsInstant(ea);
+            const tb = gpsInstant(eb);
+            if (Math.abs(ta - tb) > 2 * 3600_000) continue;
+            const t = Math.max(ta, tb);
+            const p = computeSatPosition(ea, t);
+            const q = computeSatPosition(eb, t);
+            const d = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+            expect(d, `${ea.prn} ${keys[a]} vs ${keys[b]}`).toBeLessThan(1000);
+            pairs++;
+          }
+    expect(pairs).toBeGreaterThan(50);
+  });
+
+  it('Trimble RT27 Galileo toe is the broadcast toe, not the transmit time', () => {
+    // RETSVDATA subtype 11: +9 = 126685 s (transmit, …:25), +15 = toe
+    // 126000 = Mon 11:00 GST. With +9 as toe E04 sat 2500 km off.
+    const e04 = (rawSources()['trimble'] ?? []).find(
+      (e) => e.prn === 'E04'
+    ) as KeplerEphemeris;
+    expect(e04.toe).toBe(126000);
+    expect(e04.toc).toBe(126000);
+    expect(e04.ttm).toBe(126685);
+    expect(e04.svAccuracy).toBeCloseTo(3.12, 10); // SISA index 107
+  });
+});
