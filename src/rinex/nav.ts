@@ -291,17 +291,22 @@ function parseNavEpochV2(
   return { prn, date, values };
 }
 
+/**
+ * Parse a broadcast-orbit line into its (up to) four 19-char fields,
+ * position by position: a blank field — RINEX "BNK", e.g. the NavIC
+ * orbit-5 slot 2 in RINEX 4 files — is NaN, so the fields after it keep
+ * their slot. Trailing blanks are dropped.
+ */
 function parseDataLine(line: string, colOffset = 4): number[] {
   const values: number[] = [];
   for (let i = 0; i < 4; i++) {
     const start = colOffset + i * 19;
     if (start >= line.length) break;
     const s = line.substring(start, start + 19).trim();
-    if (s.length > 0) {
-      const v = parseFloat19(s);
-      values.push(Number.isFinite(v) ? v : 0);
-    }
+    values.push(s.length > 0 ? parseFloat19(s) : NaN);
   }
+  while (values.length > 0 && Number.isNaN(values[values.length - 1]!))
+    values.pop();
   return values;
 }
 
@@ -339,8 +344,14 @@ function buildKeplerEphemeris(
   // (e.g. Galileo orbit-7 often has only 1), so we must pad to keep
   // the flat array indices stable.
   const d: number[] = [];
+  // Blank (NaN) and missing fields read as 0, except t_tm below.
+  const raw: number[] = [];
   for (const line of data) {
-    for (let i = 0; i < 4; i++) d.push(line[i] ?? 0);
+    for (let i = 0; i < 4; i++) {
+      const v = line[i] ?? NaN;
+      raw.push(v);
+      d.push(Number.isFinite(v) ? v : 0);
+    }
   }
   return {
     system: sys,
@@ -376,7 +387,7 @@ function buildKeplerEphemeris(
     // d[23] = IODC (GPS/QZSS), BGD E5b/E1 (GAL), TGD2 (BDS)
     ...((sys === 'E' || sys === 'C') && { tgd2: d[23] ?? 0 }),
     // d[24] = transmission time; 0.9999e9 marks it unknown
-    ...(data.length >= 7 && Math.abs(d[24] ?? 1e9) < 1e6 && { ttm: d[24] }),
+    ...(Math.abs(raw[24] ?? NaN) < 1e6 && { ttm: d[24] }),
     ...(d[20] != null && d[20] > 0 && { svAccuracy: d[20] }),
     ...(sys === 'E' && { dataSources: d[17] ?? 0 }),
   };
@@ -389,7 +400,12 @@ function buildStateVectorEphemeris(
   epochVals: number[],
   data: number[][]
 ): GlonassEphemeris {
-  const d = data.flat();
+  const d = data.flatMap((line) =>
+    [0, 1, 2, 3].map((i) => {
+      const v = line[i] ?? NaN;
+      return Number.isFinite(v) ? v : 0;
+    })
+  );
   return {
     system: sys,
     prn,
