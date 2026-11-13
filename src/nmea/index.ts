@@ -1,6 +1,15 @@
 // ── NMEA sentence parser ─────────────────────────────────
 // Parses GGA and RMC sentences from NMEA 0183 log files.
 
+export { writeNmea, nmeaChecksum, nmeaSatId, formatNmeaCoord } from './write';
+export type {
+  NmeaEpoch,
+  NmeaGst,
+  NmeaSatellite,
+  NmeaSentence,
+  NmeaWriteOptions,
+} from './write';
+
 export interface NmeaFix {
   time: Date | null;
   lat: number;
@@ -10,6 +19,13 @@ export interface NmeaFix {
   fixQuality: number;
   speed: number | null; // knots
   course: number | null; // degrees true
+  /** GGA horizontal dilution of precision. */
+  hdop?: number | null;
+  /**
+   * GGA geoid separation N (m): `alt` is above mean sea level, the
+   * ellipsoidal height is alt + geoidSep.
+   */
+  geoidSep?: number | null;
 }
 
 export interface NmeaStats {
@@ -83,6 +99,8 @@ interface PartialFix {
   lat?: number;
   lon?: number;
   alt?: number | null;
+  hdop?: number | null;
+  geoidSep?: number | null;
   satellites?: number | null;
   fixQuality?: number;
   speed?: number | null;
@@ -106,6 +124,8 @@ function parseGGA(fields: string[]): PartialFix | null {
     lat,
     lon,
     alt: fields[9] ? parseFloat(fields[9]) : null,
+    hdop: fields[8] ? parseFloat(fields[8]) : null,
+    geoidSep: fields[11] ? parseFloat(fields[11]) : null,
     satellites: fields[7] ? parseInt(fields[7], 10) : null,
     fixQuality: quality,
   };
@@ -316,6 +336,8 @@ export function parseNmeaFile(content: string): NmeaTrack {
       // Merge: prefer non-null values from the new partial
       if (partial.alt !== undefined && partial.alt !== null)
         existing.alt = partial.alt;
+      if (partial.hdop !== undefined) existing.hdop = partial.hdop;
+      if (partial.geoidSep !== undefined) existing.geoidSep = partial.geoidSep;
       if (partial.satellites !== undefined && partial.satellites !== null)
         existing.satellites = partial.satellites;
       if (partial.fixQuality !== undefined)
@@ -332,7 +354,7 @@ export function parseNmeaFile(content: string): NmeaTrack {
         time = buildDate(partial.timeKey, lastDate);
       }
 
-      fixMap.set(key, {
+      const fix: NmeaFix = {
         time,
         lat: partial.lat ?? 0,
         lon: partial.lon ?? 0,
@@ -341,7 +363,10 @@ export function parseNmeaFile(content: string): NmeaTrack {
         fixQuality: partial.fixQuality ?? 0,
         speed: partial.speed ?? null,
         course: partial.course ?? null,
-      });
+      };
+      if (partial.hdop !== undefined) fix.hdop = partial.hdop;
+      if (partial.geoidSep !== undefined) fix.geoidSep = partial.geoidSep;
+      fixMap.set(key, fix);
       fixOrder.push(key);
     }
   }
