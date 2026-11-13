@@ -769,6 +769,39 @@ function rinexFields(
 export function ephInfoToEphemeris(info: EphemerisInfo): Ephemeris | null {
   const sys = info.prn.charAt(0);
 
+  if (sys === 'S') {
+    // SBAS GEO (1043): t0 is seconds of the GPS day; resolve the day
+    // against reception. State vector in km like RINEX.
+    if (info.x === undefined || info.y === undefined || info.z === undefined)
+      return null;
+    const day = Math.floor((info.lastReceived - GPS_EPOCH_MS) / 86400_000);
+    let tocMs = GPS_EPOCH_MS + day * 86400_000 + (info.toc ?? 0) * 1000;
+    if (tocMs - info.lastReceived > 43200_000) tocMs -= 86400_000;
+    else if (info.lastReceived - tocMs > 43200_000) tocMs += 86400_000;
+    return {
+      system: 'S',
+      prn: info.prn,
+      tocDate: new Date(tocMs),
+      tauN: info.af0 ?? 0, // aGf0
+      gammaN: info.af1 ?? 0, // aGf1
+      // RINEX t_tm; 1043 has none: the epoch stands in
+      messageFrameTime:
+        ((((tocMs - GPS_EPOCH_MS) / 1000) % 604800) + 604800) % 604800,
+      x: info.x,
+      xDot: info.vx ?? 0,
+      xAcc: info.ax ?? 0,
+      y: info.y,
+      yDot: info.vy ?? 0,
+      yAcc: info.ay ?? 0,
+      z: info.z,
+      zDot: info.vz ?? 0,
+      zAcc: info.az ?? 0,
+      health: info.health,
+      freqNum: uraMeters(info.ura ?? 0), // SBAS slot: URA (m)
+      iodn: info.iode ?? 0,
+    } satisfies GlonassEphemeris;
+  }
+
   if (sys === 'R') {
     // GLONASS — needs state vector
     if (info.x === undefined || info.y === undefined || info.z === undefined)

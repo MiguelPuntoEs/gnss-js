@@ -372,9 +372,10 @@ export function ephemerisToInfo(
         constellation: 'SBAS',
         messageType: 1043,
         health: eph.health,
-        iode: 0,
+        iode: eph.iodn ?? 0,
         toc: ((((tocMs - GPS_EPOCH_MS) / 1000) % 86400) + 86400) % 86400,
-        ura: extras.ura ?? 0,
+        // RINEX SBAS keeps the URA in metres in the freqNum slot
+        ura: extras.ura ?? uraIndex(eph.freqNum),
         x: eph.x,
         y: eph.y,
         z: eph.z,

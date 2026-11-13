@@ -20,7 +20,7 @@ function sorted(list: readonly Ephemeris[]) {
 /**
  * Every field of every record equal to `rel` relative precision (13
  * significant digits of E19.12: 1e-12; 12 of RINEX 2's 0.ddd D19.12:
- * 1e-11). Keys must match too, minus `ignore`.
+ * 1e-11). Keys must match too, minus `ignore`; absent and 0 are equal.
  */
 export function expectSameEphemerides(
   a: readonly Ephemeris[],
@@ -40,6 +40,9 @@ export function expectSameEphemerides(
       if (ignore.includes(k)) continue;
       const va = ra[k];
       const vb = rb[k];
+      // A field a decoder leaves out is written as 0 or its RINEX
+      // default (IODC: the IODE) and read back: not a loss.
+      if (va === undefined || (va === 0 && vb === undefined)) continue;
       if (va instanceof Date) {
         expect((vb as Date)?.getTime(), `${id} ${k}`).toBe(va.getTime());
       } else if (typeof va === 'number' && typeof vb === 'number') {
