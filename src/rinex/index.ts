@@ -10,6 +10,7 @@ export * from './ionex';
 export * from './sp3';
 export * from './sp3-writer';
 export * from './clk';
+export * from './clk-writer';
 export * from './bias-sinex';
 export * from './obs-writer';
 export * from './epoch-sats';
