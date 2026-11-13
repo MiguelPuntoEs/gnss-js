@@ -583,7 +583,7 @@ function applySatBiases(
 /*  Satellite state (position, velocity, clock) at emission            */
 /* ================================================================== */
 
-interface SatState {
+export interface SatState {
   x: number;
   y: number;
   z: number;
@@ -615,8 +615,11 @@ function sagnacRotate(
  * at the right instant. Timing the emission from the geometric range alone
  * misplaced them by the receiver clock offset — at 0.36 ms that was
  * ~11 cm of East error through Earth rotation (IGS station GRAZ).
+ *
+ * Exported for the network product estimators (analysis/network-clocks),
+ * so the network model is the user's PPP model.
  */
-function satStateAtEmission(
+export function satStateAtEmission(
   source: PppEphemerisSource,
   prn: string,
   recvTimeMs: number,
