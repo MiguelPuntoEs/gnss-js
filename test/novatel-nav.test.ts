@@ -713,7 +713,9 @@ describe('parseNovatelNav (synthetic frames)', () => {
     const r = Math.hypot(geo[0]!.x, geo[0]!.y, geo[0]!.z); // km
     expect(r).toBeGreaterThan(42000); // geostationary radius ≈ 42 164 km
     expect(r).toBeLessThan(42300);
-    expect(geo[0]!.freqNum).toBe(0);
+    // SBAS slot: URA metres (RINEX 3.05 Table A16); this frame's URA
+    // index is 15 ("do not use", 8192 m), which also flags it unhealthy
+    expect(geo[0]!.freqNum).toBe(8192);
   });
 });
 

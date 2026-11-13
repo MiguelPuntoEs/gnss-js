@@ -13,6 +13,7 @@
  * carry an SBAS L1 message: u-blox RXM-SFRBX (gnssId 1) and Septentrio SBF
  * GEORawL1 (4020).
  */
+import { uraMeters } from '../rtcm3/accuracy';
 import { getBitU, getBitS } from './index';
 import { crc24q } from './cnav';
 import type { GlonassEphemeris } from '../rinex/nav';
@@ -76,7 +77,9 @@ export function decodeSbasGeoNav(
     tocDate: new Date(GPS_EPOCH_MS + week * MS_PER_WEEK + t0Sec * 1000),
     tauN: getBitS(msg, 206, 12) * 2 ** -31, // a_Gf0, clock offset (s)
     gammaN: (getBitS(msg, 218, 8) * 2 ** -39) / 2, // a_Gf1, clock drift (s/s)
-    messageFrameTime: ((tow % 86400) + 86400) % 86400,
+    // RINEX 3.05 Table A16: transmission time, GPS seconds of the WEEK
+    // (seconds of the day before: 77389 where RINEX wants 422989).
+    messageFrameTime: ((tow % 604800) + 604800) % 604800,
     x: (getBitS(msg, 39, 30) * 0.08) / 1000,
     y: (getBitS(msg, 69, 30) * 0.08) / 1000,
     z: (getBitS(msg, 99, 25) * 0.4) / 1000,
@@ -87,6 +90,8 @@ export function decodeSbasGeoNav(
     yAcc: (getBitS(msg, 186, 10) * 0.0000125) / 1000,
     zAcc: (getBitS(msg, 196, 10) * 0.0000625) / 1000,
     health: ura === 15 ? 1 : 0,
-    freqNum: 0,
+    // RINEX keeps the SBAS accuracy code as URA metres in this slot
+    // (Table A16 orbit-2); 0 before, i.e. "2 m or better" lost.
+    freqNum: uraMeters(ura),
   };
 }

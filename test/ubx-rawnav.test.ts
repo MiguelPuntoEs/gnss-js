@@ -415,7 +415,9 @@ describe.skipIf(!existsSync(UBX_FILE))('parseUbxRawNav (F9P slice)', () => {
       expect(r).toBeLessThan(42300);
       expect(Math.hypot(e.xDot, e.yDot, e.zDot)).toBeLessThan(0.01);
       expect(e.health).toBe(0);
-      expect(e.freqNum).toBe(0);
+      // SBAS slot: URA metres (RINEX 3.05 Table A16), index 0 → 2 m
+      // (RTKLIB 2.4.2 convbin prints its upper bound 2.4)
+      expect(e.freqNum).toBe(2);
     }
   });
 
