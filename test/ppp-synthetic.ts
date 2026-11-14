@@ -39,12 +39,27 @@ interface Orbit {
 /** Circular-orbit ephemeris (ECEF), with simple satellite clocks. */
 export class SyntheticSource implements PppEphemerisSource {
   readonly orbits = new Map<string, Orbit>();
+  codeBias?: PppEphemerisSource['codeBias'];
+  phaseBias?: PppEphemerisSource['phaseBias'];
   constructor(
-    sats: { prn: string; r: number; inc: number; raan: number; u0: number }[]
+    sats: { prn: string; r: number; inc: number; raan: number; u0: number }[],
+    /** Satellite biases (m) the source publishes (OSB), by tracking code. */
+    biases?: {
+      code?: (prn: string, code: string) => number | null;
+      phase?: (prn: string, code: string) => number | null;
+    }
   ) {
     sats.forEach((s, k) =>
       this.orbits.set(s.prn, { ...s, clk0: (k - 5) * 1.3e-5 })
     );
+    if (biases?.code) {
+      const f = biases.code;
+      this.codeBias = (prn, code) => f(prn, code);
+    }
+    if (biases?.phase) {
+      const f = biases.phase;
+      this.phaseBias = (prn, code) => f(prn, code);
+    }
   }
   private pos(o: Orbit, tS: number): [number, number, number] {
     const n = Math.sqrt(GM / o.r ** 3);

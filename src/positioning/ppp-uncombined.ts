@@ -52,6 +52,7 @@ import type { Sp3File } from '../rinex/sp3';
 import type { IonexGrid } from '../rinex/ionex';
 import { niellMapping } from './ppp-tropo';
 import { gimSlantIonoDelayL1 } from './gim';
+import { lambdaSearch } from './lambda';
 import {
   ekfUpdateScalar,
   elevationVarianceFactor,
@@ -74,8 +75,11 @@ export interface PppUncombinedOptions extends Omit<
   PppOptions,
   'codeSigma' | 'phaseSigma' | 'slipRepair' | 'ar' | 'exposeState' | 'osb'
 > {
-  /** Code σ of one signal at zenith (m). Default 1.0 — the ionosphere-free
-   *  engine's 3 m spread over the ~3× noise of the combination. */
+  /** Code σ of one signal at zenith (m). Default 0.5 — half the weight
+   *  the ionosphere-free engine's 3 m gives its combination (≈ 1 m per
+   *  signal): the float solution is about the same either way, and the
+   *  wide lanes fix sooner (EPN stations, 2 h windows: 19–21 → 15–17 min
+   *  median time to fix). */
   codeSigma?: number;
   /** Carrier σ of one signal at zenith (m). Default 0.003. */
   phaseSigma?: number;
@@ -140,15 +144,37 @@ export interface PppUncombinedOptions extends Omit<
         minArcS?: number;
         /** Min between-satellite narrow-lane ambiguities. Default 5. */
         minFixed?: number;
-        /** Max |float − integer| of a fixed (extra-)wide lane (cycles).
+        /** Max |float − integer| of a fixed extra-wide lane (cycles).
          *  Default 0.25. */
         maxFracWl?: number;
+        /** Max |MW − integer| of a wide lane fixed from the between-
+         *  satellite Melbourne–Wübbena average (cycles). Default 0.15. */
+        wlThreshold?: number;
+        /** Min epochs of Melbourne–Wübbena averaging. Default 10. */
+        wlMinEpochs?: number;
+        /** Min arc length of both satellites for a Melbourne–Wübbena wide
+         *  lane (s). Default 600. */
+        wlMinArcS?: number;
         /** Min bootstrapped success rate of the narrow-lane set. Default
          *  0.99. */
         successRate?: number;
         /** Max χ²/dof of the float vs fixed narrow lanes. Default 20. */
         maxChi2?: number;
       };
+}
+
+/** What one ambiguity-resolution attempt fixed. */
+export interface ArAttemptStats {
+  /** Extra-wide lanes fixed (rounding). */
+  ewl: number;
+  /** Wide lanes (and shorter extra lanes) fixed. */
+  wl: number;
+  /** Narrow lanes fixed (0: no fix). */
+  nl: number;
+  /** Narrow-lane candidates. */
+  nlCandidates: number;
+  /** LAMBDA ratio of the accepted (or first tried) narrow-lane set. */
+  ratio: number;
 }
 
 /** Result of an uncombined session. */
@@ -177,6 +203,8 @@ export interface PppUncombinedSolution {
     position: [number, number, number] | null;
     /** Narrow-lane ambiguities fixed at the end. */
     nFixedEnd: number;
+    /** The last attempt's counts. */
+    lastAttempt: ArAttemptStats | null;
   };
 }
 
@@ -204,6 +232,9 @@ interface SigVis {
   slip: boolean;
   /** Use the code (false: a code without any bias handling). */
   useCode: boolean;
+  /** The satellite phase bias was removed: the ambiguity is an integer
+   *  between satellites. */
+  fixable: boolean;
 }
 
 interface Vis {
@@ -316,7 +347,11 @@ export class PppUncombinedEngine {
     position: [number, number, number];
     nFixed: number;
   } | null = null;
+  private lastAccepted: [number, number, number] | null = null;
+  private lastArMs = -Infinity;
+  private firstFixMs: number | null = null;
   private fixedEpochs = 0;
+  private lastAttempt: ArAttemptStats | null = null;
 
   constructor(opts: PppUncombinedOptions, source: PppEphemerisSource) {
     this.opts = opts;
@@ -472,17 +507,22 @@ export class PppUncombinedEngine {
         P: number;
         cyc: number;
         codeOsb: boolean;
+        phaseOsb: boolean;
       }[] = [];
       for (const s of sigs0) {
-        const pc = s.phaseCode ?? s.code;
         const cb = source.codeBias?.(prn, s.code, epoch.timeMs) ?? null;
         let cyc = s.cp;
-        if (source.phaseBias) {
-          const pb = source.phaseBias(prn, pc, epoch.timeMs);
-          if (pb == null) continue;
-          cyc -= pb / (C_LIGHT / s.freq);
-        }
-        biased.push({ s, P: s.pr - (cb ?? 0), cyc, codeOsb: cb != null });
+        // A carrier without a satellite phase bias stays in the float
+        // solution; only its ambiguity is not integer.
+        const pb = this.phaseBiasOf(prn, s, epoch.timeMs);
+        if (pb !== null) cyc -= pb / (C_LIGHT / s.freq);
+        biased.push({
+          s,
+          P: s.pr - (cb ?? 0),
+          cyc,
+          codeOsb: cb != null,
+          phaseOsb: pb !== null,
+        });
       }
       if (biased.length < minSignals) continue;
       // The primary pair must stay the satellite's first two signals.
@@ -578,6 +618,7 @@ export class PppUncombinedEngine {
           ifcbKey: null,
           slip: !!b.s.lli,
           useCode: true,
+          fixable: b.phaseOsb,
         });
       });
       if (sigs.length < minSignals) continue;
@@ -821,6 +862,21 @@ export class PppUncombinedEngine {
   /* ---------------------------------------------------------------- */
   /*  Cycle slips                                                      */
   /* ---------------------------------------------------------------- */
+
+  /** Satellite phase bias (m) of a carrier: its own tracking mode, else
+   *  another of the same band (a constant offset between tracking modes is
+   *  common to all satellites and cancels between them). */
+  private phaseBiasOf(prn: string, s: PppSignal, tMs: number): number | null {
+    const pb = this.source.phaseBias;
+    if (!pb) return null;
+    const own = pb(prn, s.phaseCode ?? s.code, tMs);
+    if (own !== null) return own;
+    for (const a of 'CIQXWLSPDZB') {
+      const v = pb(prn, s.band + a, tMs);
+      if (v !== null) return v;
+    }
+    return null;
+  }
 
   /** Melbourne–Wübbena slip test of a satellite's primary pair; true on a
    *  slip, a new arc or a loss-of-lock flag. */
@@ -1075,7 +1131,7 @@ export class PppUncombinedEngine {
     const sc = o.systemSigmaScale?.[sys];
     const ss = o.signalSigmaScale?.(v.prn, s.band, k);
     const w = elevationVarianceFactor(v.elRad, o.elevationWeighting);
-    const c = (o.codeSigma ?? 1.0) * (sc?.code ?? 1) * (ss?.code ?? 1);
+    const c = (o.codeSigma ?? 0.5) * (sc?.code ?? 1) * (ss?.code ?? 1);
     const p = (o.phaseSigma ?? 0.003) * (sc?.phase ?? 1) * (ss?.phase ?? 1);
     return { rc: c * c * w, rp: p * p * w };
   }
@@ -1176,10 +1232,292 @@ export class PppUncombinedEngine {
   /*  Ambiguity resolution                                             */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * Integer ambiguity resolution on a copy of the filter (the float filter
+   * itself is never constrained). Between-satellite (SD) ambiguities in
+   * cycles, per clock group and carrier tracking mode, are taken through
+   * the cascade per satellite — extra-wide lanes (second signal minus each
+   * further one), the wide lane (first minus second), the narrow lane (the
+   * first signal itself) — each step fixed and then imposed as a constraint
+   * before the next, so the shorter lanes are resolved on an already
+   * sharpened float solution.
+   */
   private tryFix(tMs: number, vis: readonly Vis[]): void {
-    void tMs;
-    void vis;
+    const ar = this.opts.ar;
+    if (!ar || !this.source.phaseBias) return;
+    const cfg = ar === true ? {} : ar;
+    if (tMs - this.lastArMs < (cfg.everyS ?? 30) * 1000) {
+      if (this.kinematic) this.lastFix = null;
+      return;
+    }
+    this.lastArMs = tMs;
     this.lastFix = null;
+    // The filter-based wide lanes are fast but trust the code weights; if
+    // the narrow lanes then fail, retry with the Melbourne–Wübbena ones
+    // alone.
+    let res = this.resolve(tMs, vis, cfg, true);
+    if (!res.fixed) res = this.resolve(tMs, vis, cfg, false);
+    this.lastAttempt = res.stats;
+    if (!res.fixed) return;
+    this.lastFix = { position: res.position, nFixed: res.nFixed };
+    this.lastAccepted = res.position;
+    this.firstFixMs ??= tMs;
+  }
+
+  private resolve(
+    tMs: number,
+    vis: readonly Vis[],
+    cfg: Exclude<NonNullable<PppUncombinedOptions['ar']>, boolean>,
+    wlLambda: boolean
+  ): {
+    fixed: boolean;
+    position: [number, number, number];
+    nFixed: number;
+    stats: ArAttemptStats;
+  } {
+    const minArcMs = (cfg.minArcS ?? 0) * 1000;
+    const maxFrac = cfg.maxFracWl ?? 0.25;
+    const stats: ArAttemptStats = {
+      ewl: 0,
+      wl: 0,
+      nl: 0,
+      nlCandidates: 0,
+      ratio: 0,
+    };
+    // Fixable ambiguities of the satellites in view.
+    interface Amb {
+      prn: string;
+      el: number;
+      band: string;
+      lam: number;
+      idx: number;
+      order: number;
+    }
+    const groups = new Map<string, Amb[]>();
+    const bySat = new Map<string, Amb[]>();
+    for (const v of vis) {
+      v.sigs.forEach((sg, order) => {
+        if (!sg.fixable) return;
+        const key = `N:${v.prn}:${sg.band}`;
+        const idx = this.idx.get(key);
+        const start = this.arcStart.get(key);
+        if (idx === undefined || start === undefined) return;
+        if (tMs - start < minArcMs) return;
+        const a: Amb = {
+          prn: v.prn,
+          el: v.elRad,
+          band: sg.band,
+          lam: sg.lam,
+          idx,
+          order,
+        };
+        const g = `${v.grp}:${sg.band}:${sg.phaseCode}`;
+        const list = groups.get(g) ?? [];
+        list.push(a);
+        groups.set(g, list);
+        const ls = bySat.get(v.prn) ?? [];
+        ls.push(a);
+        bySat.set(v.prn, ls);
+      });
+    }
+    // SD ambiguity (cycles) of each candidate as a sparse row on the state;
+    // the group's reference satellite has the zero row.
+    type Row = Map<number, number>;
+    const sd = new Map<Amb, Row>();
+    const refOf = new Map<Amb, Amb>();
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      const ref = list.reduce((p, q) => (q.el > p.el ? q : p));
+      for (const a of list) refOf.set(a, ref);
+      for (const a of list)
+        sd.set(
+          a,
+          a === ref
+            ? new Map()
+            : new Map([
+                [a.idx, 1 / a.lam],
+                [ref.idx, -1 / a.lam],
+              ])
+        );
+    }
+    const comb = (terms: [Row | undefined, number][]): Row | null => {
+      const out: Row = new Map();
+      for (const [r, c] of terms) {
+        if (!r) return null;
+        for (const [i, v] of r) out.set(i, (out.get(i) ?? 0) + c * v);
+      }
+      for (const [i, v] of out) if (Math.abs(v) < 1e-12) out.delete(i);
+      return out.size ? out : null;
+    };
+    interface Lane {
+      prn: string;
+      el: number;
+      row: Row;
+      /** Wavelength of the combination (m). */
+      lamM: number;
+      /** Between-satellite Melbourne–Wübbena average (cycles) and its
+       *  shorter arc's length (epochs), for the primary wide lane. */
+      mw?: { v: number; n: number; ageS: number };
+    }
+    const ewl: Lane[] = [];
+    const wl: Lane[] = [];
+    const nl: Lane[] = [];
+    for (const [prn, ambs] of bySat) {
+      const a0 = ambs.find((q) => q.order === 0);
+      const a1 = ambs.find((q) => q.order === 1);
+      const fOf = (q: Amb) => C_LIGHT / q.lam;
+      const el = ambs[0]!.el;
+      if (a0 && a1) {
+        const r = comb([
+          [sd.get(a0), 1],
+          [sd.get(a1), -1],
+        ]);
+        const r0 = refOf.get(a0);
+        const r1 = refOf.get(a1);
+        const ms = this.mwState.get(prn);
+        const mr = r0 ? this.mwState.get(r0.prn) : undefined;
+        if (r)
+          wl.push({
+            prn,
+            el,
+            row: r,
+            lamM: C_LIGHT / Math.abs(fOf(a0) - fOf(a1)),
+            ...(r0 && r1 && r0.prn === r1.prn && ms && mr
+              ? {
+                  mw: {
+                    v: ms.mean - mr.mean,
+                    n: Math.min(ms.n, mr.n),
+                    ageS:
+                      (tMs -
+                        Math.max(
+                          this.arcStart.get(`N:${prn}:${a0.band}`) ?? tMs,
+                          this.arcStart.get(`N:${r0.prn}:${a0.band}`) ?? tMs
+                        )) /
+                      1000,
+                  },
+                }
+              : {}),
+          });
+      }
+      const base = a1 ?? a0;
+      for (const q of ambs) {
+        if (q.order < 2 || !base) continue;
+        const r = comb([
+          [sd.get(base), 1],
+          [sd.get(q), -1],
+        ]);
+        if (!r) continue;
+        const lamM = C_LIGHT / Math.abs(fOf(base) - fOf(q));
+        (lamM >= 2.5 ? ewl : wl).push({ prn, el, row: r, lamM });
+      }
+      if (a0) {
+        const r = sd.get(a0);
+        if (r && r.size) nl.push({ prn, el, row: r, lamM: a0.lam });
+      }
+    }
+    // Work on a copy of the filter.
+    const x = this.x.slice();
+    const P = this.P.map((row) => row.slice());
+    const n = x.length;
+    const val = (r: Row) => {
+      let v = 0;
+      for (const [i, c] of r) v += c * x[i]!;
+      return v;
+    };
+    const cov = (r: Row, q: Row) => {
+      let v = 0;
+      for (const [i, a] of r) for (const [j, b] of q) v += a * b * P[i]![j]!;
+      return v;
+    };
+    const impose = (r: Row, int: number) => {
+      const h = new Array<number>(n).fill(0);
+      for (const [i, c] of r) h[i] = c;
+      ekfUpdateScalar(x, P, h, int - val(r), 1e-8, 0);
+    };
+    // 1. Extra-wide lanes: rounding (metres of wavelength, decimetre σ).
+    for (const l of ewl) {
+      const f = val(l.row);
+      const sig = Math.sqrt(Math.max(cov(l.row, l.row), 0));
+      const k = Math.round(f);
+      if (sig < 0.15 && Math.abs(f - k) < maxFrac) {
+        impose(l.row, k);
+        stats.ewl++;
+      }
+    }
+    // 2. Wide lanes, then 3. narrow lanes: LAMBDA with partial fixing
+    // (the least precise ambiguity dropped until the set passes).
+    const lambdaStep = (
+      lanes: Lane[],
+      ratioMin: number,
+      srMin: number,
+      minN: number
+    ): { n: number; ratio: number; chi2: number } => {
+      let set = lanes
+        .map((l) => ({ l, v: cov(l.row, l.row) }))
+        .filter((q) => q.v < 0.5 * 0.5)
+        .sort((p, q) => p.v - q.v)
+        .map((q) => q.l);
+      let firstRatio = 0;
+      while (set.length >= Math.max(1, minN)) {
+        const m = set.length;
+        const a = new Float64Array(m);
+        const Q = new Float64Array(m * m);
+        for (let i = 0; i < m; i++) {
+          a[i] = val(set[i]!.row);
+          for (let j = 0; j < m; j++)
+            Q[i * m + j] = cov(set[i]!.row, set[j]!.row);
+        }
+        const r = lambdaSearch(a, Q, m, 2);
+        const ratio = r ? Math.min(r.ratio, 999) : 0;
+        if (!firstRatio) firstRatio = ratio;
+        if (r && ratio >= ratioMin && r.successRate >= srMin) {
+          const chi2 = r.residuals[0]! / m;
+          set.forEach((l, i) => impose(l.row, r.candidates[0]![i]!));
+          return { n: m, ratio, chi2 };
+        }
+        set = set.slice(0, -1);
+      }
+      return { n: 0, ratio: firstRatio, chi2: 0 };
+    };
+    // Wide lanes: first by the between-satellite Melbourne–Wübbena average
+    // (its own scatter, not the filter's code weight, sets its precision),
+    // when the filter agrees; the rest by LAMBDA on the filter.
+    const mwMin = cfg.wlMinEpochs ?? 10;
+    const mwAge = cfg.wlMinArcS ?? 600;
+    const wlThr = cfg.wlThreshold ?? 0.15;
+    const rest: Lane[] = [];
+    for (const l of wl) {
+      const k = l.mw ? Math.round(l.mw.v) : NaN;
+      const f = val(l.row);
+      const sig = Math.sqrt(Math.max(cov(l.row, l.row), 0));
+      if (
+        l.mw &&
+        l.mw.n >= mwMin &&
+        l.mw.ageS >= mwAge &&
+        Math.abs(l.mw.v - k) <= wlThr &&
+        Math.abs(f - k) <= Math.min(0.35, Math.max(0.15, 3 * sig))
+      ) {
+        impose(l.row, k);
+        stats.wl++;
+      } else rest.push(l);
+    }
+    if (wlLambda) stats.wl += lambdaStep(rest, 3, 0.999, 1).n;
+    stats.nlCandidates = nl.length;
+    const minFixed = cfg.minFixed ?? 5;
+    const res = lambdaStep(
+      nl,
+      cfg.ratio ?? 3,
+      cfg.successRate ?? 0.99,
+      minFixed
+    );
+    stats.nl = res.n;
+    stats.ratio = res.ratio;
+    return {
+      fixed: res.n >= minFixed && res.chi2 <= (cfg.maxChi2 ?? 20),
+      position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+      nFixed: res.n,
+      stats,
+    };
   }
 
   /* ---------------------------------------------------------------- */
@@ -1208,6 +1546,24 @@ export class PppUncombinedEngine {
       nStates: x.length,
       signalsWithoutSatAntenna: this.signalsWithoutSatAntenna,
       resets: { ...this.resets },
+      ...(this.opts.ar && this.source.phaseBias
+        ? {
+            ar: {
+              firstFixSec:
+                this.firstFixMs === null
+                  ? null
+                  : (this.firstFixMs - this.t0) / 1000,
+              fixedEpochShare: series.length
+                ? this.fixedEpochs / series.length
+                : 0,
+              position:
+                this.lastFix?.position ??
+                (this.kinematic ? null : this.lastAccepted),
+              nFixedEnd: this.lastFix?.nFixed ?? 0,
+              lastAttempt: this.lastAttempt,
+            },
+          }
+        : {}),
     };
   }
 }

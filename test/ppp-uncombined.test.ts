@@ -198,6 +198,99 @@ describe('uncombined PPP — synthetic', () => {
   });
 });
 
+describe('uncombined PPP — ambiguity resolution (synthetic)', () => {
+  // Satellite phase/code biases that an OSB product publishes, and receiver
+  // phase biases (fractional cycles) that cancel between satellites.
+  const satPhase = (prn: string, code: string) =>
+    0.37 * Math.sin(Number(prn.slice(1)) * 1.7 + code.charCodeAt(0));
+  const satCode = (prn: string, code: string) =>
+    1.1 * Math.cos(Number(prn.slice(1)) * 0.9 + code.charCodeAt(0));
+  const arSource = new SyntheticSource(
+    [
+      ...constellation('G', 24, 6, 26_560e3, 55),
+      ...constellation('E', 24, 3, 29_600e3, 56, 0.3),
+    ],
+    { code: satCode, phase: satPhase }
+  );
+  const scen = (
+    signals: Record<string, { band: string; freq: number; code: string }[]>
+  ) =>
+    simulate({
+      source: arSource,
+      signals,
+      rcv,
+      t0Ms: T0,
+      epochs: 120,
+      stepS: 30,
+      codeSigma: 0.3,
+      phaseSigma: 0.002,
+      satCodeBias: satCode,
+      satPhaseBias: satPhase,
+      rcvPhaseBias: { '1C': 0.31, '2W': -0.12, '5Q': 0.44, '7Q': 0.08 },
+      rcvCodeBias: { '5Q': 0.9, '7Q': -0.4 },
+      horizonDeg: 12,
+      seed: 7,
+    }).epochs;
+  const opts = {
+    ...base,
+    codeSigma: 0.3,
+    phaseSigma: 0.002,
+    l5PhaseBias: false as const,
+    ar: true,
+  };
+
+  it('fixes the integers and the fixed position is millimetric', () => {
+    const sol = solvePppUncombined(
+      scen({ G: GPS_L1L2, E: GAL_E1E5a }),
+      arSource,
+      opts
+    );
+    expect(sol.ar!.firstFixSec).not.toBeNull();
+    const fixed = sol.series.filter((r) => r.fixedPosition);
+    expect(fixed.length).toBeGreaterThan(60);
+    for (const r of fixed)
+      expect(Math.hypot(...enuMm(r.fixedPosition!, rcv))).toBeLessThan(10);
+    expect(Math.hypot(...enuMm(sol.ar!.position!, rcv))).toBeLessThan(3);
+    expect(sol.ar!.lastAttempt!.nl).toBeGreaterThanOrEqual(10);
+  });
+
+  it('three frequencies: the extra-wide lanes fix first, the fix comes sooner', () => {
+    const two = solvePppUncombined(
+      scen({ G: GPS_L1L2, E: GAL_E1E5a }),
+      arSource,
+      opts
+    );
+    const three = solvePppUncombined(
+      scen({
+        G: [...GPS_L1L2, { band: '5', freq: FREQ.G!['5']!, code: '5Q' }],
+        E: [...GAL_E1E5a, { band: '7', freq: FREQ.E!['7']!, code: '7Q' }],
+      }),
+      arSource,
+      opts
+    );
+    expect(three.ar!.lastAttempt!.ewl).toBeGreaterThanOrEqual(10);
+    // 4.5 vs 10 min here; a first partial fix (5 narrow lanes) sits within
+    // 2 cm, none is wrong.
+    expect(three.ar!.firstFixSec!).toBeLessThan(two.ar!.firstFixSec!);
+    for (const r of three.series.filter((q) => q.fixedPosition))
+      expect(Math.hypot(...enuMm(r.fixedPosition!, rcv))).toBeLessThan(20);
+  });
+
+  it('without phase biases there is no fix', () => {
+    const plain = new SyntheticSource([
+      ...constellation('G', 24, 6, 26_560e3, 55),
+      ...constellation('E', 24, 3, 29_600e3, 56, 0.3),
+    ]);
+    const sol = solvePppUncombined(
+      scen({ G: GPS_L1L2, E: GAL_E1E5a }),
+      plain,
+      opts
+    );
+    expect(sol.ar).toBeUndefined();
+    expect(sol.series.every((r) => r.fixedPosition === null)).toBe(true);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /*  Real data: equivalence with the ionosphere-free engine (ABMF)      */
 /* ------------------------------------------------------------------ */
