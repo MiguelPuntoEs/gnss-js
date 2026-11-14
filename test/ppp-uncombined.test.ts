@@ -101,16 +101,35 @@ describe('uncombined PPP — synthetic', () => {
       codeSigma: 3,
       phaseSigma: 0.01,
       systemSigmaScale: sigmaScale,
+      diagnostics: true,
     });
     const ifs = solvePpp(toDual(epochs), source, {
       ...base,
       slipRepair: false,
+      diagnostics: true,
     });
     const err = Math.hypot(...enuMm(uc.position, rcv));
     expect(err).toBeLessThan(5);
     const d = enuMm(uc.position, ifs.position);
     expect(Math.hypot(...d)).toBeLessThan(0.1);
     expect(uc.series).toHaveLength(240);
+    // Diagnostics in the ionosphere-free engine's terms: the same clocks
+    // and post-fit residuals once both have settled.
+    const a = uc.series.at(-1)!.diagnostics!;
+    const b = ifs.series.at(-1)!.diagnostics!;
+    expect(Object.keys(a.clockM).sort()).toEqual(Object.keys(b.clockM).sort());
+    expect(a.sats.map((q) => q.prn).sort()).toEqual(
+      b.sats.map((q) => q.prn).sort()
+    );
+    for (const q of a.sats) {
+      const r = b.sats.find((z) => z.prn === q.prn)!;
+      expect(Math.abs(q.phaseRes! - r.phaseRes!)).toBeLessThan(0.002);
+      expect(Math.abs(q.codeRes - r.codeRes)).toBeLessThan(0.05);
+      expect(q.phaseUsed && q.codeUsed).toBe(true);
+    }
+    for (let i = 0; i < 3; i++)
+      expect(a.positionSigmaEnu[i]!).toBeCloseTo(b.positionSigmaEnu[i]!, 3);
+    expect(uc.positionCovariance[0]![0]!).toBeGreaterThan(0);
   });
 
   it('three and four frequencies: code biases, the L5 clock bias', () => {
@@ -253,6 +272,9 @@ describe('uncombined PPP — ambiguity resolution (synthetic)', () => {
       expect(Math.hypot(...enuMm(r.fixedPosition!, rcv))).toBeLessThan(10);
     expect(Math.hypot(...enuMm(sol.ar!.position!, rcv))).toBeLessThan(3);
     expect(sol.ar!.lastAttempt!.nl).toBeGreaterThanOrEqual(10);
+    expect(sol.ar!.covariance![2]![2]!).toBeLessThan(
+      sol.positionCovariance[2]![2]!
+    );
   });
 
   it('three frequencies: the extra-wide lanes fix first, the fix comes sooner', () => {

@@ -63,6 +63,7 @@ import {
   tdLsq,
   tdResidual,
   type PppEphemerisSource,
+  type PppEpochDiagnostics,
   type PppEpochResult,
   type PppOptions,
 } from './ppp';
@@ -195,6 +196,8 @@ export interface PppUncombinedSolution {
   epochsUsed: number;
   convergenceSec: number | null;
   finalError3d: number | null;
+  /** Float position covariance at the end (m², ECEF 3×3). */
+  positionCovariance: number[][];
   /** States in the filter at the end (for cost accounting). */
   nStates: number;
   /** Signals left out for want of a satellite antenna calibration. */
@@ -211,6 +214,8 @@ export interface PppUncombinedSolution {
     position: [number, number, number] | null;
     /** Narrow-lane ambiguities fixed at the end. */
     nFixedEnd: number;
+    /** Covariance of `position` given the fixed integers (m², ECEF). */
+    covariance: number[][] | null;
     /** The last attempt's counts. */
     lastAttempt: ArAttemptStats | null;
   };
@@ -349,6 +354,11 @@ export class PppUncombinedEngine {
   private convergenceSec: number | null = null;
   private convergedStreak = 0;
   private signalsWithoutSatAntenna = 0;
+  /** This epoch's satellites whose code / carrier entered, and carriers
+   *  re-initialised by the gate (diagnostics). */
+  private codeUsed = new Set<string>();
+  private phaseUsed = new Set<string>();
+  private reinited = new Set<string>();
   /** Last GIM pseudo-observation per satellite (ms). */
   private gimLast = new Map<string, number>();
   private resets: Record<string, number> = {};
@@ -356,8 +366,12 @@ export class PppUncombinedEngine {
   private lastFix: {
     position: [number, number, number];
     nFixed: number;
+    covariance: number[][];
   } | null = null;
-  private lastAccepted: [number, number, number] | null = null;
+  private lastAccepted: {
+    position: [number, number, number];
+    covariance: number[][];
+  } | null = null;
   private lastArMs = -Infinity;
   private firstFixMs: number | null = null;
   private fixedEpochs = 0;
@@ -756,6 +770,9 @@ export class PppUncombinedEngine {
     }
 
     // ── Pass 2: measurement updates ──
+    this.codeUsed.clear();
+    this.phaseUsed.clear();
+    this.reinited.clear();
     const live = vis.filter((v) => !screened.has(v.prn));
     for (const v of live) this.prepStates(v, epoch.timeMs);
     if (kinematic) {
@@ -793,6 +810,10 @@ export class PppUncombinedEngine {
         }
       }
     }
+
+    const diagnostics = opts.diagnostics
+      ? this.diagnosticsOf(vis, rcv, latRad, lonRad)
+      : undefined;
 
     // Satellites unseen for > 20 epochs: drop their states.
     for (const [prn, seen] of [...this.lastSeen]) {
@@ -867,6 +888,7 @@ export class PppUncombinedEngine {
       ),
       nFixed: this.lastFix?.nFixed ?? 0,
       fixedPosition: this.lastFix?.position ?? null,
+      ...(diagnostics ? { diagnostics } : {}),
     };
     this.series.push(result);
     this.ei = ei + 1;
@@ -1187,7 +1209,8 @@ export class PppUncombinedEngine {
       h[ii] = s.mu;
       if (bi !== undefined) h[bi] = 1;
       const innov = s.P - model;
-      if (Math.abs(innov) < 1e6)
+      if (
+        Math.abs(innov) < 1e6 &&
         ekfUpdateScalar(
           this.x,
           this.P,
@@ -1195,7 +1218,9 @@ export class PppUncombinedEngine {
           innov,
           this.sigma(v, s, k).rc,
           this.gateK
-        );
+        )
+      )
+        this.codeUsed.add(v.prn);
     });
   }
 
@@ -1233,6 +1258,7 @@ export class PppUncombinedEngine {
         this.resetState(ai, x[ai]! + innov, AMB_VAR);
         this.arcStart.set(key, this.lastEpochMs ?? 0);
         this.phaseRejects.delete(key);
+        this.reinited.add(v.prn);
         return;
       }
       const h = this.baseH(v);
@@ -1247,9 +1273,104 @@ export class PppUncombinedEngine {
         this.sigma(v, s, k).rp,
         this.gateK
       );
-      if (used) this.phaseRejects.delete(key);
-      else this.phaseRejects.set(key, rejects + 1);
+      if (used) {
+        this.phaseRejects.delete(key);
+        this.phaseUsed.add(v.prn);
+      } else this.phaseRejects.set(key, rejects + 1);
     });
+  }
+
+  /**
+   * One epoch's diagnostics in the ionosphere-free engine's terms: per
+   * satellite the ionosphere-free combination of its first two signals'
+   * post-fit code and carrier residuals, the constellation's mean over the
+   * observations used removed; the receiver clocks; the ENU position σ.
+   */
+  private diagnosticsOf(
+    vis: readonly Vis[],
+    rcv: [number, number, number],
+    latRad: number,
+    lonRad: number
+  ): PppEpochDiagnostics {
+    const x = this.x;
+    const P = this.P;
+    const clockM: Record<string, number> = {};
+    for (const [k, i] of this.idx)
+      if (k.startsWith('clk:')) clockM[k.slice(4)] = x[i]!;
+    const sl = Math.sin(latRad);
+    const cl = Math.cos(latRad);
+    const so = Math.sin(lonRad);
+    const co = Math.cos(lonRad);
+    const R = [
+      [-so, co, 0],
+      [-sl * co, -sl * so, cl],
+      [cl * co, cl * so, sl],
+    ];
+    const positionSigmaEnu = R.map((r) => {
+      let v = 0;
+      for (let i = 0; i < 3; i++)
+        for (let j = 0; j < 3; j++) v += r[i]! * P[i]![j]! * r[j]!;
+      return Math.sqrt(Math.max(v, 0));
+    }) as [number, number, number];
+    const raw = vis.map((v) => {
+      const ii = this.idx.get(`I:${v.prn}`);
+      const pair = v.sigs.slice(0, 2);
+      if (ii === undefined || pair.length < 2)
+        return { v, code: 0, phase: null as number | null };
+      const g = pair[0]!.freq ** 2 / (pair[0]!.freq ** 2 - pair[1]!.freq ** 2);
+      const res = pair.map((s) => {
+        const bi = s.biasKey ? this.idx.get(s.biasKey) : undefined;
+        const code =
+          s.P -
+          (this.common(v, rcv) +
+            s.codeCorr +
+            s.mu * x[ii]! +
+            (bi !== undefined ? x[bi]! : 0));
+        return { code, phase: this.phaseInnovation(v, s, rcv) };
+      });
+      const ph =
+        res[0]!.phase === null || res[1]!.phase === null
+          ? null
+          : g * res[0]!.phase - (g - 1) * res[1]!.phase;
+      return { v, code: g * res[0]!.code - (g - 1) * res[1]!.code, phase: ph };
+    });
+    const mean = (pick: (r: (typeof raw)[number]) => number | null) => {
+      const acc = new Map<string, { s: number; n: number }>();
+      for (const r of raw) {
+        const val = pick(r);
+        if (val === null) continue;
+        const a = acc.get(r.v.prn[0]!) ?? { s: 0, n: 0 };
+        a.s += val;
+        a.n++;
+        acc.set(r.v.prn[0]!, a);
+      }
+      return (sys: string) => {
+        const a = acc.get(sys);
+        return a && a.n ? a.s / a.n : 0;
+      };
+    };
+    const codeMean = mean((r) => (this.codeUsed.has(r.v.prn) ? r.code : null));
+    const phaseMean = mean((r) =>
+      this.phaseUsed.has(r.v.prn) &&
+      r.phase !== null &&
+      Math.abs(r.phase) < 0.15
+        ? r.phase
+        : null
+    );
+    return {
+      clockM,
+      positionSigmaEnu,
+      sats: raw.map((r) => ({
+        prn: r.v.prn,
+        elevDeg: (r.v.elRad * 180) / Math.PI,
+        azDeg: ((((r.v.azRad * 180) / Math.PI) % 360) + 360) % 360,
+        codeRes: r.code - codeMean(r.v.prn[0]!),
+        phaseRes: r.phase === null ? null : r.phase - phaseMean(r.v.prn[0]!),
+        codeUsed: this.codeUsed.has(r.v.prn),
+        phaseUsed: this.phaseUsed.has(r.v.prn),
+        slip: r.v.pairSlip || this.reinited.has(r.v.prn),
+      })),
+    };
   }
 
   /* ---------------------------------------------------------------- */
@@ -1283,8 +1404,12 @@ export class PppUncombinedEngine {
     if (!res.fixed) res = this.resolve(tMs, vis, cfg, false);
     this.lastAttempt = res.stats;
     if (!res.fixed) return;
-    this.lastFix = { position: res.position, nFixed: res.nFixed };
-    this.lastAccepted = res.position;
+    this.lastFix = {
+      position: res.position,
+      nFixed: res.nFixed,
+      covariance: res.covariance,
+    };
+    this.lastAccepted = { position: res.position, covariance: res.covariance };
     this.firstFixMs ??= tMs;
   }
 
@@ -1296,6 +1421,7 @@ export class PppUncombinedEngine {
   ): {
     fixed: boolean;
     position: [number, number, number];
+    covariance: number[][];
     nFixed: number;
     stats: ArAttemptStats;
   } {
@@ -1539,6 +1665,7 @@ export class PppUncombinedEngine {
     return {
       fixed: res.n >= minFixed && res.chi2 <= (cfg.maxChi2 ?? 20),
       position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
+      covariance: [0, 1, 2].map((i) => [P[i]![0]!, P[i]![1]!, P[i]![2]!]),
       nFixed: res.n,
       stats,
     };
@@ -1567,6 +1694,11 @@ export class PppUncombinedEngine {
       finalError3d: truth
         ? Math.hypot(pos[0] - truth[0], pos[1] - truth[1], pos[2] - truth[2])
         : null,
+      positionCovariance: [0, 1, 2].map((i) => [
+        this.P[i]![0]!,
+        this.P[i]![1]!,
+        this.P[i]![2]!,
+      ]),
       nStates: x.length,
       signalsWithoutSatAntenna: this.signalsWithoutSatAntenna,
       resets: { ...this.resets },
@@ -1582,7 +1714,12 @@ export class PppUncombinedEngine {
                 : 0,
               position:
                 this.lastFix?.position ??
-                (this.kinematic ? null : this.lastAccepted),
+                (this.kinematic ? null : (this.lastAccepted?.position ?? null)),
+              covariance:
+                this.lastFix?.covariance ??
+                (this.kinematic
+                  ? null
+                  : (this.lastAccepted?.covariance ?? null)),
               nFixedEnd: this.lastFix?.nFixed ?? 0,
               lastAttempt: this.lastAttempt,
             },
