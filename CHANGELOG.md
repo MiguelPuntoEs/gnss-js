@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added — uncombined (multi-frequency) PPP
+
+- `selectPppSignals` / `PppMultiSatObs`: every usable signal of a satellite (one tracking mode per band, LLI and SNR per carrier); `toDualFrequencyObs` reduces it to the ionosphere-free engine's pair.
+- `PppAntennaModel.satBandOffset` / `rcvBandOffsets` (per-band, uncombined; `buildPppAntenna`, `withSatelliteAntennas`) and `PppCorrections.evaluateSignals` (per-band antenna, wind-up and higher-order ionosphere). Combined over a pair they equal the ionosphere-free API exactly.
+- `solvePppUncombined` / `PppUncombinedEngine`: slant ionosphere per satellite (white noise, random walk or a GIM constraint), one ambiguity per carrier, receiver code biases of extra signals, the GPS L5 inter-frequency clock bias, per-frequency slip detection. With two frequencies it reproduces `solvePpp` to < 0.1 mm (ABMF, WTZR, ONSA days).
+- Ambiguity resolution with satellite phase OSBs: extra-wide → wide → narrow lane cascade with LAMBDA and partial fixing. Eight EPN stations, 1 h windows: median time to fix 20 → 14 min with CODE's biases, 20 → 10.5 min with CNES's three-frequency biases, no wrong fixes. Report: `docs/reports/uncombined-ppp.md`.
+- `PppOptions.gateK`: the innovation gate of `solvePpp` (default 4, unchanged).
+
 ## 2.50.0
 
 ### Added — parse without the per-epoch summaries, outside a worker
