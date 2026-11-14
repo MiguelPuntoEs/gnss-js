@@ -1,7 +1,8 @@
 # Uncombined PPP — report
 
-Branch `feat/uncombined-ppp` (from 2.47.0). Everything is new API next to
-the ionosphere-free engine; no default of `solvePpp` changed.
+gnss-js branch `feat/uncombined-ppp` (rebased on 2.48.0); gnsscalc branch
+`feat/uncombined-ppp` for the site integration. Everything is new API next
+to the ionosphere-free engine; no default of `solvePpp` changed.
 
 ## What was built
 
@@ -158,7 +159,7 @@ snapshots, repair state) that the UC engine does not.
 - GPS L5 inter-frequency bias σ: 1e-4 … 1e-3 m/√s change the WTZR daily
   float by < 0.5 mm; default 3e-4.
 
-### Stage 4 — ambiguity resolution
+### Stage 4 — ambiguity resolution (first round; final numbers in Round 2)
 
 Eight EPN stations (HERS, JOZE, LPAL, MAR6, ONSA, SCOR, WTZR, ZIMM),
 2024-014, GPS + Galileo, Niell troposphere, igs20, 10° mask; windows
@@ -242,7 +243,7 @@ white noise. The constraint stays in the API (it is what makes
 single-frequency satellites usable, tested synthetically), off by default.
 Regional maps with decimetre accuracy would be the case to re-test.
 
-## Round 2 — site integration, a second and third day, the EPN benchmark
+## Round 2 — site integration, more days, the EPN benchmark
 
 Rebased on gnss-js 2.48.0. Its rule for a band a satellite's calibration
 lacks (take its other band; only an unknown satellite is dropped) now holds
@@ -366,7 +367,44 @@ Regression check first: the ionosphere-free engine with the version-1 and
 the version-2 antenna binary gives bit-identical daily coordinates and ZTD
 (WTZR, week 2297, 7 station-days).
 
-EPN_RESULTS_PLACEHOLDER
+Another EPN benchmark queue (6 parallel jobs) ran throughout, so the
+stations were solved in 3-station batches at concurrency 2 (the agreed
+limit while it runs) and the 40-station comparison was then made from the
+solution cache — the same numbers a single 40-station run gives. All 40
+stations in 2297; 35 with data in 2430 (ZIMM and a few days of others
+missing from the archive, the same for both engines). After Helmert onto
+EUREF's combined weekly solution, E/N/U RMS (mm); repeatability = RMS over
+stations of the daily scatter; "inside" = stations whose residual lies
+within the EUREF analysis centres' leave-one-out range (E/N/U):
+
+| Week | Solution                  | IF engine   | Uncombined      | IF repeatability | Uncombined repeatability | Inside, IF     | Inside, uncombined |
+| ---- | ------------------------- | ----------- | --------------- | ---------------- | ------------------------ | -------------- | ------------------ |
+| 2297 | float                     | 1.7/1.0/2.3 | 1.8/0.9/2.3     | 2.4/1.6/5.7      | 2.4/1.6/5.7              | 21/24/29 of 40 | 22/25/30           |
+| 2297 | fixed (280/280 days both) | 1.7/0.9/2.2 | **1.3/0.7/2.0** | 1.7/1.1/5.1      | 1.7/1.2/5.1              | 18/26/31       | 25/29/33           |
+| 2430 | float                     | 1.7/0.8/2.4 | 1.6/0.7/2.4     | 1.9/1.4/5.5      | 1.9/1.8/5.7              | 12/21/24 of 32 | 9/20/22            |
+| 2430 | fixed (242/242 days both) | 1.4/0.9/2.1 | **1.2/0.7/1.8** | 1.2/1.1/4.6      | 1.3/1.1/4.7              | 12/18/24       | 16/20/25           |
+
+The analysis centres themselves, leave-one-out on the same stations:
+0.9/0.6/2.5 (2297), 0.5/0.8/2.3 (2430).
+
+- Float: the same within 0.1 mm in E/U (N 0.1 better), as the equivalence
+  gate predicts — the uncombined run also uses GPS L5 and Galileo
+  E5b/E6, which do not matter in 24 h. Its 2430 North repeatability is
+  worse (1.4 → 1.8 mm); not looked into.
+- Fixed: the uncombined engine is better in every component of both weeks
+  (E 1.7 → 1.3 and 1.4 → 1.2, N 0.9 → 0.7, U 2.2 → 2.0 and 2.1 → 1.8 mm)
+  and more stations fall inside the analysis centres' range. Every day
+  fixed with both engines. The gain is consistent with the time-to-fix
+  study: the narrow lanes are fixed per carrier on a conditioned filter
+  with the hold, so the final fix of a day is more often the complete set.
+- The 15-station first look (WTZR, ONSA, JOZE, HERS, MAR6, SCOR, LPAL,
+  ZIMM, HOFN, MATE, ZECK, PYHA, SAVU, GARI, NYA2) showed the same pattern
+  (fixed E 2.0 → 1.2 / 1.2 → 0.7 mm).
+- Cost: about 3× the IF engine's CPU per station-day (≈ 12 s vs 4 s at
+  concurrency 2, GPS + GLONASS + Galileo, all signals).
+
+Results: gnsscalc `benchmark/epn/results/{2297,2430}/campaign_9dd83abe_gnss_js_2.48.0_uncombined-ppp/`
+(`float`, `ar` = IF engine; `float-uc`, `ar-uc` = uncombined).
 
 ## What is left
 
@@ -396,13 +434,39 @@ EPN_RESULTS_PLACEHOLDER
 
 ## Recommendation
 
-- **/ppp (short sessions, AR): switch, after the integration work above.**
-  The same products give fixes ~30 % sooner and in nearly every window,
-  with no wrong fixes seen, and with three-frequency phase biases about
-  half the IF engine's time to fix. Keep the IF engine as the fallback until
-  the per-band antenna binary exists and a 40-station week has been run.
-- **/campaign (24 h static): no reason to switch yet.** The daily float and
-  fixed coordinates are the same (the equivalence gate shows why); the
-  switch only pays once BeiDou/QZSS AR or slip repair need it.
-- **/stream: switch later.** Faster AR matters most there, but it needs
-  slip repair, a hold mode and 1 Hz validation first.
+- **/ppp: offer it, still behind the switch, as the AR engine to try.**
+  With the same products it fixes 3–4.5 min sooner (median 20 → 15.5–17
+  min on 64 station-days), with third-frequency phase biases 9.5–11.5 min
+  sooner (→ 10.5 min), fixes 7 % more windows, with no more wrong fixes
+  than today's engine; and the 40-station EPN weeks show better fixed
+  daily coordinates (E/N/U 1.7/0.9/2.2 → 1.3/0.7/2.0 mm and 1.4/0.9/2.1 →
+  1.2/0.7/1.8). Make it the default once someone has looked at it in the
+  browser and gnss-js is released with it.
+- **/campaign (24 h static): worth switching for fixed solutions** — the
+  EPN result above is the campaign's own recipe — after a third week
+  confirms it; float is the same either way. The ZTD backward pass can stay
+  ionosphere-free. The CPU cost (≈ 3×) matters for many-station campaigns
+  in the browser.
+- **/stream: later.** Faster AR matters most there, but it needs slip
+  repair, the hold across epochs as a filter constraint (not only a check)
+  and 1 Hz validation first.
+
+## Summary
+
+- gnss-js `feat/uncombined-ppp` (on 2.48.0): multi-signal input, per-band
+  antenna/corrections, uncombined float engine (IF-equivalent to < 0.1 mm
+  on ABMF, WTZR, ONSA), three and more frequencies, EWL → WL → NL AR with
+  OSBs, success rate ≥ 0.999 / ≥ 6 / shift χ² / hold, GIM constraint (no
+  gain), diagnostics and covariances. 1984 tests pass.
+- gnsscalc `feat/uncombined-ppp` (on origin/main, gnss-js 2.48.0 in
+  package.json; needs a gnss-js release with this branch): per-band
+  antenna binary v2 (pair API bit-identical to v1, per-band exact against
+  igs20.atx, 112 → 96 KB gzip), `loadPppInput({ multiSignal })`, /ppp
+  Advanced switch (default off), `--engine uncombined` for the EPN
+  harness, EPN results.
+- Time to fix (64 station-days, 1 h windows): 20 → 15.5 min (CODE), 20 →
+  10.5 min (CNES, three frequencies); wrong fixes as rare as today's.
+- EPN 40 stations, fixed: 1.7/0.9/2.2 → 1.3/0.7/2.0 mm (2297), 1.4/0.9/2.1
+  → 1.2/0.7/1.8 mm (2430); float unchanged.
+- Left: wrong first fixes (~1 % of windows, as today), BeiDou/QZSS AR,
+  slip repair, /campaign and /stream wiring, a browser check of /ppp.
