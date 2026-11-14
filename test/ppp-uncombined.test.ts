@@ -19,6 +19,7 @@ import {
   createPppCorrections,
   selectPppSignals,
   toDualFrequencyObs,
+  gimSlantIonoDelayL1,
   type PppMultiEpoch,
   type PppEpoch,
 } from '../src/positioning';
@@ -288,6 +289,44 @@ describe('uncombined PPP — ambiguity resolution (synthetic)', () => {
     );
     expect(sol.ar).toBeUndefined();
     expect(sol.series.every((r) => r.fixedPosition === null)).toBe(true);
+  });
+});
+
+describe('uncombined PPP — ionosphere map (synthetic)', () => {
+  // A uniform 25 TECU map; the observations carry exactly its delays.
+  const t0 = T0 - 3600e3;
+  const gim = {
+    epochs: [t0, T0 + 4 * 3600e3],
+    lats: [90, -90],
+    lons: [-180, 180],
+    maps: [new Float32Array(4).fill(25), new Float32Array(4).fill(25)],
+  };
+  const [lat, lon] = [(48 * Math.PI) / 180, (11 * Math.PI) / 180];
+  const epochs = simulate({
+    source,
+    rcv,
+    t0Ms: T0,
+    epochs: 120,
+    stepS: 30,
+    // GPS dual-frequency, Galileo E1 only.
+    signals: { G: GPS_L1L2, E: GAL_E1E5a.slice(0, 1) },
+    codeSigma: 0.3,
+    phaseSigma: 0.002,
+    horizonDeg: 12,
+    iono: (_prn, el, az, t) => gimSlantIonoDelayL1(gim, lat, lon, az, el, t)!,
+  }).epochs;
+
+  it('lets single-frequency satellites in, with a receiver code bias', () => {
+    const opts = { ...base, codeSigma: 0.3, phaseSigma: 0.002 };
+    const without = solvePppUncombined(epochs, source, opts);
+    const withGim = solvePppUncombined(epochs, source, {
+      ...opts,
+      ionosphere: { gim, gimSigmaM: 0.1 },
+    });
+    const nWithout = without.series.at(-1)!.nSats;
+    const nWith = withGim.series.at(-1)!.nSats;
+    expect(nWith).toBeGreaterThan(nWithout);
+    expect(Math.hypot(...enuMm(withGim.position, rcv))).toBeLessThan(20);
   });
 });
 

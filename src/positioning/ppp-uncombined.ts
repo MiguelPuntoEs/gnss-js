@@ -96,20 +96,28 @@ export interface PppUncombinedOptions extends Omit<
    *  satellites (needed for `ar`). */
   osb?: PppOptions['osb'];
   /**
-   * The slant ionosphere state. 'white' (default): free every epoch.
-   * 'random-walk': σ in m/√s at the reference frequency. `gim`: a global
-   * ionosphere map as a pseudo-observation of every new and continuing
-   * satellite's slant delay (σ `gimSigmaM`, default 1 m), with one
-   * receiver differential code bias per clock group then estimated (the
-   * map refers to the satellites' and the receiver's code biases removed).
+   * The slant ionosphere state. 'white' (default without a map): free
+   * every epoch. 'random-walk' (default with a map): σ in m/√s at the
+   * reference frequency. `gim`: a global ionosphere map as a pseudo-
+   * observation of each satellite's slant delay (σ `gimSigmaM`, default
+   * 1 m) when its state starts and every `gimEveryS`, with one receiver
+   * differential code bias per clock group then estimated. The map is free
+   * of the satellites' code biases, so use it with code OSBs (`osb`); a
+   * satellite with a single frequency is then usable too.
    */
   ionosphere?: {
     model?: 'white' | 'random-walk';
-    /** Random-walk σ (m/√s at 1575.42 MHz). Default 0.002. */
+    /** Random-walk σ (m/√s at 1575.42 MHz). Default 0.01 (0.6 m per √h);
+     *  2 mm/√s was too stiff on EPN data (wrong fixes, dm floats). */
     sigmaMPerSqrtS?: number;
     gim?: IonexGrid;
     /** σ of the GIM slant delay (m at 1575.42 MHz). Default 1. */
     gimSigmaM?: number;
+    /** The GIM enters when a satellite's ionosphere state starts and then
+     *  every this many seconds (its errors are correlated over hours, so
+     *  not every epoch). Default 1800. With white-noise ionosphere: every
+     *  epoch. */
+    gimEveryS?: number;
   };
   /**
    * The inter-frequency clock bias of the GPS L5 carrier (Block IIF and
@@ -341,6 +349,8 @@ export class PppUncombinedEngine {
   private convergenceSec: number | null = null;
   private convergedStreak = 0;
   private signalsWithoutSatAntenna = 0;
+  /** Last GIM pseudo-observation per satellite (ms). */
+  private gimLast = new Map<string, number>();
   private resets: Record<string, number> = {};
   // AR bookkeeping.
   private lastFix: {
@@ -360,8 +370,11 @@ export class PppUncombinedEngine {
     this.kinematic = opts.mode === 'kinematic';
     this.truth = opts.groundTruth;
     this.gateK = opts.gateK ?? 4;
-    this.ionoModel = opts.ionosphere?.model ?? 'white';
-    this.ionoQ = (opts.ionosphere?.sigmaMPerSqrtS ?? 0.002) ** 2;
+    // A GIM constrains a continuing ionosphere: random walk by default.
+    this.ionoModel =
+      opts.ionosphere?.model ??
+      (opts.ionosphere?.gim ? 'random-walk' : 'white');
+    this.ionoQ = (opts.ionosphere?.sigmaMPerSqrtS ?? 0.01) ** 2;
     this.x = [
       opts.aprioriPos[0],
       opts.aprioriPos[1],
@@ -792,6 +805,7 @@ export class PppUncombinedEngine {
           !k.startsWith('clk:')
       );
       for (const k of keys) this.arcStart.delete(k);
+      this.gimLast.delete(prn);
       this.drop(keys);
       this.tdPrev.delete(prn);
     }
@@ -1066,6 +1080,7 @@ export class PppUncombinedEngine {
     const iCode = b
       ? (b.P - b.codeCorr - (a.P - a.codeCorr)) / (b.mu - a.mu)
       : (v.gimM ?? 0);
+    const fresh = ii === undefined;
     if (ii === undefined) {
       ii = this.grow(
         ionoKey,
@@ -1074,7 +1089,16 @@ export class PppUncombinedEngine {
       );
     }
     const gimSigma = this.opts.ionosphere?.gimSigmaM ?? 1;
-    if (v.gimM !== null) {
+    const gimEveryMs = (this.opts.ionosphere?.gimEveryS ?? 1800) * 1000;
+    const lastGim = this.gimLast.get(prn);
+    if (
+      v.gimM !== null &&
+      (fresh ||
+        this.ionoModel === 'white' ||
+        lastGim === undefined ||
+        tMs - lastGim >= gimEveryMs)
+    ) {
+      this.gimLast.set(prn, tMs);
       // Receiver differential code bias of the clock group (the GIM is
       // free of it; the pair's code geometry-free carries it).
       const dKey = `DCB:${v.grp}`;

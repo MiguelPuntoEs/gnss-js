@@ -56,6 +56,7 @@ const base = {
   aprioriPos: apriori,
   ...(clk ? { clk } : {}),
   estimateGradients: true,
+  ...(process.env.MODE === 'kinematic' ? { mode: 'kinematic' as const } : {}),
 };
 let t = Date.now();
 const ifs = solvePpp(toDual(multi), sp3, {

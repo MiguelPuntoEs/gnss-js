@@ -13,6 +13,7 @@ import { parseSp3 } from '../../src/rinex/sp3';
 import { parseClk } from '../../src/rinex/clk';
 import { parseBiasSinex, SatOsbTable } from '../../src/rinex/bias-sinex';
 import { parseAntex } from '../../src/antex';
+import { parseIonex } from '../../src/rinex/ionex';
 import {
   solvePpp,
   buildPppAntenna,
@@ -50,7 +51,10 @@ const sp3 = parseSp3(txt(sp3P!));
 const clk = parseClk(txt(clkP!));
 const osb = new SatOsbTable(parseBiasSinex(txt(biaP!)));
 const antenna = buildPppAntenna(parseAntex(txt(atxP!)));
-const { header, multi: all } = await loadMulti(obsP!, { systems });
+const { header, multi: all } = await loadMulti(obsP!, {
+  systems,
+  ...(process.env.BANDS ? { bands: JSON.parse(process.env.BANDS) } : {}),
+});
 const delta = header.antDelta ?? [0, 0, 0];
 const corr = () =>
   createPppCorrections({
@@ -109,6 +113,29 @@ const engines: [string, (w: PppMultiEpoch[]) => Out][] = [
       }),
   ],
 ];
+if (process.env.GIM) {
+  const gim = parseIonex(txt(process.env.GIM));
+  for (const [name, two] of [
+    ['UC2-GIM', true],
+    ['UCall-GIM', false],
+  ] as const)
+    engines.push([
+      name,
+      (w) =>
+        solvePppUncombined(two ? firstTwo(w) : w, sp3, {
+          ...base,
+          corrections: corr(),
+          ar: true,
+          ...ucExtra,
+          ionosphere: { ...ucExtra.ionosphere, gim },
+        }),
+    ]);
+}
+if (process.env.ONLY) {
+  const keep = process.env.ONLY.split(',');
+  for (let k = engines.length - 1; k >= 0; k--)
+    if (!keep.includes(engines[k]![0])) engines.splice(k, 1);
+}
 
 const err = (p: readonly number[]) =>
   getEnuDifference(p[0]!, p[1]!, p[2]!, truth[0], truth[1], truth[2]);

@@ -69,12 +69,16 @@ export const PPP_SIGNAL_PRIORITY: Record<
     { band: '1', code: 'PC', phase: 'PC' },
     { band: '2', code: 'PC', phase: 'PC' },
   ],
+  // E5 AltBOC (band 8) is the sum of the E5a and E5b sidebands, not a
+  // frequency of its own: with both of them it only adds correlated code
+  // multipath (it worsened short float solutions on EPN data), so it is
+  // not used by default (`bands: { E: '18' }` selects it).
   E: [
     { band: '1', code: 'CXB', phase: 'CXB' },
     { band: '5', code: 'QXI', phase: 'QXI' },
     { band: '7', code: 'QXI', phase: 'QXI' },
-    { band: '8', code: 'QXI', phase: 'QXI' },
     { band: '6', code: 'CXB', phase: 'CXB' },
+    { band: '8', code: 'QXI', phase: 'QXI' },
   ],
   C: [
     { band: '2', code: 'IX', phase: 'IX' },
@@ -125,6 +129,7 @@ export function selectPppSignals(
     prio = [...order]
       .map((b) => prio!.find((p) => p.band === b))
       .filter((p): p is NonNullable<typeof p> => !!p);
+  else if (sys === 'E') prio = prio.filter((p) => p.band !== '8');
   const idx = (c: string) => codes.indexOf(c);
   const val = (i: number) => (i >= 0 ? (values[i] ?? 0) : 0);
   const signals: PppSignal[] = [];

@@ -90,6 +90,15 @@ describe('selectPppSignals', () => {
     expect(toDualFrequencyObs(s!)).toBeNull();
   });
 
+  it('Galileo E5 AltBOC only on request', () => {
+    const c = ['C1C', 'L1C', 'C5Q', 'L5Q', 'C7Q', 'L7Q', 'C8Q', 'L8Q'];
+    const v = [2.1e7, 1.1e8, 2.1e7, 8.2e7, 2.1e7, 8.4e7, 2.1e7, 8.3e7];
+    const def = selectPppSignals('E11', c, v)!;
+    expect(def.signals.map((x) => x.band)).toEqual(['1', '5', '7']);
+    const alt = selectPppSignals('E11', c, v, { bands: { E: '18' } })!;
+    expect(alt.signals.map((x) => x.band)).toEqual(['1', '8']);
+  });
+
   it('GLONASS needs the frequency channels', () => {
     const c = ['C1P', 'L1P', 'C2P', 'L2P'];
     const v = [2.1e7, 1.1e8, 2.1e7, 8.6e7];

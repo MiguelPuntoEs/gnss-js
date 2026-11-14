@@ -148,6 +148,9 @@ export interface ScenarioOptions {
   l5IfcbM?: number;
   /** Elevation below which no observation is generated (deg). */
   horizonDeg?: number;
+  /** Slant ionospheric delay at 1575.42 MHz (m); default a smooth
+   *  per-satellite function of elevation and time. */
+  iono?: (prn: string, elRad: number, azRad: number, tMs: number) => number;
 }
 
 /** Observations of a scenario, plus the integers used. */
@@ -178,7 +181,7 @@ export function simulate(o: ScenarioOptions): {
         pr = rho + clkRcvM - st.state.clkM;
         st = satStateAtEmission(o.source, prn, t, o.rcv, pr)!;
       }
-      const [el] = getAer(
+      const [el, az] = getAer(
         st.state.x,
         st.state.y,
         st.state.z,
@@ -193,7 +196,9 @@ export function simulate(o: ScenarioOptions): {
         st.state.z - o.rcv[2]
       );
       const k = Number(prn.slice(1));
-      const iono = (2 + Math.sin(e / 200 + k)) / Math.sin(Math.max(el, 0.1));
+      const iono = o.iono
+        ? o.iono(prn, el, az, t)
+        : (2 + Math.sin(e / 200 + k)) / Math.sin(Math.max(el, 0.1));
       const signals: PppSignal[] = sigsDef.map((s) => {
         const lam = C / s.freq;
         const mu = (F_REF / s.freq) ** 2;
