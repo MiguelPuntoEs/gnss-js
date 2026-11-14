@@ -110,7 +110,8 @@ export interface PppUncombinedOptions extends Omit<
   /**
    * The inter-frequency clock bias of the GPS L5 carrier (Block IIF and
    * later): a random-walk phase bias per satellite on band 5. σ in m/√s;
-   * default 1e-4 (≈ 0.6 cm per hour). `false`: none.
+   * default 3e-4 (≈ 1.8 cm per √hour; the bias reaches 10–20 cm peak to
+   * peak over half a day on Block IIF). `false`: none.
    */
   l5PhaseBias?: false | { sigmaMPerSqrtS?: number };
   /** Use at most this many signals per satellite (in their order).
@@ -164,6 +165,9 @@ export interface PppUncombinedSolution {
   nStates: number;
   /** Signals left out for want of a satellite antenna calibration. */
   signalsWithoutSatAntenna: number;
+  /** Carrier re-initialisations of continuing arcs (slips, loss of lock,
+   *  short gaps), by constellation and band ('G5', 'E7' …). */
+  resets: Record<string, number>;
   ar?: {
     /** Seconds to the first accepted fix (null: none). */
     firstFixSec: number | null;
@@ -306,6 +310,7 @@ export class PppUncombinedEngine {
   private convergenceSec: number | null = null;
   private convergedStreak = 0;
   private signalsWithoutSatAntenna = 0;
+  private resets: Record<string, number> = {};
   // AR bookkeeping.
   private lastFix: {
     position: [number, number, number];
@@ -425,7 +430,7 @@ export class PppUncombinedEngine {
         const s =
           opts.l5PhaseBias === false
             ? 0
-            : (opts.l5PhaseBias?.sigmaMPerSqrtS ?? 1e-4);
+            : (opts.l5PhaseBias?.sigmaMPerSqrtS ?? 3e-4);
         this.P[i]![i]! += s * s * dtS;
       }
     }
@@ -1041,6 +1046,8 @@ export class PppUncombinedEngine {
       } else if (s.slip) {
         this.resetState(ai, init, AMB_VAR);
         this.arcStart.set(key, tMs);
+        const k = prn[0]! + s.band;
+        this.resets[k] = (this.resets[k] ?? 0) + 1;
       }
       if (s.biasKey && !this.idx.has(s.biasKey)) {
         const rcv = this.lastRcv();
@@ -1200,6 +1207,7 @@ export class PppUncombinedEngine {
         : null,
       nStates: x.length,
       signalsWithoutSatAntenna: this.signalsWithoutSatAntenna,
+      resets: { ...this.resets },
     };
   }
 }

@@ -111,6 +111,91 @@ describe('uncombined PPP — synthetic', () => {
     expect(Math.hypot(...d)).toBeLessThan(0.1);
     expect(uc.series).toHaveLength(240);
   });
+
+  it('three and four frequencies: code biases, the L5 clock bias', () => {
+    const GPS3 = [...GPS_L1L2, { band: '5', freq: FREQ.G!['5']!, code: '5Q' }];
+    const GAL4 = [
+      ...GAL_E1E5a,
+      { band: '7', freq: FREQ.E!['7']!, code: '7Q' },
+      { band: '6', freq: FREQ.E!['6']!, code: '6C' },
+    ];
+    const scen = {
+      source,
+      rcv,
+      t0Ms: T0,
+      epochs: 480,
+      stepS: 30,
+      codeSigma: 0.3,
+      phaseSigma: 0.002,
+      rcvCodeBias: { '2W': 2.1, '5Q': 1.7, '7Q': -0.8, '6C': 0.5 },
+      // Satellite biases of the extra signals that no OSB removes here.
+      satCodeBias: (prn: string, code: string) =>
+        code === '5Q' || code === '7Q' || code === '6C'
+          ? 0.4 * Math.sin(Number(prn.slice(1)) + code.charCodeAt(0))
+          : 0,
+      l5IfcbM: 0.05,
+      horizonDeg: 12,
+    };
+    const three = simulate({ ...scen, signals: { G: GPS3, E: GAL4 } });
+    const two = simulate({
+      ...scen,
+      signals: { G: GPS_L1L2, E: GAL_E1E5a },
+    });
+    const opts = { ...base, codeSigma: 0.3, phaseSigma: 0.002 };
+    const uc3 = solvePppUncombined(three.epochs, source, opts);
+    const uc2 = solvePppUncombined(two.epochs, source, opts);
+    const noIfcb = solvePppUncombined(three.epochs, source, {
+      ...opts,
+      l5PhaseBias: false,
+    });
+    const e3 = Math.hypot(...enuMm(uc3.position, rcv));
+    const e2 = Math.hypot(...enuMm(uc2.position, rcv));
+    const eNo = Math.hypot(...enuMm(noIfcb.position, rcv));
+    const at = (s: typeof uc3, i: number) =>
+      Math.hypot(...enuMm(s.series[i]!.position, rcv));
+    // Millimetres after 4 h, with or without the extra carriers; the
+    // L5 clock bias left unmodelled costs centimetres.
+    expect(e3).toBeLessThan(3);
+    expect(e2).toBeLessThan(3);
+    expect(at(uc3, 120)).toBeLessThan(10);
+    expect(eNo).toBeGreaterThan(3 * e3);
+    expect(at(noIfcb, 120)).toBeGreaterThan(30);
+    // States: 2 per satellite more with 4 carriers (ambiguity + code bias).
+    expect(uc3.nStates).toBeGreaterThan(uc2.nStates);
+
+    // A slip on one further carrier only (no flag): found by its
+    // geometry-free change against the first, that carrier re-initialised.
+    const inView = (sys: string) =>
+      three.epochs[190]!.obs.find(
+        (o) =>
+          o.prn[0] === sys &&
+          three.epochs
+            .slice(190, 260)
+            .every((e) => e.obs.some((q) => q.prn === o.prn))
+      )!.prn;
+    const hit = [inView('G'), inView('E')];
+    const slipped = three.epochs.map((e, i) => ({
+      ...e,
+      obs: e.obs.map((o) =>
+        i >= 200 && hit.includes(o.prn)
+          ? {
+              ...o,
+              signals: o.signals.map((s) =>
+                s.band === (o.prn[0] === 'G' ? '5' : '7')
+                  ? { ...s, cp: s.cp + 3 }
+                  : s
+              ),
+            }
+          : o
+      ),
+    }));
+    const ucSlip = solvePppUncombined(slipped, source, opts);
+    expect(Math.hypot(...enuMm(ucSlip.position, rcv))).toBeLessThan(3);
+    const more = (k: string) => (ucSlip.resets[k] ?? 0) - (uc3.resets[k] ?? 0);
+    expect(more('G5')).toBe(1);
+    expect(more('E7')).toBe(1);
+    expect(more('G1') + more('G2') + more('E1') + more('E5')).toBe(0);
+  });
 });
 
 /* ------------------------------------------------------------------ */
