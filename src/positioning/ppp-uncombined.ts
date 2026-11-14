@@ -167,6 +167,10 @@ export interface PppUncombinedOptions extends Omit<
         /** Min bootstrapped success rate of the narrow-lane set. Default
          *  0.99. */
         successRate?: number;
+        /** Static sessions whose final attempt failed report the last
+         *  accepted fix only within this 3D distance (m) of the final float
+         *  position. Default 0.03. */
+        maxFloatGapM?: number;
         /** Max χ²/dof of the float vs fixed narrow lanes. Default 20. */
         maxChi2?: number;
       };
@@ -216,6 +220,11 @@ export interface PppUncombinedSolution {
     nFixedEnd: number;
     /** Covariance of `position` given the fixed integers (m², ECEF). */
     covariance: number[][] | null;
+    /** 3D distance (m) between that fix and the final float position. */
+    floatGapM: number | null;
+    /** Set when the final attempt failed and the last accepted fix lay
+     *  more than `maxFloatGapM` from the final float position. */
+    rejected: 'float-gap' | null;
     /** The last attempt's counts. */
     lastAttempt: ArAttemptStats | null;
   };
@@ -1675,6 +1684,38 @@ export class PppUncombinedEngine {
   /*  Session result                                                   */
   /* ---------------------------------------------------------------- */
 
+  /** The session's fix: the final attempt's, or (static) the last accepted
+   *  one while it still lies within `maxFloatGapM` of the final float
+   *  position (as the ionosphere-free engine does). */
+  private arSummary(
+    finalPos: [number, number, number]
+  ): NonNullable<PppUncombinedSolution['ar']> {
+    const ar = this.opts.ar;
+    const maxGap =
+      (typeof ar === 'object' ? ar.maxFloatGapM : undefined) ?? 0.03;
+    const cand = this.lastFix ?? (this.kinematic ? null : this.lastAccepted);
+    const floatGapM = cand
+      ? Math.hypot(
+          cand.position[0] - finalPos[0],
+          cand.position[1] - finalPos[1],
+          cand.position[2] - finalPos[2]
+        )
+      : null;
+    const ok = cand !== null && (this.lastFix !== null || floatGapM! <= maxGap);
+    const series = this.series;
+    return {
+      firstFixSec:
+        this.firstFixMs === null ? null : (this.firstFixMs - this.t0) / 1000,
+      fixedEpochShare: series.length ? this.fixedEpochs / series.length : 0,
+      position: ok ? cand.position : null,
+      covariance: ok ? cand.covariance : null,
+      floatGapM,
+      rejected: cand !== null && !ok ? 'float-gap' : null,
+      nFixedEnd: this.lastFix?.nFixed ?? 0,
+      lastAttempt: this.lastAttempt,
+    };
+  }
+
   solution(): PppUncombinedSolution {
     const x = this.x;
     const pos: [number, number, number] = [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!];
@@ -1703,27 +1744,7 @@ export class PppUncombinedEngine {
       signalsWithoutSatAntenna: this.signalsWithoutSatAntenna,
       resets: { ...this.resets },
       ...(this.opts.ar && this.source.phaseBias
-        ? {
-            ar: {
-              firstFixSec:
-                this.firstFixMs === null
-                  ? null
-                  : (this.firstFixMs - this.t0) / 1000,
-              fixedEpochShare: series.length
-                ? this.fixedEpochs / series.length
-                : 0,
-              position:
-                this.lastFix?.position ??
-                (this.kinematic ? null : (this.lastAccepted?.position ?? null)),
-              covariance:
-                this.lastFix?.covariance ??
-                (this.kinematic
-                  ? null
-                  : (this.lastAccepted?.covariance ?? null)),
-              nFixedEnd: this.lastFix?.nFixed ?? 0,
-              lastAttempt: this.lastAttempt,
-            },
-          }
+        ? { ar: this.arSummary(pos) }
         : {}),
     };
   }
