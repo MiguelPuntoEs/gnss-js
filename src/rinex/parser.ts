@@ -617,12 +617,25 @@ function flagDigit(c: string | undefined): number | null {
   return d >= 0 && d <= 9 ? d : null;
 }
 
+/**
+ * What {@link parseRinexStream} does besides reading: the per-epoch
+ * summaries (EpochSummary, and the stats built from them — only a QC view
+ * needs them, ~30 % of the parse) and the setTimeout yields that keep a
+ * page responsive (pointless in a worker). Both on by default.
+ */
+export interface ParseStreamMode {
+  /** Build the per-epoch summaries and stats. Default true. */
+  summaries?: boolean;
+  /** Yield to the event loop while reading. Default true. */
+  yieldToUi?: boolean;
+}
+
 export interface ParseOptions {
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
   onSatObs?: SatObsCallback;
-  /** Skip EpochSummary construction and setTimeout yields (for Web Worker). */
-  workerMode?: boolean;
+  /** `true`: no summaries and no yields (a Web Worker); or each separately. */
+  workerMode?: boolean | ParseStreamMode;
 }
 
 export async function parseRinexStream(
@@ -630,11 +643,18 @@ export async function parseRinexStream(
   onProgress?: (percent: number) => void,
   signal?: AbortSignal,
   onSatObs?: SatObsCallback,
-  workerMode?: boolean,
+  /** `true`: no summaries and no yields (a Web Worker). An object sets
+   *  them separately — e.g. `{ summaries: false }` on a page that only
+   *  needs the observations, still yielding to keep it responsive. */
+  workerMode?: boolean | ParseStreamMode,
   onEpoch?: ObsEpochCallback
 ): Promise<RinexResult> {
-  const skipEpochs = !!workerMode;
-  const yield_ = workerMode ? noYield : yieldToMain;
+  const mode: ParseStreamMode =
+    typeof workerMode === 'object'
+      ? workerMode
+      : { summaries: !workerMode, yieldToUi: !workerMode };
+  const skipEpochs = mode.summaries === false;
+  const yield_ = mode.yieldToUi === false ? noYield : yieldToMain;
   const decoder = new TextDecoder('ascii');
   let buffer = '';
   let header: RinexHeader | null = null;
