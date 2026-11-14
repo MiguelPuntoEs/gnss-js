@@ -171,6 +171,9 @@ export interface PppUncombinedOptions extends Omit<
          *  accepted fix only within this 3D distance (m) of the final float
          *  position. Default 0.03. */
         maxFloatGapM?: number;
+        /** Accept a fix only when the previous attempt fixed within this
+         *  3D distance (m) of it. Default 0 (off). */
+        confirmM?: number;
         /** Attempt only once the float 3D position σ is below this (m).
          *  Default no limit. */
         maxFloatSigmaM?: number;
@@ -388,6 +391,8 @@ export class PppUncombinedEngine {
     covariance: number[][];
   } | null = null;
   private lastArMs = -Infinity;
+  /** The previous attempt's fixed position (null: it did not fix). */
+  private prevAttemptFix: [number, number, number] | null = null;
   private firstFixMs: number | null = null;
   private fixedEpochs = 0;
   private lastAttempt: ArAttemptStats | null = null;
@@ -1426,7 +1431,23 @@ export class PppUncombinedEngine {
     let res = this.resolve(tMs, vis, cfg, true);
     if (!res.fixed) res = this.resolve(tMs, vis, cfg, false);
     this.lastAttempt = res.stats;
+    // Two consecutive attempts must agree: a fix is accepted only when the
+    // previous attempt fixed too, within `confirmM` of this one (a set of
+    // integers that changes from one attempt to the next is not trusted).
+    const prev = this.prevAttemptFix;
+    this.prevAttemptFix = res.fixed ? res.position : null;
     if (!res.fixed) return;
+    const confirm = cfg.confirmM ?? 0;
+    if (
+      confirm > 0 &&
+      (!prev ||
+        Math.hypot(
+          res.position[0] - prev[0],
+          res.position[1] - prev[1],
+          res.position[2] - prev[2]
+        ) > confirm)
+    )
+      return;
     this.lastFix = {
       position: res.position,
       nFixed: res.nFixed,

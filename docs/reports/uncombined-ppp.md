@@ -9,7 +9,7 @@ the ionosphere-free engine; no default of `solvePpp` changed.
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Multi-signal input     | `ppp-signals.ts`: `PppSignal`, `PppMultiSatObs`, `selectPppSignals`, `toDualFrequencyObs`, `PPP_SIGNAL_PRIORITY`                                               | One tracking mode per band (code and carrier picked independently, e.g. GPS C1W + L1C), LLI and SNR per carrier, GLONASS FDMA by channel, band order per constellation overridable (`bands: { C: '15' }`). The first two signals are the clock-reference pair (GPS L1/L2, GLONASS G1/G2, Galileo E1/E5a, BeiDou B1I/B3I, QZSS L1/L2). Galileo E5 AltBOC is left out by default (see below). |
 | Per-band antenna model | `ppp-antenna.ts`: `PppAntennaModel.satBandOffset`, `rcvBandOffsets` (optional, implemented by `buildPppAntenna` and passed through by `withSatelliteAntennas`) | Uncombined PCO/PCV per ANTEX frequency. The GPS fallback for uncalibrated bands is applied so that a pair combines exactly to `rcvOffset` (both `gps-bands` and `gps-if`); a missing third band alone takes GPS L5, else L2. The IF API is unchanged.                                                                                                                                       |
-| Per-signal corrections | `ppp-corrections.ts`: `PppCorrections.evaluateSignals`                                                                                                         | Common station displacement + marker→ARP; per band antenna, wind-up × λ_j, higher-order ionosphere on code and phase. A signal whose satellite has no calibration for its band is flagged `missing` and dropped (the IF engine silently uses no offset).                                                                                                                                    |
+| Per-signal corrections | `ppp-corrections.ts`: `PppCorrections.evaluateSignals`                                                                                                         | Common station displacement + marker→ARP; per band antenna, wind-up × λ_j, higher-order ionosphere on code and phase. As 2.48's `evaluate`: a band a known satellite's calibration lacks takes its other bands' offset (the pair rule), an unknown satellite is excluded.                                                                                                                  |
 | Uncombined engine      | `ppp-uncombined.ts`: `PppUncombinedEngine` (streaming), `solvePppUncombined` (batch)                                                                           | See the model below.                                                                                                                                                                                                                                                                                                                                                                        |
 | AR cascade             | same file, `ar` option                                                                                                                                         | EWL → WL → NL with satellite phase OSBs, LAMBDA with partial fixing.                                                                                                                                                                                                                                                                                                                        |
 | Ionosphere constraint  | same file, `ionosphere: { gim }`                                                                                                                               | GIM pseudo-observations + receiver DCB per clock group; single-frequency satellites usable.                                                                                                                                                                                                                                                                                                 |
@@ -67,8 +67,11 @@ group and carrier tracking mode; per satellite the extra-wide lanes
 E5a−E5b 9.8 m, E5a−E6 2.9 m) fixed by rounding; the wide lane (first minus
 second) from the between-satellite Melbourne–Wübbena average when the
 filter agrees, the rest by LAMBDA on the filter; then the narrow lane (the
-first carrier) by LAMBDA with ratio ≥ 3, bootstrapped success rate ≥ 0.99,
-χ² and partial fixing (≥ 5). Each step is imposed as a constraint before
+first carrier) by LAMBDA with ratio ≥ 3, bootstrapped success rate ≥ 0.999,
+χ², partial fixing (≥ 6), and a test that the fixed position's shift from
+the float fits the float covariance (χ², 3 dof, 99.9 %) — the thresholds
+were 0.99 / 5 without the shift test in the first round; a disturbed day
+(2024-017) showed wrong partial fixes with them (see Round 2). Each step is imposed as a constraint before
 the next. If the narrow lanes fail, the attempt is redone with the
 Melbourne–Wübbena wide lanes only — the filter-based wide lanes of new,
 low satellites were occasionally wrong (ONSA, before this fallback: a
@@ -234,6 +237,113 @@ the slant ionosphere at 30 s moves faster than that; 1 cm/√s behaves like
 white noise. The constraint stays in the API (it is what makes
 single-frequency satellites usable, tested synthetically), off by default.
 Regional maps with decimetre accuracy would be the case to re-test.
+
+## Round 2 — site integration, a second and third day, the EPN benchmark
+
+Rebased on gnss-js 2.48.0. Its rule for a band a satellite's calibration
+lacks (take its other band; only an unknown satellite is dropped) now holds
+per band as well: `satBandOffset(prn, t, band, others)` falls back to the
+first of the satellite's other bands it has, exactly as `satOffset` does
+for a pair, and `evaluateSignals` excludes an unknown satellite.
+
+### Per-band compact antenna model (gnsscalc `public/antenna-igs20.bin`)
+
+Layout version 2 (`scripts/gen-antenna-model.mts`, reader
+`src/util/antenna-model.ts`): every band of every satellite record and the
+PPP bands of every receiver type (21 band codes), PCO and no-azimuth PCV as
+0.01 mm integers — the ANTEX's own resolution, so `parseAntex`'s values come
+back exactly (an ANTEX "-0.00" included, coded with the integer type's
+minimum); identical bands of a receiver share one block. The reader rebuilds
+ANTEX entries and lets `buildPppAntenna` do every combination:
+
+- per-band API (`satBandOffset`, `rcvBandOffsets`) = `buildPppAntenna`
+  on the full igs20.atx, value for value (azimuth PCV is left out, as
+  before);
+- pair API (`satOffset`, `rcvOffset`) = what the version-1 file gave, bit
+  for bit (the pair's ionosphere-free offset rounded to float32): the
+  generator checks this against the previous binary (2271 satellite and
+  receiver records) and the full ATX (28112 checks), and a test repeats the
+  full-ATX proof when `IGS20_ATX` points at the file;
+- a version-1 reader rejects the file ("unsupported antenna-model version
+  2"); `loadAntennaModel` now logs load failures instead of swallowing
+  them.
+
+Size: 198 KB → 225 KB raw, 112 KB → 96 KB gzip (383 satellite records,
+512 receiver types).
+
+### gnsscalc wiring (branch `feat/uncombined-ppp`)
+
+- `loadPppInput(file, { multiSignal: true })` also returns every usable
+  signal per satellite with loss-of-lock flags (`PppInput.multi`: RINEX,
+  receiver logs, RTCM), through the receiver rules, the constellation
+  restriction and multi-file merges.
+- /ppp, Advanced: "Uncombined engine (every frequency)", default off. Same
+  products, corrections, troposphere, known start, kinematic; PPP-AR
+  through the existing CODE → CNES product path; the engine's diagnostics
+  feed the report annex and its covariances the formal σ; the result's
+  details show the engine and the bands used. Built and type-checked, not
+  eyeballed in a browser.
+- `CampaignDayOptions.engine: 'uncombined'` and `--engine uncombined` in
+  the EPN harness (results under a `-uc` variant); /campaign itself is
+  unchanged.
+- gnss-js additions this needed: per-epoch `diagnostics` from the
+  uncombined engine (the primary pair's ionosphere-free post-fit residuals,
+  clocks, ENU σ — equal to `solvePpp`'s on the synthetic equivalence
+  scenario), the float position covariance and the fixed one, and the
+  `maxFloatGapM` guard on the session's fix.
+
+### Time to fix on three days (34 station-days)
+
+A second, disturbed day (2024-017, 16 stations) showed wrong partial fixes
+with the first round's acceptance (narrow-lane success rate 0.99, ≥ 5
+ambiguities): 6 of 192 one-hour CODE windows, 15 of 192 CNES windows with
+all frequencies — typically 5 narrow lanes fixed on a float still ~10 cm
+off with a 12 cm formal σ. Tried on 10 stations × 2 days: a float-σ gate
+(< 8 cm) cut wrong windows little and cost 4–7 min; arcs ≥ 5 min changed
+nothing; success rate 0.999 with ≥ 6 ambiguities removed most of them for
+1–2 min. That, plus a χ² test of the fixed position's shift against the
+float covariance, is now the default. The study below is with it, on
+2024-014 (8 stations), 2024-017 (16) and 2024-020 (10), windows as before,
+GPS + Galileo; the session's fix is what the page reports (the final
+attempt's, or the last accepted one within 3 cm of the final float):
+
+| Products | Window | Engine | Windows | Fixed at end | Fixed within window | TTF median / p75 (min) | Windows with wrong fixes (epochs) | End error RMS E/N/U (mm) | Float 3D 15/30/60 min (mm) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CODE | 1 h | IF-AR | 408 | 356 | 364 | 20.0 / 28.0 | 3 (36) | 13.0/6.8/19.1 | 48/30/20 |
+| CODE | 1 h | IF-AR30 | 408 | 354 | 365 | 19.5 / 26.0 | 4 (38) | 13.0/7.0/18.5 | 48/30/20 |
+| CODE | 1 h | UC2 | 408 | 364 | 388 | 15.5 / 18.5 | 0 | 12.6/6.6/17.2 | 45/31/20 |
+| CODE | 1 h | UCall | 408 | 364 | 388 | 15.5 / 18.0 | 0 | 12.4/6.5/16.8 | 47/30/22 |
+| CODE | 2 h | IF-AR | 272 | 259 | 260 | 21.0 / 30.0 | 3 (12) | 5.1/4.4/12.7 | 50/32/21 |
+| CODE | 2 h | IF-AR30 | 272 | 257 | 260 | 20.0 / 27.5 | 4 (11) | 5.7/4.3/12.8 | 50/32/21 |
+| CODE | 2 h | UC2 | 272 | 262 | 270 | 16.8 / 21.5 | 2 (9) | 5.6/4.1/12.6 | 53/28/21 |
+| CODE | 2 h | UCall | 272 | 263 | 270 | 16.5 / 21.0 | 2 (8) | 5.5/4.0/12.4 | 54/29/22 |
+| CNES | 1 h | IF-AR | 408 | 347 | 360 | 20.0 / 26.0 | 2 (12) | 15.7/8.1/18.1 | 48/36/23 |
+| CNES | 1 h | IF-AR30 | 408 | 351 | 364 | 20.0 / 25.5 | 2 (7) | 15.2/8.0/18.1 | 48/36/23 |
+| CNES | 1 h | UC2 | 408 | 352 | 388 | 15.5 / 18.5 | 3 (50) | 12.8/7.3/17.8 | 47/34/23 |
+| CNES | 1 h | UCall | 408 | 355 | 392 | **10.5 / 14.5** | 7 (55) | 12.4/7.3/17.1 | 47/30/22 |
+| CNES | 2 h | IF-AR | 272 | 256 | 262 | 22.0 / 32.0 | 2 (40) | 7.2/6.3/13.4 | 57/36/23 |
+| CNES | 2 h | IF-AR30 | 272 | 255 | 262 | 20.5 / 31.0 | 2 (45) | 7.3/6.3/13.5 | 57/36/23 |
+| CNES | 2 h | UC2 | 272 | 256 | 267 | 16.5 / 20.0 | 1 (22) | 6.8/6.2/13.3 | 60/36/22 |
+| CNES | 2 h | UCall | 272 | 260 | 268 | **10.5 / 14.5** | 3 (43) | 5.6/5.8/12.7 | 58/36/22 |
+
+Per day the medians hardly move (CODE 1 h UC: 15.0 / 15.5 / 16.0 min on
+014 / 017 / 020; IF 20 min every day). Reading:
+
+- Time to fix: −4.5 to −5 min with the same products and two
+  frequencies, −9.5 to −11.5 min with third-frequency phase biases (CNES),
+  p75 −8 to −17 min. More windows fix at all (CODE 1 h: 388 vs 364 of
+  408).
+- Wrong fixes: with CODE's daily biases the uncombined engine has fewer
+  (0 vs 3 windows in 1 h, 2 vs 3 in 2 h). With CNES's 30-second biases
+  and all frequencies it has more: 7 of 408 one-hour windows vs 2. Most
+  are evening windows (16–22 h) of 2024-017 and -020 at HERS, SAVU, WTZR,
+  ZECK, the same windows in which the IF engine also struggles (WTZR 14:00,
+  ZECK 20:00); the extra-wide lanes fix quickly there and the narrow lanes
+  follow on them. Before /ppp offers it by default this needs either a
+  wide-lane validation across attempts or a hold on the integers that
+  survived several attempts.
+- The fixed coordinate at the end of a window is as good or better (E RMS
+  12–13 vs 13–16 mm in 1 h windows), the float the same.
 
 ## What is left
 
