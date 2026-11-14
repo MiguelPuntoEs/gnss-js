@@ -34,7 +34,10 @@ export function c2415() {
 export function neu(x, d) {
   const lon = Math.atan2(x[1], x[0]);
   const lat = Math.atan2(x[2], Math.hypot(x[0], x[1]) * (1 - 0.00669438));
-  const sl = Math.sin(lat), cl = Math.cos(lat), so = Math.sin(lon), co = Math.cos(lon);
+  const sl = Math.sin(lat),
+    cl = Math.cos(lat),
+    so = Math.sin(lon),
+    co = Math.cos(lon);
   return [
     -sl * co * d[0] - sl * so * d[1] + cl * d[2],
     -so * d[0] + co * d[1],
@@ -47,7 +50,8 @@ export const median = (a) => {
   const n = s.length;
   return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : NaN;
 };
-export const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+export const rms = (a) =>
+  Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
 
 /** Station positions (X, Y, Z at the param epoch) of a solution keyed by site|soln. */
 export function stationsOf(params, estimate) {
@@ -56,7 +60,8 @@ export function stationsOf(params, estimate) {
     const k = ['STAX', 'STAY', 'STAZ'].indexOf(p.type);
     if (k < 0) return;
     const key = p.site;
-    if (!m.has(key)) m.set(key, { xyz: [0, 0, 0], epochMs: p.refEpochMs, idx: [0, 0, 0] });
+    if (!m.has(key))
+      m.set(key, { xyz: [0, 0, 0], epochMs: p.refEpochMs, idx: [0, 0, 0] });
     m.get(key).xyz[k] = estimate[i];
     m.get(key).idx[k] = i;
   });
@@ -68,8 +73,16 @@ export function eurefDatumStations(sumText) {
   const out = [];
   for (const l of sumText.split(/\r?\n/)) {
     const f = l.trim().split(/\s+/);
-    if (/^[A-Z0-9]{4}00[A-Z]{3}$/.test(f[0] ?? '') && f.length >= 9 && /^[+X-]{7}$/.test(f[2]))
-      out.push({ site: f[0].slice(0, 4), rejected: f[9] === 'R', neu: f.slice(6, 9).map(Number) });
+    if (
+      /^[A-Z0-9]{4}00[A-Z]{3}$/.test(f[0] ?? '') &&
+      f.length >= 9 &&
+      /^[+X-]{7}$/.test(f[2])
+    )
+      out.push({
+        site: f[0].slice(0, 4),
+        rejected: f[9] === 'R',
+        neu: f.slice(6, 9).map(Number),
+      });
   }
   return out;
 }
@@ -79,7 +92,10 @@ export function eurefExcludedDays(sumText) {
   const out = new Map();
   for (const l of sumText.split(/\r?\n/)) {
     const f = l.trim().split(/\s+/);
-    if (/^[A-Z0-9]{4}00[A-Z]{3}$/.test(f[0] ?? '') && /^[+X-]{7}$/.test(f[2] ?? '')) {
+    if (
+      /^[A-Z0-9]{4}00[A-Z]{3}$/.test(f[0] ?? '') &&
+      /^[+X-]{7}$/.test(f[2] ?? '')
+    ) {
       const days = [...f[2]].flatMap((c, i) => (c === 'X' ? [i] : []));
       if (days.length) out.set(f[0].slice(0, 4), days);
     }
