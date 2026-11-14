@@ -40,6 +40,30 @@ export interface PppAntennaModel {
     f1: number,
     f2: number
   ): AntennaOffset | null;
+  /**
+   * Per-band satellite offset (one ANTEX frequency, not combined), for the
+   * uncombined engine; null when the satellite has no calibration of that
+   * band. Optional: a model without it serves only the ionosphere-free
+   * engine.
+   */
+  satBandOffset?(
+    prn: string,
+    dateMs: number,
+    band: string
+  ): AntennaOffset | null;
+  /**
+   * Per-band receiver offsets for one satellite's bands (in its signal
+   * order: the first two are its primary pair). Missing bands follow the
+   * model's GPS fallback, applied so that the first two bands' ionosphere-
+   * free combination equals `rcvOffset` of the pair: when either of the
+   * first two is uncalibrated every band falls back (by position to GPS
+   * L1, L2, L5); a missing third or later band alone takes GPS L5, else
+   * L2. Null when the antenna type is not calibrated at all.
+   */
+  rcvBandOffsets?(
+    antType: string,
+    bands: readonly string[]
+  ): AntennaOffset[] | null;
 }
 
 /** Parse an ANTEX validity timestamp ("YYYY MM DD HH MM SS.sss") to ms. */
@@ -109,6 +133,22 @@ function combineIf(
   };
 }
 
+/** One ANTEX frequency's PCO (m) + PCV (m), uncombined. */
+function single(fA: FrequencyData): AntennaOffset {
+  const mm = 1e-3;
+  const pcvNoazi = fA.pcvNoazi.map((v) => pv(v) * mm);
+  const pcvAzi = fA.pcv.length
+    ? fA.pcv.map((row) => row.slice(0, pcvNoazi.length).map((v) => pv(v) * mm))
+    : undefined;
+  return {
+    pco: [fA.pcoN * mm, fA.pcoE * mm, fA.pcoU * mm],
+    pcvZen1Deg: 0,
+    pcvDzenDeg: 0,
+    pcvNoazi,
+    ...(pcvAzi ? { pcvAzi } : {}),
+  };
+}
+
 export interface PppAntennaBuildOptions {
   /**
    * Receiver antennas calibrated for GPS only, used on another
@@ -151,28 +191,35 @@ export function buildPppAntenna(
     };
   };
 
+  /** The entry whose validity window contains the date; outside every
+   *  window (ANTEX not yet updated for a PRN's new spacecraft, or a
+   *  retired PRN) the nearest window's. */
+  const satEntry = (prn: string, dateMs: number): AntennaEntry | undefined => {
+    const list = sats.get(prn);
+    if (!list) return undefined;
+    let entry: AntennaEntry | undefined;
+    let bestDist = Infinity;
+    for (const e of list) {
+      const from = parseAntexTime(e.validFrom) ?? -Infinity;
+      const until = parseAntexTime(e.validUntil) ?? Infinity;
+      if (dateMs >= from && dateMs <= until) return e;
+      const dist = dateMs < from ? from - dateMs : dateMs - until;
+      if (dist < bestDist) {
+        bestDist = dist;
+        entry = e;
+      }
+    }
+    return entry;
+  };
+  /** Exact type + radome, else the same antenna without a radome (IGS
+   *  practice when a radome combination is uncalibrated). */
+  const rcvEntry = (antType: string): AntennaEntry | undefined =>
+    rcvs.get(antType) ??
+    rcvs.get(antType.substring(0, 16).padEnd(16, ' ') + 'NONE');
+
   return {
     satOffset(prn, dateMs, band1, band2, f1, f2) {
-      const list = sats.get(prn);
-      if (!list) return null;
-      // The entry whose validity window contains the date; outside every
-      // window (ANTEX not yet updated for a PRN's new spacecraft, or a
-      // retired PRN) the nearest window's.
-      let entry: AntennaEntry | undefined;
-      let bestDist = Infinity;
-      for (const e of list) {
-        const from = parseAntexTime(e.validFrom) ?? -Infinity;
-        const until = parseAntexTime(e.validUntil) ?? Infinity;
-        if (dateMs >= from && dateMs <= until) {
-          entry = e;
-          break;
-        }
-        const dist = dateMs < from ? from - dateMs : dateMs - until;
-        if (dist < bestDist) {
-          bestDist = dist;
-          entry = e;
-        }
-      }
+      const entry = satEntry(prn, dateMs);
       if (!entry) return null;
       // A band the entry lacks (e.g. a new signal before the ANTEX has it):
       // the satellite's other calibrated band, so a known satellite always
@@ -183,12 +230,13 @@ export function buildPppAntenna(
       if (!a || !b) return null;
       return withZen(entry, combineIf(a, b, f1, f2));
     },
+    satBandOffset(prn, dateMs, band) {
+      const entry = satEntry(prn, dateMs);
+      const a = entry && freqOf(entry, band);
+      return a ? withZen(entry, single(a)) : null;
+    },
     rcvOffset(antType, band1, band2, f1, f2) {
-      // Exact type + radome, else the same antenna without a radome (IGS
-      // practice when a radome combination is uncalibrated).
-      const entry =
-        rcvs.get(antType) ??
-        rcvs.get(antType.substring(0, 16).padEnd(16, ' ') + 'NONE');
+      const entry = rcvEntry(antType);
       if (!entry) return null;
       let a = freqOf(entry, band1);
       let b = freqOf(entry, band2);
@@ -206,6 +254,32 @@ export function buildPppAntenna(
       }
       if (!a || !b) return null;
       return withZen(entry, combineIf(a, b, fa, fb));
+    },
+    rcvBandOffsets(antType, bands) {
+      const entry = rcvEntry(antType);
+      if (!entry) return null;
+      const own = bands.map((b) => freqOf(entry, b));
+      const gps = (k: number) =>
+        k === 0
+          ? freqOf(entry, 'G01')
+          : k === 1
+            ? freqOf(entry, 'G02')
+            : (freqOf(entry, 'G05') ?? freqOf(entry, 'G02'));
+      const pairOk = own.slice(0, 2).every((f) => !!f);
+      if (!pairOk && options.missingBands === 'gps-if') {
+        const a = freqOf(entry, 'G01');
+        const b = freqOf(entry, 'G02');
+        if (!a || !b) return null;
+        const off = withZen(entry, combineIf(a, b, 1575.42e6, 1227.6e6));
+        return bands.map(() => off);
+      }
+      const out: AntennaOffset[] = [];
+      for (let k = 0; k < bands.length; k++) {
+        const f = pairOk ? (own[k] ?? gps(k)) : gps(k);
+        if (!f) return null;
+        out.push(withZen(entry, single(f)));
+      }
+      return out;
     },
   };
 }
@@ -233,6 +307,24 @@ export function withSatelliteAntennas(
       return own ?? base.satOffset(prn, dateMs, band1, band2, f1, f2);
     },
     rcvOffset: (...a) => base.rcvOffset(...a),
+    ...(base.satBandOffset
+      ? {
+          satBandOffset(prn: string, dateMs: number, band: string) {
+            const own =
+              (!systems || systems.includes(prn[0]!)) &&
+              satellites.satBandOffset
+                ? satellites.satBandOffset(prn, dateMs, band)
+                : null;
+            return own ?? base.satBandOffset!(prn, dateMs, band);
+          },
+        }
+      : {}),
+    ...(base.rcvBandOffsets
+      ? {
+          rcvBandOffsets: (t: string, b: readonly string[]) =>
+            base.rcvBandOffsets!(t, b),
+        }
+      : {}),
   };
 }
 

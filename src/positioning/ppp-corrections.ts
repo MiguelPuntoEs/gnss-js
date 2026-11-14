@@ -51,6 +51,42 @@ export interface CorrectionResult {
   exclude?: boolean;
 }
 
+/** Per-satellite geometry for the per-signal (uncombined) corrections. */
+export interface SatGeomSignals {
+  prn: string;
+  satEcef: [number, number, number];
+  satVel?: [number, number, number];
+  rcvEcef: [number, number, number];
+  /** Unit line of sight, receiver → satellite. */
+  los: [number, number, number];
+  elRad: number;
+  azRad: number;
+  /** The satellite's signals: ANTEX band code and carrier frequency (Hz). */
+  signals: readonly { band: string; freq: number }[];
+}
+
+/** Corrections per signal (the uncombined engine). */
+export interface SignalCorrectionResult {
+  /** Range correction common to every code and carrier (m): station
+   *  displacements (tides, loading) and the marker → ARP delta. */
+  rangeM: number;
+  /** Per signal (same order as the geometry's): the additional code
+   *  correction (m) — antenna phase centre of the band, higher-order
+   *  ionosphere on the code. */
+  codeM: number[];
+  /** Per signal: the additional carrier correction (m) — antenna phase
+   *  centre of the band, phase wind-up × wavelength, higher-order
+   *  ionosphere on the phase. */
+  phaseM: number[];
+  /** Per signal: no satellite antenna calibration for the band (with
+   *  satellite offsets on) — the signal must not be used. */
+  missing: boolean[];
+  /** Phase wind-up (cycles), common to every carrier. */
+  windupCyc: number;
+  /** Leave the satellite out at this epoch (attitude unknown). */
+  exclude?: boolean;
+}
+
 /** Correction configuration + hooks. Supplied by the caller. */
 export interface PppCorrections {
   /** Build the per-epoch Sun/Moon/tide context. */
@@ -60,6 +96,14 @@ export interface PppCorrections {
   ) => PppEpochContext;
   /** Per-satellite correction evaluator. */
   evaluate?: (geom: SatGeom, ctx: PppEpochContext | null) => CorrectionResult;
+  /** Per-signal evaluator for the uncombined engine (every band on its
+   *  own: no ionosphere-free combination of the antenna model, wind-up or
+   *  higher-order ionosphere). Its ionosphere-free combination of two
+   *  signals equals `evaluate` for that pair. */
+  evaluateSignals?: (
+    geom: SatGeomSignals,
+    ctx: PppEpochContext | null
+  ) => SignalCorrectionResult;
 }
 
 /** Apply the configured corrections for one satellite. */
@@ -356,6 +400,138 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
       }
 
       return { rangeM, phaseWindupM };
+    },
+    evaluateSignals(geom, ctx) {
+      const n = geom.signals.length;
+      const codeM = new Array<number>(n).fill(0);
+      const phaseM = new Array<number>(n).fill(0);
+      const missing = new Array<boolean>(n).fill(false);
+      const e = geom.los;
+      const [latRad, lonRad] = ecefToGeodetic(
+        geom.rcvEcef[0],
+        geom.rcvEcef[1],
+        geom.rcvEcef[2]
+      );
+      const att = cfg.attitude;
+      if (att && ctx && geom.satVel) {
+        if (
+          att.exclude(geom.prn, ctx.timeMs, geom.satEcef, geom.satVel, ctx.sun)
+        )
+          return {
+            rangeM: 0,
+            codeM,
+            phaseM,
+            missing,
+            windupCyc: 0,
+            exclude: true,
+          };
+      }
+      const frame = !ctx
+        ? null
+        : att && geom.satVel
+          ? att.frame(geom.prn, ctx.timeMs, geom.satEcef, geom.satVel, ctx.sun)
+          : satBodyFrame(geom.satEcef, ctx.sun);
+
+      // ── Satellite antenna PCO + PCV, per band ──
+      if (useSat && frame && cfg.antenna.satBandOffset) {
+        const satR = Math.hypot(
+          geom.satEcef[0],
+          geom.satEcef[1],
+          geom.satEcef[2]
+        );
+        const cosNadir =
+          (e[0] * geom.satEcef[0] +
+            e[1] * geom.satEcef[1] +
+            e[2] * geom.satEcef[2]) /
+          satR;
+        const nadirDeg =
+          (Math.acos(Math.max(-1, Math.min(1, cosNadir))) * 180) / Math.PI;
+        geom.signals.forEach((sig, k) => {
+          const off = cfg.antenna.satBandOffset!(
+            geom.prn,
+            ctx!.timeMs,
+            sig.band
+          );
+          if (!off) {
+            missing[k] = true;
+            return;
+          }
+          const d =
+            vdot(e, satPcoToEcef(off.pco, frame)) + interpPcv(off, nadirDeg);
+          codeM[k]! += d;
+          phaseM[k]! += d;
+        });
+      }
+
+      // ── Receiver antenna: the marker → ARP delta is common geometry;
+      // PCO + PCV per band ──
+      let rangeM = 0;
+      if (antDelta[0] !== 0 || antDelta[1] !== 0 || antDelta[2] !== 0)
+        rangeM -= vdot(e, enuToEcef(antDelta, latRad, lonRad));
+      const rcv =
+        useRcv && cfg.antenna.rcvBandOffsets
+          ? cfg.antenna.rcvBandOffsets(
+              cfg.rcvAntType,
+              geom.signals.map((s) => s.band)
+            )
+          : null;
+      if (rcv) {
+        const zenithDeg = 90 - (geom.elRad * 180) / Math.PI;
+        const azDeg = (geom.azRad * 180) / Math.PI;
+        rcv.forEach((off, k) => {
+          // PCO is ANTEX North/East/Up; enuToEcef takes ENU.
+          const pco = enuToEcef(
+            [off.pco[1], off.pco[0], off.pco[2]],
+            latRad,
+            lonRad
+          );
+          const d = -vdot(e, pco) + interpPcv(off, zenithDeg, azDeg);
+          codeM[k]! += d;
+          phaseM[k]! += d;
+        });
+      }
+
+      // ── Solid-earth tides and loading ──
+      if (ctx) rangeM -= vdot(e, ctx.tideDisp);
+
+      // ── Higher-order ionosphere, per frequency ──
+      const hoi = cfg.higherOrderIono;
+      if (hoi && ctx) {
+        const t = higherOrderIonoFromGim(
+          hoi.gim,
+          ctx.timeMs,
+          latRad,
+          lonRad,
+          geom.azRad,
+          geom.elRad,
+          e
+        );
+        if (t) {
+          const r = (hoi.thirdOrder ?? true) ? t.r : 0;
+          geom.signals.forEach((sig, k) => {
+            const f = sig.freq;
+            codeM[k]! += t.s / f ** 3 + r / f ** 4;
+            phaseM[k]! += -t.s / (2 * f ** 3) - r / (3 * f ** 4);
+          });
+        }
+      }
+
+      // ── Phase wind-up: the same cycles on every carrier ──
+      let windupCyc = 0;
+      if (useWindup && frame) {
+        windupCyc = phaseWindup(
+          geom.prn,
+          e,
+          frame,
+          latRad,
+          lonRad,
+          windupState
+        );
+        geom.signals.forEach((sig, k) => {
+          phaseM[k]! += (windupCyc * 299792458) / sig.freq;
+        });
+      }
+      return { rangeM, codeM, phaseM, missing, windupCyc };
     },
   };
 }

@@ -698,7 +698,20 @@ export type {
 export { niellMapping } from './ppp-tropo';
 export type { TropoMapping } from './ppp-tropo';
 export { createPppCorrections } from './ppp-corrections';
+export {
+  selectPppSignals,
+  toDualFrequencyObs,
+  PPP_SIGNAL_PRIORITY,
+} from './ppp-signals';
 export type {
+  PppSignal,
+  PppMultiSatObs,
+  PppMultiEpoch,
+  SelectPppSignalsOptions,
+} from './ppp-signals';
+export type {
+  SatGeomSignals,
+  SignalCorrectionResult,
   SatGeom,
   PppEpochContext,
   CorrectionResult,
