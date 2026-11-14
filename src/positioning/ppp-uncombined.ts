@@ -171,6 +171,15 @@ export interface PppUncombinedOptions extends Omit<
          *  accepted fix only within this 3D distance (m) of the final float
          *  position. Default 0.03. */
         maxFloatGapM?: number;
+        /** Hold check: carriers fixed at the last accepted fix, on the same
+         *  arcs, may not move apart by more than this (m) in a new fix
+         *  (per constellation and band; 0 = off). Default 0.05: on ten
+         *  stations × two days it halved the wrong windows with CNES's
+         *  biases at no cost in time to fix. */
+        holdM?: number;
+        /** Attempts in a row a hold may reject before it is dropped.
+         *  Default 10. */
+        holdAttempts?: number;
         /** Accept a fix only when the previous attempt fixed within this
          *  3D distance (m) of it. Default 0 (off). */
         confirmM?: number;
@@ -391,6 +400,12 @@ export class PppUncombinedEngine {
     covariance: number[][];
   } | null = null;
   private lastArMs = -Infinity;
+  /** The last accepted fix's narrow-lane ambiguities (hold check). */
+  private held: {
+    tMs: number;
+    values: Map<string, number>;
+    rejects: number;
+  } | null = null;
   /** The previous attempt's fixed position (null: it did not fix). */
   private prevAttemptFix: [number, number, number] | null = null;
   private firstFixMs: number | null = null;
@@ -1437,6 +1452,34 @@ export class PppUncombinedEngine {
     const prev = this.prevAttemptFix;
     this.prevAttemptFix = res.fixed ? res.position : null;
     if (!res.fixed) return;
+    // Hold: the carriers fixed at the last accepted fix, still on the same
+    // arcs, must keep their integers (their constrained ambiguities may all
+    // move together, not apart); a set that contradicts them is rejected,
+    // until `holdAttempts` attempts in a row have done so.
+    const holdM = cfg.holdM ?? 0.05;
+    const held = this.held;
+    if (holdM > 0 && held) {
+      // Per constellation and band (each has its own common part).
+      const d = new Map<string, number[]>();
+      for (const [k, v] of res.fixedAmb) {
+        const old = held.values.get(k);
+        const start = this.arcStart.get(k);
+        if (old === undefined || start === undefined || start > held.tMs)
+          continue;
+        const [, prn, band] = k.split(':');
+        const g = prn![0]! + band!;
+        const arr = d.get(g) ?? [];
+        arr.push(v - old);
+        d.set(g, arr);
+      }
+      const moved = [...d.values()].some(
+        (a) => a.length >= 2 && Math.max(...a) - Math.min(...a) > holdM
+      );
+      if (moved) {
+        if (++held.rejects < (cfg.holdAttempts ?? 10)) return;
+        this.held = null;
+      }
+    }
     const confirm = cfg.confirmM ?? 0;
     if (
       confirm > 0 &&
@@ -1454,6 +1497,7 @@ export class PppUncombinedEngine {
       covariance: res.covariance,
     };
     this.lastAccepted = { position: res.position, covariance: res.covariance };
+    this.held = { tMs, values: res.fixedAmb, rejects: 0 };
     this.firstFixMs ??= tMs;
   }
 
@@ -1490,6 +1534,7 @@ export class PppUncombinedEngine {
     covariance: number[][];
     nFixed: number;
     stats: ArAttemptStats;
+    fixedAmb: Map<string, number>;
   } {
     const minArcMs = (cfg.minArcS ?? 0) * 1000;
     const maxFrac = cfg.maxFracWl ?? 0.25;
@@ -1645,7 +1690,10 @@ export class PppUncombinedEngine {
       for (const [i, a] of r) for (const [j, b] of q) v += a * b * P[i]![j]!;
       return v;
     };
+    /** State indices of every imposed lane (for the hold check). */
+    const imposed = new Set<number>();
     const impose = (r: Row, int: number) => {
+      for (const i of r.keys()) imposed.add(i);
       const h = new Array<number>(n).fill(0);
       for (const [i, c] of r) h[i] = c;
       ekfUpdateScalar(x, P, h, int - val(r), 1e-8, 0);
@@ -1667,7 +1715,7 @@ export class PppUncombinedEngine {
       ratioMin: number,
       srMin: number,
       minN: number
-    ): { n: number; ratio: number; chi2: number } => {
+    ): { n: number; ratio: number; chi2: number; rows: Row[] } => {
       let set = lanes
         .map((l) => ({ l, v: cov(l.row, l.row) }))
         .filter((q) => q.v < 0.5 * 0.5)
@@ -1689,11 +1737,11 @@ export class PppUncombinedEngine {
         if (r && ratio >= ratioMin && r.successRate >= srMin) {
           const chi2 = r.residuals[0]! / m;
           set.forEach((l, i) => impose(l.row, r.candidates[0]![i]!));
-          return { n: m, ratio, chi2 };
+          return { n: m, ratio, chi2, rows: set.map((l) => l.row) };
         }
         set = set.slice(0, -1);
       }
-      return { n: 0, ratio: firstRatio, chi2: 0 };
+      return { n: 0, ratio: firstRatio, chi2: 0, rows: [] };
     };
     // Wide lanes: first by the between-satellite Melbourne–Wübbena average
     // (its own scatter, not the filter's code weight, sets its precision),
@@ -1728,7 +1776,14 @@ export class PppUncombinedEngine {
     );
     stats.nl = res.n;
     stats.ratio = res.ratio;
+    // Every fixed carrier's ambiguity (m) in the constrained solution, for
+    // the hold check across attempts.
+    const keyOf = new Map<number, string>();
+    for (const [k, i] of this.idx) keyOf.set(i, k);
+    const fixedAmb = new Map<string, number>();
+    for (const i of imposed) fixedAmb.set(keyOf.get(i)!, x[i]!);
     return {
+      fixedAmb,
       fixed:
         res.n >= minFixed &&
         res.chi2 <= (cfg.maxChi2 ?? 20) &&

@@ -292,7 +292,7 @@ Size: 198 KB → 225 KB raw, 112 KB → 96 KB gzip (383 satellite records,
   scenario), the float position covariance and the fixed one, and the
   `maxFloatGapM` guard on the session's fix.
 
-### Time to fix on three days (34 station-days)
+### Time to fix on four days (44 station-days)
 
 A second, disturbed day (2024-017, 16 stations) showed wrong partial fixes
 with the first round's acceptance (narrow-lane success rate 0.99, ≥ 5
@@ -301,79 +301,78 @@ all frequencies — typically 5 narrow lanes fixed on a float still ~10 cm
 off with a 12 cm formal σ. Tried on 10 stations × 2 days: a float-σ gate
 (< 8 cm) cut wrong windows little and cost 4–7 min; arcs ≥ 5 min changed
 nothing; success rate 0.999 with ≥ 6 ambiguities removed most of them for
-1–2 min. That, plus a χ² test of the fixed position's shift against the
-float covariance, is now the default. The study below is with it, on
-2024-014 (8 stations), 2024-017 (16) and 2024-020 (10), windows as before,
-GPS + Galileo; the session's fix is what the page reports (the final
-attempt's, or the last accepted one within 3 cm of the final float):
+1–2 min; requiring two consecutive attempts to agree within 3 cm
+(`confirmM`, off) removed one more of five for 0.5 min. Success rate
+0.999, ≥ 6, and a χ² test of the fixed position's shift against the float
+covariance are now the default. The study below is with them, on
+2024-014 (8 stations), 2024-017 (16), 2024-018 (10) and 2024-020 (10),
+windows as before, GPS + Galileo; the session's fix is what the page
+reports (the final attempt's, or the last accepted one within 3 cm of the
+final float):
 
 | Products | Window | Engine | Windows | Fixed at end | Fixed within window | TTF median / p75 (min) | Windows with wrong fixes (epochs) | End error RMS E/N/U (mm) | Float 3D 15/30/60 min (mm) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CODE | 1 h | IF-AR | 408 | 356 | 364 | 20.0 / 28.0 | 3 (36) | 13.0/6.8/19.1 | 48/30/20 |
-| CODE | 1 h | IF-AR30 | 408 | 354 | 365 | 19.5 / 26.0 | 4 (38) | 13.0/7.0/18.5 | 48/30/20 |
-| CODE | 1 h | UC2 | 408 | 364 | 388 | 15.5 / 18.5 | 0 | 12.6/6.6/17.2 | 45/31/20 |
-| CODE | 1 h | UCall | 408 | 364 | 388 | 15.5 / 18.0 | 0 | 12.4/6.5/16.8 | 47/30/22 |
-| CODE | 2 h | IF-AR | 272 | 259 | 260 | 21.0 / 30.0 | 3 (12) | 5.1/4.4/12.7 | 50/32/21 |
-| CODE | 2 h | IF-AR30 | 272 | 257 | 260 | 20.0 / 27.5 | 4 (11) | 5.7/4.3/12.8 | 50/32/21 |
-| CODE | 2 h | UC2 | 272 | 262 | 270 | 16.8 / 21.5 | 2 (9) | 5.6/4.1/12.6 | 53/28/21 |
-| CODE | 2 h | UCall | 272 | 263 | 270 | 16.5 / 21.0 | 2 (8) | 5.5/4.0/12.4 | 54/29/22 |
-| CNES | 1 h | IF-AR | 408 | 347 | 360 | 20.0 / 26.0 | 2 (12) | 15.7/8.1/18.1 | 48/36/23 |
-| CNES | 1 h | IF-AR30 | 408 | 351 | 364 | 20.0 / 25.5 | 2 (7) | 15.2/8.0/18.1 | 48/36/23 |
-| CNES | 1 h | UC2 | 408 | 352 | 388 | 15.5 / 18.5 | 3 (50) | 12.8/7.3/17.8 | 47/34/23 |
-| CNES | 1 h | UCall | 408 | 355 | 392 | **10.5 / 14.5** | 7 (55) | 12.4/7.3/17.1 | 47/30/22 |
-| CNES | 2 h | IF-AR | 272 | 256 | 262 | 22.0 / 32.0 | 2 (40) | 7.2/6.3/13.4 | 57/36/23 |
-| CNES | 2 h | IF-AR30 | 272 | 255 | 262 | 20.5 / 31.0 | 2 (45) | 7.3/6.3/13.5 | 57/36/23 |
-| CNES | 2 h | UC2 | 272 | 256 | 267 | 16.5 / 20.0 | 1 (22) | 6.8/6.2/13.3 | 60/36/22 |
-| CNES | 2 h | UCall | 272 | 260 | 268 | **10.5 / 14.5** | 3 (43) | 5.6/5.8/12.7 | 58/36/22 |
+| CODE | 1 h | IF-AR | 528 | 458 | 472 | 20.0 / 26.0 | 3 (36) | 12.5/6.9/19.3 | 44/29/20 |
+| CODE | 1 h | IF-AR30 | 528 | 458 | 475 | 19.5 / 26.0 | 4 (38) | 12.5/7.0/18.9 | 44/29/20 |
+| CODE | 1 h | UC2 | 528 | 464 | 501 | 16.0 / 18.5 | 1 (1) | 13.0/7.0/17.9 | 45/30/20 |
+| CODE | 1 h | UCall | 528 | 466 | 501 | 15.5 / 18.5 | 0 | 12.6/7.0/17.6 | 47/30/22 |
+| CODE | 2 h | IF-AR | 352 | 334 | 336 | 20.0 / 30.0 | 5 (48) | 5.4/4.6/12.8 | 49/32/22 |
+| CODE | 2 h | IF-AR30 | 352 | 332 | 336 | 20.0 / 27.5 | 7 (46) | 5.8/4.5/12.8 | 49/32/22 |
+| CODE | 2 h | UC2 | 352 | 338 | 347 | 17.0 / 21.0 | 2 (9) | 5.8/4.4/12.3 | 52/29/22 |
+| CODE | 2 h | UCall | 352 | 339 | 347 | 16.5 / 21.0 | 2 (8) | 5.8/4.3/12.3 | 54/29/22 |
+| CNES | 1 h | IF-AR | 528 | 452 | 470 | 20.0 / 26.0 | 2 (12) | 15.4/8.3/17.9 | 48/33/24 |
+| CNES | 1 h | IF-AR30 | 528 | 457 | 475 | 19.5 / 26.0 | 2 (7) | 15.0/8.1/17.9 | 48/33/24 |
+| CNES | 1 h | UC2 | 528 | 454 | 502 | 15.5 / 18.5 | 4 (55) | 13.4/7.9/18.4 | 47/32/23 |
+| CNES | 1 h | UCall | 528 | 458 | 509 | **10.5 / 14.0** | 7 (55) | 12.7/8.5/17.9 | 48/32/24 |
+| CNES | 2 h | IF-AR | 352 | 332 | 341 | 22.0 / 32.0 | 2 (40) | 7.2/6.4/13.3 | 56/36/23 |
+| CNES | 2 h | IF-AR30 | 352 | 331 | 341 | 20.5 / 31.0 | 2 (45) | 7.3/6.4/13.3 | 56/36/23 |
+| CNES | 2 h | UC2 | 352 | 333 | 345 | 16.5 / 20.0 | 1 (22) | 6.8/6.4/13.0 | 57/36/22 |
+| CNES | 2 h | UCall | 352 | 336 | 346 | **10.5 / 14.0** | 3 (43) | 5.9/6.1/12.4 | 59/38/22 |
 
-Per day the medians hardly move (CODE 1 h UC: 15.0 / 15.5 / 16.0 min on
-014 / 017 / 020; IF 20 min every day). Reading:
+Per day the medians hardly move (CODE 1 h, UC2: 15.0 / 15.5 / 16.5 /
+16.0 min on 014 / 017 / 018 / 020; IF 20 min every day). Reading:
 
-- Time to fix: −4.5 to −5 min with the same products and two
-  frequencies, −9.5 to −11.5 min with third-frequency phase biases (CNES),
-  p75 −8 to −17 min. More windows fix at all (CODE 1 h: 388 vs 364 of
-  408).
+- Time to fix: −3 to −4.5 min with the same products and two
+  frequencies, −9.5 to −11.5 min with third-frequency phase biases (CNES);
+  p75 −7.5 to −18 min. More windows fix at all (CODE 1 h: 501 vs 472 of
+  528).
 - Wrong fixes: with CODE's daily biases the uncombined engine has fewer
-  (0 vs 3 windows in 1 h, 2 vs 3 in 2 h). With CNES's 30-second biases
-  and all frequencies it has more: 7 of 408 one-hour windows vs 2. Most
-  are evening windows (16–22 h) of 2024-017 and -020 at HERS, SAVU, WTZR,
-  ZECK, the same windows in which the IF engine also struggles (WTZR 14:00,
-  ZECK 20:00); the extra-wide lanes fix quickly there and the narrow lanes
-  follow on them. Before /ppp offers it by default this needs either a
-  wide-lane validation across attempts or a hold on the integers that
-  survived several attempts.
-- The fixed coordinate at the end of a window is as good or better (E RMS
-  12–13 vs 13–16 mm in 1 h windows), the float the same.
+  (1 vs 3 one-hour windows, 2 vs 5 two-hour windows). With CNES's
+  30-second biases and all frequencies it has more: 7 of 528 one-hour
+  windows vs 2. Most are evening windows (16–22 h) of 2024-017 and -020 at
+  HERS, SAVU, WTZR, ZECK, windows in which the IF engine struggles too
+  (WTZR 14:00, ZECK 20:00 on 017); the extra-wide lanes fix quickly there
+  and the narrow lanes follow on them. Before /ppp offers the engine by
+  default this needs a wide-lane validation across attempts or a hold on
+  integers that survived several attempts.
+- The fixed coordinate at the end of a window is as good (E/N/U RMS within
+  ±1 mm of the IF engine's, better with CNES), the float the same.
 
 ## What is left
 
-- **gnsscalc integration** (not done; nothing was needed there for the
-  validation): `loadPppInput` would call `selectPppSignals` instead of
-  `pppSatFrom`, keeping LLI; `/ppp` and `/campaign` would call
-  `solvePppUncombined`; ZTD backward pass, diagnostics (`PppEpochDiagnostics`
-  per signal) and `exposeState`/`fixPppPosition` are not ported to the UC
-  engine yet; the AR summary has no `maxFloatGapM` fallback logic.
-- **Antenna binary**: the site's compact antenna file has IF pairs only;
-  the UC engine needs per-band offsets (`satBandOffset`/`rcvBandOffsets`) —
-  a new layout. Without them `evaluateSignals` applies no antenna model.
+- **Wrong fixes with CNES's biases and all frequencies** (7 of 528 one-hour
+  windows vs 2 for the IF engine, mostly evening windows of two days):
+  needs a wide-lane validation across attempts or an integer hold; a
+  two-attempt position confirmation (`confirmM`) removed only one of five
+  on the tuning set and is off.
+- **/ppp UI**: built and type-checked, not looked at in a browser; the
+  switch is experimental and off.
+- **/campaign and /stream**: not wired (the campaign has only the
+  benchmark flag). The ZTD backward pass stays ionosphere-free.
 - **BeiDou / QZSS AR**: untested (needs CODE MGX 2026 or CNES BeiDou OSBs
   with matching tracking modes); GLONASS stays float (no phase OSBs).
 - **CODE MGX OSB** (2026: B1C/B2a and QZSS L1/L5 phase) and Wuhan
   (L5/E5b/E6 phase) would give the third-frequency AR gain with daily
-  constant biases; only CNES's time-varying biases were tested here.
-- **UCall float with CNES at 15 min** (above) and the band-8 finding
-  suggest the extra signals' code-bias handling (receiver bias per tracking
-  code vs per satellite) deserves a look; also whether to estimate the
-  receiver code bias per _pair_ group (2W vs 2L GPS satellites share a
-  clock today, as in the IF engine).
-- **Slip repair** of the IF engine is not ported (the UC engine resets);
-  with three frequencies repair is simpler (geometry-free + EWL) and is
-  the natural next step for /stream.
-- **Kinematic/stream**: only the equivalence was checked in kinematic mode;
-  no 1 Hz or moving-receiver data, no AR "hold" mode.
-- The IF engine's inert MW slip confirmation (above).
-- The EPN 40-station benchmark was not run (other jobs held the CPU); all
-  numbers here are 8 stations × one day.
+  constant biases; only CNES's 30-second biases were tested.
+- **Receiver code biases** of signals beyond the pair are per clock group
+  and tracking code; whether 2W vs 2L GPS satellites need a separate datum
+  (as in the IF engine, they share a clock) is untested.
+- **Slip repair** is not ported (the uncombined engine re-initialises);
+  with three frequencies repair is simpler (geometry-free + extra-wide
+  lane) and is the natural next step for /stream, with an AR hold mode and
+  1 Hz validation.
+- **Releases**: gnsscalc's branch needs a gnss-js release with this branch
+  (per-band API, uncombined engine) before it can be merged.
 
 ## Recommendation
 
