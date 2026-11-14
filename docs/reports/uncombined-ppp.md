@@ -296,7 +296,7 @@ Size: 198 KB → 225 KB raw, 112 KB → 96 KB gzip (383 satellite records,
   scenario), the float position covariance and the fixed one, and the
   `maxFloatGapM` guard on the session's fix.
 
-### Time to fix on four days (44 station-days)
+### Time to fix on six days (64 station-days)
 
 A second, disturbed day (2024-017, 16 stations) showed wrong partial fixes
 with the first round's acceptance (narrow-lane success rate 0.99, ≥ 5
@@ -312,55 +312,69 @@ narrow lanes stayed and a wide lane flipped) halved them (5 → 3 windows,
 47 → 27 epochs) at no cost. Success rate 0.999, ≥ 6, a χ² test of the
 fixed position's shift against the float covariance and the hold are now
 the default. The study below is with them, on
-2024-014 (8 stations), 2024-017 (16), 2024-018 (10) and 2024-020 (10),
+2024-014 (8 stations), -015 (10), -016 (10), -017 (16), -018 (10) and
+-020 (10),
 windows as before, GPS + Galileo; the session's fix is what the page
 reports (the final attempt's, or the last accepted one within 3 cm of the
 final float):
 
 | Products | Window | Engine  | Windows | Fixed at end | Fixed within window | TTF median / p75 (min) | Windows with wrong fixes (epochs) | End error RMS E/N/U (mm) | Float 3D 15/30/60 min (mm) |
 | -------- | ------ | ------- | ------- | ------------ | ------------------- | ---------------------- | --------------------------------- | ------------------------ | -------------------------- |
-| CODE     | 1 h    | IF-AR   | 528     | 458          | 472                 | 20.0 / 26.0            | 3 (36)                            | 12.5/6.9/19.3            | 44/29/20                   |
-| CODE     | 1 h    | IF-AR30 | 528     | 458          | 475                 | 19.5 / 26.0            | 4 (38)                            | 12.5/7.0/18.9            | 44/29/20                   |
-| CODE     | 1 h    | UC2     | 528     | 460          | 501                 | 16.0 / 18.5            | 1 (1)                             | 13.1/7.0/17.8            | 45/30/20                   |
-| CODE     | 1 h    | UCall   | 528     | 462          | 501                 | 15.5 / 18.5            | 0                                 | 12.7/7.1/17.7            | 47/30/22                   |
-| CODE     | 2 h    | IF-AR   | 352     | 334          | 336                 | 20.0 / 30.0            | 5 (48)                            | 5.4/4.6/12.8             | 49/32/22                   |
-| CODE     | 2 h    | IF-AR30 | 352     | 332          | 336                 | 20.0 / 27.5            | 7 (46)                            | 5.8/4.5/12.8             | 49/32/22                   |
-| CODE     | 2 h    | UC2     | 352     | 338          | 347                 | 17.0 / 21.5            | 2 (9)                             | 5.8/4.4/12.4             | 52/29/22                   |
-| CODE     | 2 h    | UCall   | 352     | 339          | 347                 | 16.5 / 21.0            | 2 (8)                             | 5.8/4.4/12.4             | 54/29/22                   |
-| CNES     | 1 h    | IF-AR   | 528     | 452          | 470                 | 20.0 / 26.0            | 2 (12)                            | 15.4/8.3/17.9            | 48/33/24                   |
-| CNES     | 1 h    | IF-AR30 | 528     | 457          | 475                 | 19.5 / 26.0            | 2 (7)                             | 15.0/8.1/17.9            | 48/33/24                   |
-| CNES     | 1 h    | UC2     | 528     | 452          | 501                 | 15.5 / 18.5            | 3 (32)                            | 13.5/7.9/18.4            | 47/32/23                   |
-| CNES     | 1 h    | UCall   | 528     | 454          | 507                 | **10.5 / 14.5**        | 4 (30)                            | 12.9/8.5/18.0            | 48/32/24                   |
-| CNES     | 2 h    | IF-AR   | 352     | 332          | 341                 | 22.0 / 32.0            | 2 (40)                            | 7.2/6.4/13.3             | 56/36/23                   |
-| CNES     | 2 h    | IF-AR30 | 352     | 331          | 341                 | 20.5 / 31.0            | 2 (45)                            | 7.3/6.4/13.3             | 56/36/23                   |
-| CNES     | 2 h    | UC2     | 352     | 333          | 345                 | 16.5 / 20.0            | 1 (13)                            | 6.8/6.4/13.0             | 57/36/22                   |
-| CNES     | 2 h    | UCall   | 352     | 337          | 346                 | **10.5 / 14.5**        | 2 (26)                            | 5.9/6.1/12.4             | 59/38/22                   |
+| CODE     | 1 h    | IF-AR   | 768     | 665          | 681                 | 20.0 / 26.0            | 3 (36)                            | 14.2/7.3/18.8            | 46/28/20                   |
+| CODE     | 1 h    | IF-AR30 | 768     | 667          | 686                 | 18.5 / 25.5            | 4 (38)                            | 14.1/7.3/18.5            | 46/28/20                   |
+| CODE     | 1 h    | UC2     | 768     | 675          | 732                 | 15.8 / 18.5            | 3 (5)                             | 14.1/7.3/17.3            | 47/29/20                   |
+| CODE     | 1 h    | UCall   | 768     | 676          | 732                 | 15.5 / 18.5            | 2 (2)                             | 13.9/7.3/17.3            | 47/29/20                   |
+| CODE     | 2 h    | IF-AR   | 512     | 484          | 489                 | 20.0 / 30.0            | 8 (96)                            | 5.4/4.6/12.3             | 48/32/21                   |
+| CODE     | 2 h    | IF-AR30 | 512     | 483          | 490                 | 19.5 / 29.0            | 10 (87)                           | 5.7/4.6/12.3             | 48/32/21                   |
+| CODE     | 2 h    | UC2     | 512     | 497          | 506                 | 17.0 / 21.0            | 5 (40)                            | 5.2/4.5/11.9             | 54/29/21                   |
+| CODE     | 2 h    | UCall   | 512     | 498          | 506                 | 17.0 / 20.5            | 5 (35)                            | 5.2/4.4/11.8             | 54/29/22                   |
+| CNES     | 1 h    | IF-AR   | 768     | 651          | 674                 | 20.0 / 26.0            | 5 (44)                            | 16.2/8.7/18.4            | 48/32/23                   |
+| CNES     | 1 h    | IF-AR30 | 768     | 657          | 682                 | 19.2 / 26.0            | 6 (40)                            | 16.0/8.6/18.3            | 48/32/23                   |
+| CNES     | 1 h    | UC2     | 768     | 659          | 729                 | 15.5 / 18.5            | 5 (39)                            | 14.4/8.2/18.0            | 47/32/23                   |
+| CNES     | 1 h    | UCall   | 768     | 657          | 735                 | **10.5 / 14.5**        | 7 (37)                            | 14.1/8.6/18.0            | 50/32/23                   |
+| CNES     | 2 h    | IF-AR   | 512     | 479          | 490                 | 22.0 / 32.0            | 4 (56)                            | 6.7/6.2/13.1             | 56/36/22                   |
+| CNES     | 2 h    | IF-AR30 | 512     | 479          | 491                 | 20.5 / 31.0            | 4 (54)                            | 6.8/6.2/13.1             | 56/36/22                   |
+| CNES     | 2 h    | UC2     | 512     | 486          | 501                 | 16.5 / 20.5            | 1 (13)                            | 6.1/6.3/12.8             | 56/36/22                   |
+| CNES     | 2 h    | UCall   | 512     | 490          | 501                 | **10.5 / 14.5**        | 2 (26)                            | 5.5/6.0/12.2             | 60/38/23                   |
 
 Per day the medians hardly move (CODE 1 h, UC2: 15.0 / 15.5 / 16.5 /
 16.0 min on 014 / 017 / 018 / 020; IF 20 min every day). Reading:
 
 - Time to fix: −3 to −4.5 min with the same products and two
   frequencies, −9.5 to −11.5 min with third-frequency phase biases (CNES);
-  p75 −7.5 to −17.5 min. More windows fix at all (CODE 1 h: 501 vs 472 of
-  528).
-- Wrong fixes: with CODE's daily biases the uncombined engine has fewer
-  (1 vs 3 one-hour windows, 2 vs 5 two-hour windows). With CNES's
-  30-second biases and all frequencies it has more: 4 of 528 one-hour
-  windows (30 epochs) vs 2 (12 epochs). They are evening windows
-  (16–22 h) of 2024-017 and -020 at HERS, SAVU, WTZR, ZECK, windows in which the IF engine struggles too
-  (WTZR 14:00, ZECK 20:00 on 017); the extra-wide lanes fix quickly there
-  and the narrow lanes follow on them; what is left are wrong _first_
-  fixes, which no hold can catch.
+  p75 −7.5 to −17.5 min. More windows fix at all (CODE 1 h: 732 vs 681 of
+  768).
+- Wrong fixes are about as rare as with the IF engine: CODE 2/5 vs 3/8
+  windows (1 h / 2 h), CNES 7/2 vs 5/4, with fewer wrong epochs in every
+  row (CODE 1 h: 2–5 vs 36). They cluster in evening windows (16–22 h) of
+  2024-017 and -020 at HERS, SAVU, WTZR, ZECK, where the IF engine
+  struggles too; the hold removed the later flips, what is left are wrong
+  _first_ fixes.
 - The fixed coordinate at the end of a window is as good (E/N/U RMS within
   ±1 mm of the IF engine's, better with CNES), the float the same.
 
+### EPN benchmark
+
+Flags as the coordinator's runs: `--tropo vmf3-5x5 --attitude model
+--ppp '{"estimateGradients":true}'`, float and `--fix --ar-source best`,
+GPS + GLONASS + Galileo (the campaign default), the ionosphere-free engine
+vs `--engine uncombined` (all signals; the ZTD backward pass stays
+ionosphere-free). Same gnsscalc build (engine stamp
+`campaign 9dd83abe · gnss-js 2.48.0` + this branch).
+
+Regression check first: the ionosphere-free engine with the version-1 and
+the version-2 antenna binary gives bit-identical daily coordinates and ZTD
+(WTZR, week 2297, 7 station-days).
+
+EPN_RESULTS_PLACEHOLDER
+
 ## What is left
 
-- **Wrong first fixes with CNES's biases and all frequencies** (4 of 528
-  one-hour windows vs 2 for the IF engine, evening windows of two days):
-  the hold covers later flips; a first fix has nothing to be checked
-  against. A wide-lane validation from the code (Melbourne–Wübbena of each
-  lane, not only the primary pair) is the next thing to try.
+- **Wrong first fixes** (about 1 % of windows, as for the IF engine; evening
+  windows of two days): the hold covers later flips, a first fix has
+  nothing to be checked against. A wide-lane validation from the code (the
+  Melbourne–Wübbena of each lane, not only the primary pair) is the next
+  thing to try.
 - **/ppp UI**: built and type-checked, not looked at in a browser; the
   switch is experimental and off.
 - **/campaign and /stream**: not wired (the campaign has only the
