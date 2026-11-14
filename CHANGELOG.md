@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.52.0
+
+### Added — TLE / OMM and SGP4
+
+- `sgp4Init` / `sgp4`: SGP4/SDP4 (near-Earth and deep space: lunar–solar periodics, 12 h and 24 h resonances), ported from Vallado et al. 2006 as revised through 2020, WGS-72, AFSPC or improved mode. Against the report's 666 verification states (`SGP4-VER.TLE` / `tcppver.out`): 0.12 mm and 1e-9 km/s at most.
+- `parseTle` / `parseTleLines` (2- and 3-line, Alpha-5 catalogue numbers, checksums reported without dropping the set), `parseOmmJson` / `ommToElements` (CCSDS OMM in the JSON form CelesTrak and Space-Track serve, sub-millisecond epochs), `parseElementSets` for whichever a user pastes. CelesTrak leaves objects numbered ≥ 100 000 out of its TLE output and truncates names to 24 characters, so prefer OMM.
+- `temeToEcef`, `tleSatellite`, `tlePositionEcef` (GPS-scale epochs, like the rest of the library), `computeTlePositions` in the `computeAllPositions` shape, so visibility, DOP, sky plots and ground tracks take TLE tracks unchanged.
+- `matchElementsToPrns`: NORAD ↔ PRN by propagating every set to one epoch and pairing it with the nearest broadcast (or SP3) position. On 2026-11-14 at 19:00, 131 of CelesTrak's 171 GNSS objects matched a broadcast PRN; median distance 0.8–1.5 km per system (GLONASS max 59 km). It finds the Galileo, GLONASS and NavIC PRNs the object names don't carry, and 15 BeiDou and SBAS objects whose name PRN differs from the PRN broadcast from that position. `prnFromObjectName` reads the PRN a CelesTrak name carries.
+- `elementSummary` (period, mean semi-major axis, apogee/perigee, LEO/MEO/GEO/IGSO/HEO), `stateToKeplerian`, `inertialVelocity`.
+- `betaAngle`, `sunlitFraction` (conical Earth shadow), `shadowIntervals` (penumbra and umbra passages, edges to ~1 s).
+- `predictPasses`: rise and set to ~1 s, culmination by golden-section search, and a naked-eye flag (satellite sunlit, observer's Sun below −6°); `lookAngles`.
+
 ## 2.51.0
 
 ### Added — uncombined (multi-frequency) PPP

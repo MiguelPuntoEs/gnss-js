@@ -212,6 +212,26 @@ const vis = computeVisibility(ephemerides, rxEcef, startMs, endMs, 300, 10);
 // vis.elevation[prn]: elevation timeline for plotting.
 ```
 
+### TLE / OMM — SGP4 for any satellite
+
+```ts
+import {
+  parseElementSets, // TLE (2/3-line, Alpha-5) or OMM JSON
+  tleSatellite,
+  tlePositionEcef, // SGP4/SDP4 → ECEF, GPS-scale epochs
+  computeTlePositions, // same shape as computeAllPositions
+  matchElementsToPrns, // NORAD ↔ PRN by geometry
+  predictPasses, // rise / culmination / set, naked-eye flag
+  shadowIntervals, // umbra / penumbra passages
+  betaAngle,
+  elementSummary, // period, apsides, LEO/MEO/GEO/IGSO/HEO
+} from 'gnss-js/orbit';
+
+const { sets } = parseElementSets(text);
+const sat = tleSatellite(sets[0]);
+const passes = predictPasses((t) => tlePositionEcef(sat, t), rxEcef, t0, t1);
+```
+
 ### Positioning — SPP → PPP → PPP-AR / RTK
 
 ```ts

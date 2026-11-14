@@ -1,0 +1,18 @@
+SGP4 / TLE fixtures (test/orbit-sgp4.test.ts, orbit-tle.test.ts, orbit-geometry.test.ts)
+
+SGP4-VER.TLE, tcppver.out
+    Vallado, Crawford, Hujsak & Kelso, "Revisiting Spacetrack Report #3",
+    AIAA 2006-6753 — verification element sets and the reference C++ output
+    (TEME km, km/s). Copied from python-sgp4 (MIT),
+    github.com/brandon-rhodes/python-sgp4/tree/master/sgp4
+
+celestrak_gnss_2026-11-14.json, celestrak_gnss_2026-11-14.tle
+    celestrak.org/NORAD/elements/gp.php?GROUP=gnss&FORMAT=JSON and FORMAT=TLE,
+    fetched together on 2026-11-14 ~21:27 UTC.
+
+brdc_2026318_19h.rnx
+    igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/318/BRDC00WRD_R_20263180000_01D_MN.rnx.gz
+    (partial day, fetched 2026-11-14 ~21:28 UTC): header plus, for every PRN,
+    the one record with toc nearest 19:00 (within ±1 h). Some SBAS records in
+    the merged file give positions in metres instead of km (S36 at 42 million
+    km); they are kept as found.
