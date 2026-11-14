@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.51.0
 
 ### Added — uncombined (multi-frequency) PPP
+
+- EPN benchmark, 40 stations, 24 h static, ambiguities fixed with CODE's products, E/N/U RMS against EUREF (mm), ionosphere-free engine → uncombined: week 2297 1.7/0.9/2.2 → 1.3/0.7/2.0; 2313 1.2/0.8/2.2 → 0.9/0.6/2.1; 2328 1.5/0.8/2.3 → 1.1/0.8/2.0; 2380 1.4/0.7/1.8 → 1.2/0.5/1.5; 2430 1.4/0.9/2.1 → 1.2/0.7/1.8. Float solutions are unchanged; about three times the CPU.
 
 - `selectPppSignals` / `PppMultiSatObs`: every usable signal of a satellite (one tracking mode per band, LLI and SNR per carrier); `toDualFrequencyObs` reduces it to the ionosphere-free engine's pair.
 - `PppAntennaModel.satBandOffset` / `rcvBandOffsets` (per-band, uncombined; `buildPppAntenna`, `withSatelliteAntennas`) and `PppCorrections.evaluateSignals` (per-band antenna, wind-up and higher-order ionosphere). Combined over a pair they equal the ionosphere-free API exactly.
