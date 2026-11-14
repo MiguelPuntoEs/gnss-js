@@ -321,6 +321,7 @@ const CODE_BIAS_VAR = 30 * 30;
 const TD_SLIP_M = 0.08;
 const TD_SURE_M = 0.3;
 const GF_CONFIRM_M = 0.03;
+const MW_CONFIRM_CYC = 1.5;
 const CODE_GATE_M = 15;
 
 const wetSlant = (
@@ -985,10 +986,9 @@ export class PppUncombinedEngine {
   ): void {
     const gfSlip = this.opts.gfSlipM ?? 0.05;
     // Time-differenced ionosphere-free carrier of the primary pair, a
-    // candidate confirmed by a geometry-free jump (as the ionosphere-free
-    // engine does in effect: its Melbourne–Wübbena confirmation compares
-    // the wet mapping function, which never jumps).
-    const dq: { v: Vis; d: number; gfJump: number }[] = [];
+    // candidate confirmed by a geometry-free or Melbourne–Wübbena jump (as
+    // the ionosphere-free engine does).
+    const dq: { v: Vis; d: number; gfJump: number; mwJump: number }[] = [];
     const gfx = new Map<string, Map<string, number>>();
     for (const v of vis) {
       if (v.sigs.length < 2) continue;
@@ -1008,6 +1008,7 @@ export class PppUncombinedEngine {
           v,
           d: v.lIf - prev.lIf - (v.range - r0) - (model - prev.model),
           gfJump: Math.abs(v.gfPair - prev.gf),
+          mwJump: Math.abs(v.mwPair - prev.mw),
         });
       }
       // Further carriers against the first: geometry-free jump, MW jump.
@@ -1064,7 +1065,12 @@ export class PppUncombinedEngine {
         ]!;
         for (const q of dq) {
           const r = Math.abs(q.d - med);
-          if (r > TD_SLIP_M && (r > TD_SURE_M || q.gfJump > GF_CONFIRM_M))
+          if (
+            r > TD_SLIP_M &&
+            (r > TD_SURE_M ||
+              q.gfJump > GF_CONFIRM_M ||
+              q.mwJump > MW_CONFIRM_CYC)
+          )
             q.v.pairSlip = true;
         }
       }
