@@ -209,3 +209,31 @@ describe('TLE vs broadcast ephemeris (GNSS, 2026-11-14 19:00)', () => {
     expect(elementAgeDays(ses5, T)).toBeLessThan(2);
   });
 });
+
+describe('SBAS records in metres (merged BRDC files)', () => {
+  it('are rescaled to km, so the GEO lands at its slot', () => {
+    // two S36 records of BRDC00WRD_R_20263180000: one in m, one in km
+    const text =
+      read('brdc_2026318_19h.rnx').split('END OF HEADER')[0] +
+      'END OF HEADER\n' +
+      [
+        'S36 2026 11 14 18 01 02 0.000000000000e+00 0.000000000000e+00 5.832850000000e+05',
+        '     4.200368800000e+07 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00',
+        '     3.674846960000e+06 0.000000000000e+00 0.000000000000e+00 1.500000000000e+01',
+        '     0.000000000000e+00 0.000000000000e+00 0.000000000000e+00 1.500000000000e+01',
+        'S36 2026 11 14 18 01 20 0.000000000000e+00 0.000000000000e+00 5.832800000000e+05',
+        '     4.200368800000e+04 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00',
+        '     3.674846960000e+03 0.000000000000e+00 0.000000000000e+00 1.500000000000e+01',
+        '     0.000000000000e+00 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00',
+      ].join('\n') +
+      '\n';
+    const ephs = parseNavFile(text).ephemerides.filter((e) => e.prn === 'S36');
+    expect(ephs).toHaveLength(2);
+    for (const e of ephs) {
+      const p = computeSatPosition(e, Date.UTC(2026, 10, 14, 18, 1, 20));
+      const r = Math.hypot(p.x, p.y, p.z);
+      expect(r / 1000).toBeCloseTo(42164, -1);
+      expect((Math.atan2(p.y, p.x) * 180) / Math.PI).toBeCloseTo(5, 0);
+    }
+  });
+});

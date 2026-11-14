@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.52.1
+
+### Fixed — SBAS broadcast records in metres
+
+- Some contributors to the merged IGS broadcast files (BRDC00WRD) write SBAS state vectors in metres instead of km, which put those GEOs 42 million km away about half the time (whenever the nearest record was one of theirs). `parseNavFile` now rescales SBAS records whose position is beyond 10⁶ km — no Earth orbit is — so both kinds land at the satellite's slot.
+
 ## 2.52.0
 
 ### Added — TLE / OMM and SGP4

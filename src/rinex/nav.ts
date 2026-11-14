@@ -574,6 +574,13 @@ function buildStateVectorEphemeris(
 ): GlonassEphemeris {
   const raw = data.flatMap((line) => [0, 1, 2, 3].map((i) => line[i] ?? NaN));
   const d = raw.map((v) => (Number.isFinite(v) ? v : 0));
+  // Some contributors to the merged IGS broadcast files (BRDC00WRD) write
+  // SBAS state vectors in metres instead of km: a GEO 42 million km out.
+  // No Earth orbit is beyond 10⁶ km, so rescale those records' position,
+  // velocity and acceleration (fields 0–2, 4–6, 8–10) to km.
+  if (sys === 'S' && Math.hypot(d[0] ?? 0, d[4] ?? 0, d[8] ?? 0) > 1e6) {
+    for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10]) d[k] = (d[k] ?? 0) / 1000;
+  }
   const known = (k: number, unknown?: number) =>
     Number.isFinite(raw[k]) && raw[k] !== unknown;
   return {
