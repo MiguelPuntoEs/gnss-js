@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.50.0
+
+### Added — parse without the per-epoch summaries, outside a worker
+
+- `parseRinexStream`'s `workerMode` (5th argument) may now be `{ summaries?, yieldToUi? }` instead of a boolean. `{ summaries: false }` skips the per-epoch `EpochSummary` and the stats built from it — only a QC view needs them — while still yielding to keep a page responsive: a full ABMF day parses in 249 ms instead of 463 ms. `true` keeps its meaning (no summaries, no yields: a Web Worker).
+
 ## 2.49.0
 
 ### Fixed — RTK troposphere at each receiver's own height
