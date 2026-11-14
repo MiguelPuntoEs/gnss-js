@@ -49,7 +49,11 @@ export interface PppAntennaModel {
   satBandOffset?(
     prn: string,
     dateMs: number,
-    band: string
+    band: string,
+    /** The satellite's other bands, in signal order: a band the entry
+     *  lacks takes the first of these it has (then any), as `satOffset`
+     *  does for a pair; null only for an unknown satellite. */
+    others?: readonly string[]
   ): AntennaOffset | null;
   /**
    * Per-band receiver offsets for one satellite's bands (in its signal
@@ -230,9 +234,12 @@ export function buildPppAntenna(
       if (!a || !b) return null;
       return withZen(entry, combineIf(a, b, f1, f2));
     },
-    satBandOffset(prn, dateMs, band) {
+    satBandOffset(prn, dateMs, band, others) {
       const entry = satEntry(prn, dateMs);
-      const a = entry && freqOf(entry, band);
+      if (!entry) return null;
+      let a = freqOf(entry, band);
+      for (const o of others ?? []) a ??= freqOf(entry, o);
+      a ??= entry.frequencies[0];
       return a ? withZen(entry, single(a)) : null;
     },
     rcvOffset(antType, band1, band2, f1, f2) {
@@ -309,13 +316,18 @@ export function withSatelliteAntennas(
     rcvOffset: (...a) => base.rcvOffset(...a),
     ...(base.satBandOffset
       ? {
-          satBandOffset(prn: string, dateMs: number, band: string) {
+          satBandOffset(
+            prn: string,
+            dateMs: number,
+            band: string,
+            others?: readonly string[]
+          ) {
             const own =
               (!systems || systems.includes(prn[0]!)) &&
               satellites.satBandOffset
-                ? satellites.satBandOffset(prn, dateMs, band)
+                ? satellites.satBandOffset(prn, dateMs, band, others)
                 : null;
-            return own ?? base.satBandOffset!(prn, dateMs, band);
+            return own ?? base.satBandOffset!(prn, dateMs, band, others);
           },
         }
       : {}),

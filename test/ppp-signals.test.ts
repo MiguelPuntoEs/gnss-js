@@ -184,7 +184,10 @@ describe('per-band antenna model', () => {
             k * interpPcv(a, nadir) - (k - 1) * interpPcv(b, nadir)
           ).toBeCloseTo(interpPcv(ifo, nadir), 12);
       }
-      expect(model.satBandOffset!('G04', t, 'G07')).toBeNull();
+      expect(model.satBandOffset!('G04', t, 'G07')!.pco).toEqual(
+        model.satBandOffset!('G04', t, 'G01')!.pco
+      );
+      expect(model.satBandOffset!('G99', t, 'G01')).toBeNull();
 
       // Receiver: calibrated GPS bands, and Galileo/BeiDou bands that this
       // calibration lacks (the GPS fallback).

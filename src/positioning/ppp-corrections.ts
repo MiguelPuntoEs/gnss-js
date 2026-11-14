@@ -446,11 +446,24 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
           satR;
         const nadirDeg =
           (Math.acos(Math.max(-1, Math.min(1, cosNadir))) * 180) / Math.PI;
+        const bands = geom.signals.map((s) => s.band);
+        // No calibration at all (a satellite the ANTEX doesn't know): drop
+        // it, as `evaluate` does.
+        if (!cfg.antenna.satBandOffset(geom.prn, ctx!.timeMs, bands[0]!, bands))
+          return {
+            rangeM: 0,
+            codeM,
+            phaseM,
+            missing: missing.fill(true),
+            windupCyc: 0,
+            exclude: true,
+          };
         geom.signals.forEach((sig, k) => {
           const off = cfg.antenna.satBandOffset!(
             geom.prn,
             ctx!.timeMs,
-            sig.band
+            sig.band,
+            bands.filter((b) => b !== sig.band)
           );
           if (!off) {
             missing[k] = true;
