@@ -151,7 +151,7 @@ export interface PppUncombinedOptions extends Omit<
         everyS?: number;
         /** Min arc age before an ambiguity is a candidate (s). Default 0. */
         minArcS?: number;
-        /** Min between-satellite narrow-lane ambiguities. Default 5. */
+        /** Min between-satellite narrow-lane ambiguities. Default 6. */
         minFixed?: number;
         /** Max |float − integer| of a fixed extra-wide lane (cycles).
          *  Default 0.25. */
@@ -165,12 +165,18 @@ export interface PppUncombinedOptions extends Omit<
          *  lane (s). Default 600. */
         wlMinArcS?: number;
         /** Min bootstrapped success rate of the narrow-lane set. Default
-         *  0.99. */
+         *  0.999. */
         successRate?: number;
         /** Static sessions whose final attempt failed report the last
          *  accepted fix only within this 3D distance (m) of the final float
          *  position. Default 0.03. */
         maxFloatGapM?: number;
+        /** Attempt only once the float 3D position σ is below this (m).
+         *  Default no limit. */
+        maxFloatSigmaM?: number;
+        /** Max χ² (3 dof) of the fixed position's shift from the float
+         *  position against the float covariance. Default 16.3 (99.9 %). */
+        maxShiftChi2?: number;
         /** Max χ²/dof of the float vs fixed narrow lanes. Default 20. */
         maxChi2?: number;
       };
@@ -1406,6 +1412,14 @@ export class PppUncombinedEngine {
     }
     this.lastArMs = tMs;
     this.lastFix = null;
+    // Not before the float solution is near the narrow-lane level: a
+    // partial fix on a float still decimetres off can pass the ratio test
+    // with the wrong integers.
+    const P = this.P;
+    const sig3 = Math.sqrt(
+      P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
+    );
+    if (sig3 > (cfg.maxFloatSigmaM ?? Infinity)) return;
     // The filter-based wide lanes are fast but trust the code weights; if
     // the narrow lanes then fail, retry with the Melbourne–Wübbena ones
     // alone.
@@ -1420,6 +1434,28 @@ export class PppUncombinedEngine {
     };
     this.lastAccepted = { position: res.position, covariance: res.covariance };
     this.firstFixMs ??= tMs;
+  }
+
+  /** χ² of the fixed position's shift from the float one against the
+   *  float position covariance (3 dof): a wrong set of integers moves the
+   *  position further than the float solution's own uncertainty allows. */
+  private shiftChi2(fixedX: readonly number[]): number {
+    const P = this.P;
+    const d = [0, 1, 2].map((i) => fixedX[i]! - this.x[i]!);
+    const a = [0, 1, 2].map((i) => [P[i]![0]!, P[i]![1]!, P[i]![2]!]);
+    // Solve a·y = d (3×3, Cramer).
+    const det = (m: number[][]) =>
+      m[0]![0]! * (m[1]![1]! * m[2]![2]! - m[1]![2]! * m[2]![1]!) -
+      m[0]![1]! * (m[1]![0]! * m[2]![2]! - m[1]![2]! * m[2]![0]!) +
+      m[0]![2]! * (m[1]![0]! * m[2]![1]! - m[1]![1]! * m[2]![0]!);
+    const D = det(a);
+    if (!(D > 0)) return 0;
+    let chi2 = 0;
+    for (let k = 0; k < 3; k++) {
+      const m = a.map((row, i) => row.map((v, j) => (j === k ? d[i]! : v)));
+      chi2 += d[k]! * (det(m) / D);
+    }
+    return chi2;
   }
 
   private resolve(
@@ -1662,17 +1698,20 @@ export class PppUncombinedEngine {
     }
     if (wlLambda) stats.wl += lambdaStep(rest, 3, 0.999, 1).n;
     stats.nlCandidates = nl.length;
-    const minFixed = cfg.minFixed ?? 5;
+    const minFixed = cfg.minFixed ?? 6;
     const res = lambdaStep(
       nl,
       cfg.ratio ?? 3,
-      cfg.successRate ?? 0.99,
+      cfg.successRate ?? 0.999,
       minFixed
     );
     stats.nl = res.n;
     stats.ratio = res.ratio;
     return {
-      fixed: res.n >= minFixed && res.chi2 <= (cfg.maxChi2 ?? 20),
+      fixed:
+        res.n >= minFixed &&
+        res.chi2 <= (cfg.maxChi2 ?? 20) &&
+        this.shiftChi2(x) <= (cfg.maxShiftChi2 ?? 16.3),
       position: [x[IDX_X]!, x[IDX_Y]!, x[IDX_Z]!],
       covariance: [0, 1, 2].map((i) => [P[i]![0]!, P[i]![1]!, P[i]![2]!]),
       nFixed: res.n,

@@ -177,6 +177,24 @@ for (
       if (d > 0.1) wrong++;
       if (ttf === null && d < 0.05) ttf = (r.timeMs - w[0]!.timeMs) / 1000;
     }
+    if (process.env.TRACE === new Date(ws).toISOString().slice(11, 16))
+      for (const r of sol.series)
+        console.log(
+          'trace',
+          name,
+          ((r.timeMs - w[0]!.timeMs) / 60e3).toFixed(1),
+          r.nFixed,
+          r.fixedPosition
+            ? err(r.fixedPosition)
+                .map((v) => (v * 1000).toFixed(0))
+                .join('/')
+            : '-',
+          err(r.position)
+            .map((v) => (v * 1000).toFixed(0))
+            .join('/'),
+          r.nSats,
+          (r.posSigma3d * 1000).toFixed(0)
+        );
     const last = sol.series[sol.series.length - 1]!;
     const endPos = last.fixedPosition ?? last.position;
     const e = err(endPos).map((v) => v * 1000);
