@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.48.0
+
+### Changed — a satellite with no antenna calibration is left out
+
+- A satellite missing from the ANTEX (typically a new launch before the IGS adds it) was ranged to its centre of mass while its precise clock refers to the antenna phase centre, 0.5–2 m away — a metre-level error on that satellite. `createPppCorrections` now flags it `exclude`; PPP, `solveDdNetwork` and `estimateNetworkClocks` all leave excluded satellites out (the latter two ignored the flag before, also for the attitude model's).
+- `buildPppAntenna`: a known satellite on a band its entry lacks takes its other calibrated band instead of returning null, so only unknown satellites are dropped.
+
 ## 2.47.0
 
 ### Changed — IERS Conventions station displacements are the default
