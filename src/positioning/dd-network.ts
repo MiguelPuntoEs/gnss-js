@@ -446,6 +446,7 @@ function modelStation(
       const cr = corr
         ? applyCorrections(corr, geom, ctx)
         : { rangeM: 0, phaseWindupM: 0 };
+      if (cr.exclude) continue;
       const model = range - sat.clkM + tr.zhd * tr.mh + tr.gradient + cr.rangeM;
       const mg = gradientMapping(el);
       cands.push({

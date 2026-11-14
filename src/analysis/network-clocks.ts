@@ -268,6 +268,7 @@ export function estimateNetworkClocks(
               ctx
             )
           : { rangeM: 0, phaseWindupM: 0 };
+        if (corr.exclude) continue;
         const model = range - s.clkM + trop.zhd * trop.mh + corr.rangeM;
         const omcP = g * c1 - (g - 1) * c2 - model;
         let omcL =

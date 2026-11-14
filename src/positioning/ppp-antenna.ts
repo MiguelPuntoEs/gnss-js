@@ -174,8 +174,12 @@ export function buildPppAntenna(
         }
       }
       if (!entry) return null;
-      const a = freqOf(entry, band1);
-      const b = freqOf(entry, band2);
+      // A band the entry lacks (e.g. a new signal before the ANTEX has it):
+      // the satellite's other calibrated band, so a known satellite always
+      // gets its offset (null means "satellite unknown", which PPP drops).
+      const any = entry.frequencies[0];
+      const a = freqOf(entry, band1) ?? freqOf(entry, band2) ?? any;
+      const b = freqOf(entry, band2) ?? freqOf(entry, band1) ?? any;
       if (!a || !b) return null;
       return withZen(entry, combineIf(a, b, f1, f2));
     },

@@ -46,7 +46,8 @@ export interface CorrectionResult {
   /** Additional phase-only correction (wind-up, and the phase − code part
    *  of the higher-order ionosphere), metres. */
   phaseWindupM: number;
-  /** Leave the satellite out at this epoch (attitude unknown). */
+  /** Leave the satellite out at this epoch (attitude unknown, or no
+   *  satellite antenna calibration at all). */
   exclude?: boolean;
 }
 
@@ -259,7 +260,12 @@ export function createPppCorrections(cfg: PppCorrectionConfig): PppCorrections {
           geom.f1,
           geom.f2
         );
-        if (off) {
+        // No calibration at all for this satellite (a new launch before the
+        // ANTEX has it): its clock refers to an antenna phase centre ~0.5–2 m
+        // from the centre of mass we would range to — drop it, don't use it
+        // uncorrected.
+        if (!off) return { rangeM: 0, phaseWindupM: 0, exclude: true };
+        {
           const pcoEcef = satPcoToEcef(off.pco, frame);
           // APC = CoM + PCO ⇒ range gains e·PCO.
           rangeM += vdot(e, pcoEcef);
