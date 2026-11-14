@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.49.0
+
+### Fixed — RTK troposphere at each receiver's own height
+
+- The RTK engine modelled the troposphere with one constant zenith delay (2.47 m) for both receivers, so between receivers at different heights the differential delay (~0.3 mm per metre of height difference, amplified at low elevation) went into the rover's height. Static 24 h baselines against EUREF (week 2297): 17.8 mm Up at 2.8 km, 85 mm at 16 km, 150 mm at 24 km. Both receivers now use the standard-atmosphere Saastamoinen delay at their own latitude and height — the model single-point positioning already used (now shared). Same baselines: −4.8, −0.7 and −22 mm. Beyond a few km the ionosphere, which RTK differences away, still limits it.
+
+### Fixed — PPP slip confirmation
+
+- The time-differenced slip test confirms a candidate when a clock-free combination jumped too. Its wide-lane check compared the wet mapping function (a name clash) instead of the Melbourne–Wübbena combination, so it never fired. It now uses the epoch's Melbourne–Wübbena value.
+
 ## 2.48.0
 
 ### Changed — a satellite with no antenna calibration is left out
