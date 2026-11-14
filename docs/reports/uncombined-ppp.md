@@ -9,7 +9,7 @@ the ionosphere-free engine; no default of `solvePpp` changed.
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Multi-signal input     | `ppp-signals.ts`: `PppSignal`, `PppMultiSatObs`, `selectPppSignals`, `toDualFrequencyObs`, `PPP_SIGNAL_PRIORITY`                                               | One tracking mode per band (code and carrier picked independently, e.g. GPS C1W + L1C), LLI and SNR per carrier, GLONASS FDMA by channel, band order per constellation overridable (`bands: { C: '15' }`). The first two signals are the clock-reference pair (GPS L1/L2, GLONASS G1/G2, Galileo E1/E5a, BeiDou B1I/B3I, QZSS L1/L2). Galileo E5 AltBOC is left out by default (see below). |
 | Per-band antenna model | `ppp-antenna.ts`: `PppAntennaModel.satBandOffset`, `rcvBandOffsets` (optional, implemented by `buildPppAntenna` and passed through by `withSatelliteAntennas`) | Uncombined PCO/PCV per ANTEX frequency. The GPS fallback for uncalibrated bands is applied so that a pair combines exactly to `rcvOffset` (both `gps-bands` and `gps-if`); a missing third band alone takes GPS L5, else L2. The IF API is unchanged.                                                                                                                                       |
-| Per-signal corrections | `ppp-corrections.ts`: `PppCorrections.evaluateSignals`                                                                                                         | Common station displacement + marker→ARP; per band antenna, wind-up × λ_j, higher-order ionosphere on code and phase. As 2.48's `evaluate`: a band a known satellite's calibration lacks takes its other bands' offset (the pair rule), an unknown satellite is excluded.                                                                                                                  |
+| Per-signal corrections | `ppp-corrections.ts`: `PppCorrections.evaluateSignals`                                                                                                         | Common station displacement + marker→ARP; per band antenna, wind-up × λ_j, higher-order ionosphere on code and phase. As 2.48's `evaluate`: a band a known satellite's calibration lacks takes its other bands' offset (the pair rule), an unknown satellite is excluded.                                                                                                                   |
 | Uncombined engine      | `ppp-uncombined.ts`: `PppUncombinedEngine` (streaming), `solvePppUncombined` (batch)                                                                           | See the model below.                                                                                                                                                                                                                                                                                                                                                                        |
 | AR cascade             | same file, `ar` option                                                                                                                                         | EWL → WL → NL with satellite phase OSBs, LAMBDA with partial fixing.                                                                                                                                                                                                                                                                                                                        |
 | Ionosphere constraint  | same file, `ionosphere: { gim }`                                                                                                                               | GIM pseudo-observations + receiver DCB per clock group; single-frequency satellites usable.                                                                                                                                                                                                                                                                                                 |
@@ -71,7 +71,11 @@ first carrier) by LAMBDA with ratio ≥ 3, bootstrapped success rate ≥ 0.999,
 χ², partial fixing (≥ 6), and a test that the fixed position's shift from
 the float fits the float covariance (χ², 3 dof, 99.9 %) — the thresholds
 were 0.99 / 5 without the shift test in the first round; a disturbed day
-(2024-017) showed wrong partial fixes with them (see Round 2). Each step is imposed as a constraint before
+(2024-017) showed wrong partial fixes with them (see Round 2) — and a hold:
+carriers fixed at the last accepted fix that are still on the same arcs
+must keep their integers (their constrained ambiguities may move together
+per constellation and band, not apart by more than 5 cm), else the fix is
+rejected, for up to 10 attempts in a row. Each step is imposed as a constraint before
 the next. If the narrow lanes fail, the attempt is redone with the
 Melbourne–Wübbena wide lanes only — the filter-based wide lanes of new,
 low satellites were occasionally wrong (ONSA, before this fallback: a
@@ -302,59 +306,61 @@ off with a 12 cm formal σ. Tried on 10 stations × 2 days: a float-σ gate
 (< 8 cm) cut wrong windows little and cost 4–7 min; arcs ≥ 5 min changed
 nothing; success rate 0.999 with ≥ 6 ambiguities removed most of them for
 1–2 min; requiring two consecutive attempts to agree within 3 cm
-(`confirmM`, off) removed one more of five for 0.5 min. Success rate
-0.999, ≥ 6, and a χ² test of the fixed position's shift against the float
-covariance are now the default. The study below is with them, on
+(`confirmM`, off) removed one more of five for 0.5 min; holding the
+integers of the last accepted fix (every lane: in the cases looked at the
+narrow lanes stayed and a wide lane flipped) halved them (5 → 3 windows,
+47 → 27 epochs) at no cost. Success rate 0.999, ≥ 6, a χ² test of the
+fixed position's shift against the float covariance and the hold are now
+the default. The study below is with them, on
 2024-014 (8 stations), 2024-017 (16), 2024-018 (10) and 2024-020 (10),
 windows as before, GPS + Galileo; the session's fix is what the page
 reports (the final attempt's, or the last accepted one within 3 cm of the
 final float):
 
-| Products | Window | Engine | Windows | Fixed at end | Fixed within window | TTF median / p75 (min) | Windows with wrong fixes (epochs) | End error RMS E/N/U (mm) | Float 3D 15/30/60 min (mm) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CODE | 1 h | IF-AR | 528 | 458 | 472 | 20.0 / 26.0 | 3 (36) | 12.5/6.9/19.3 | 44/29/20 |
-| CODE | 1 h | IF-AR30 | 528 | 458 | 475 | 19.5 / 26.0 | 4 (38) | 12.5/7.0/18.9 | 44/29/20 |
-| CODE | 1 h | UC2 | 528 | 464 | 501 | 16.0 / 18.5 | 1 (1) | 13.0/7.0/17.9 | 45/30/20 |
-| CODE | 1 h | UCall | 528 | 466 | 501 | 15.5 / 18.5 | 0 | 12.6/7.0/17.6 | 47/30/22 |
-| CODE | 2 h | IF-AR | 352 | 334 | 336 | 20.0 / 30.0 | 5 (48) | 5.4/4.6/12.8 | 49/32/22 |
-| CODE | 2 h | IF-AR30 | 352 | 332 | 336 | 20.0 / 27.5 | 7 (46) | 5.8/4.5/12.8 | 49/32/22 |
-| CODE | 2 h | UC2 | 352 | 338 | 347 | 17.0 / 21.0 | 2 (9) | 5.8/4.4/12.3 | 52/29/22 |
-| CODE | 2 h | UCall | 352 | 339 | 347 | 16.5 / 21.0 | 2 (8) | 5.8/4.3/12.3 | 54/29/22 |
-| CNES | 1 h | IF-AR | 528 | 452 | 470 | 20.0 / 26.0 | 2 (12) | 15.4/8.3/17.9 | 48/33/24 |
-| CNES | 1 h | IF-AR30 | 528 | 457 | 475 | 19.5 / 26.0 | 2 (7) | 15.0/8.1/17.9 | 48/33/24 |
-| CNES | 1 h | UC2 | 528 | 454 | 502 | 15.5 / 18.5 | 4 (55) | 13.4/7.9/18.4 | 47/32/23 |
-| CNES | 1 h | UCall | 528 | 458 | 509 | **10.5 / 14.0** | 7 (55) | 12.7/8.5/17.9 | 48/32/24 |
-| CNES | 2 h | IF-AR | 352 | 332 | 341 | 22.0 / 32.0 | 2 (40) | 7.2/6.4/13.3 | 56/36/23 |
-| CNES | 2 h | IF-AR30 | 352 | 331 | 341 | 20.5 / 31.0 | 2 (45) | 7.3/6.4/13.3 | 56/36/23 |
-| CNES | 2 h | UC2 | 352 | 333 | 345 | 16.5 / 20.0 | 1 (22) | 6.8/6.4/13.0 | 57/36/22 |
-| CNES | 2 h | UCall | 352 | 336 | 346 | **10.5 / 14.0** | 3 (43) | 5.9/6.1/12.4 | 59/38/22 |
+| Products | Window | Engine  | Windows | Fixed at end | Fixed within window | TTF median / p75 (min) | Windows with wrong fixes (epochs) | End error RMS E/N/U (mm) | Float 3D 15/30/60 min (mm) |
+| -------- | ------ | ------- | ------- | ------------ | ------------------- | ---------------------- | --------------------------------- | ------------------------ | -------------------------- |
+| CODE     | 1 h    | IF-AR   | 528     | 458          | 472                 | 20.0 / 26.0            | 3 (36)                            | 12.5/6.9/19.3            | 44/29/20                   |
+| CODE     | 1 h    | IF-AR30 | 528     | 458          | 475                 | 19.5 / 26.0            | 4 (38)                            | 12.5/7.0/18.9            | 44/29/20                   |
+| CODE     | 1 h    | UC2     | 528     | 460          | 501                 | 16.0 / 18.5            | 1 (1)                             | 13.1/7.0/17.8            | 45/30/20                   |
+| CODE     | 1 h    | UCall   | 528     | 462          | 501                 | 15.5 / 18.5            | 0                                 | 12.7/7.1/17.7            | 47/30/22                   |
+| CODE     | 2 h    | IF-AR   | 352     | 334          | 336                 | 20.0 / 30.0            | 5 (48)                            | 5.4/4.6/12.8             | 49/32/22                   |
+| CODE     | 2 h    | IF-AR30 | 352     | 332          | 336                 | 20.0 / 27.5            | 7 (46)                            | 5.8/4.5/12.8             | 49/32/22                   |
+| CODE     | 2 h    | UC2     | 352     | 338          | 347                 | 17.0 / 21.5            | 2 (9)                             | 5.8/4.4/12.4             | 52/29/22                   |
+| CODE     | 2 h    | UCall   | 352     | 339          | 347                 | 16.5 / 21.0            | 2 (8)                             | 5.8/4.4/12.4             | 54/29/22                   |
+| CNES     | 1 h    | IF-AR   | 528     | 452          | 470                 | 20.0 / 26.0            | 2 (12)                            | 15.4/8.3/17.9            | 48/33/24                   |
+| CNES     | 1 h    | IF-AR30 | 528     | 457          | 475                 | 19.5 / 26.0            | 2 (7)                             | 15.0/8.1/17.9            | 48/33/24                   |
+| CNES     | 1 h    | UC2     | 528     | 452          | 501                 | 15.5 / 18.5            | 3 (32)                            | 13.5/7.9/18.4            | 47/32/23                   |
+| CNES     | 1 h    | UCall   | 528     | 454          | 507                 | **10.5 / 14.5**        | 4 (30)                            | 12.9/8.5/18.0            | 48/32/24                   |
+| CNES     | 2 h    | IF-AR   | 352     | 332          | 341                 | 22.0 / 32.0            | 2 (40)                            | 7.2/6.4/13.3             | 56/36/23                   |
+| CNES     | 2 h    | IF-AR30 | 352     | 331          | 341                 | 20.5 / 31.0            | 2 (45)                            | 7.3/6.4/13.3             | 56/36/23                   |
+| CNES     | 2 h    | UC2     | 352     | 333          | 345                 | 16.5 / 20.0            | 1 (13)                            | 6.8/6.4/13.0             | 57/36/22                   |
+| CNES     | 2 h    | UCall   | 352     | 337          | 346                 | **10.5 / 14.5**        | 2 (26)                            | 5.9/6.1/12.4             | 59/38/22                   |
 
 Per day the medians hardly move (CODE 1 h, UC2: 15.0 / 15.5 / 16.5 /
 16.0 min on 014 / 017 / 018 / 020; IF 20 min every day). Reading:
 
 - Time to fix: −3 to −4.5 min with the same products and two
   frequencies, −9.5 to −11.5 min with third-frequency phase biases (CNES);
-  p75 −7.5 to −18 min. More windows fix at all (CODE 1 h: 501 vs 472 of
+  p75 −7.5 to −17.5 min. More windows fix at all (CODE 1 h: 501 vs 472 of
   528).
 - Wrong fixes: with CODE's daily biases the uncombined engine has fewer
   (1 vs 3 one-hour windows, 2 vs 5 two-hour windows). With CNES's
-  30-second biases and all frequencies it has more: 7 of 528 one-hour
-  windows vs 2. Most are evening windows (16–22 h) of 2024-017 and -020 at
-  HERS, SAVU, WTZR, ZECK, windows in which the IF engine struggles too
+  30-second biases and all frequencies it has more: 4 of 528 one-hour
+  windows (30 epochs) vs 2 (12 epochs). They are evening windows
+  (16–22 h) of 2024-017 and -020 at HERS, SAVU, WTZR, ZECK, windows in which the IF engine struggles too
   (WTZR 14:00, ZECK 20:00 on 017); the extra-wide lanes fix quickly there
-  and the narrow lanes follow on them. Before /ppp offers the engine by
-  default this needs a wide-lane validation across attempts or a hold on
-  integers that survived several attempts.
+  and the narrow lanes follow on them; what is left are wrong _first_
+  fixes, which no hold can catch.
 - The fixed coordinate at the end of a window is as good (E/N/U RMS within
   ±1 mm of the IF engine's, better with CNES), the float the same.
 
 ## What is left
 
-- **Wrong fixes with CNES's biases and all frequencies** (7 of 528 one-hour
-  windows vs 2 for the IF engine, mostly evening windows of two days):
-  needs a wide-lane validation across attempts or an integer hold; a
-  two-attempt position confirmation (`confirmM`) removed only one of five
-  on the tuning set and is off.
+- **Wrong first fixes with CNES's biases and all frequencies** (4 of 528
+  one-hour windows vs 2 for the IF engine, evening windows of two days):
+  the hold covers later flips; a first fix has nothing to be checked
+  against. A wide-lane validation from the code (Melbourne–Wübbena of each
+  lane, not only the primary pair) is the next thing to try.
 - **/ppp UI**: built and type-checked, not looked at in a browser; the
   switch is experimental and off.
 - **/campaign and /stream**: not wired (the campaign has only the

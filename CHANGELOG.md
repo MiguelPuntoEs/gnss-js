@@ -7,7 +7,10 @@
 - `selectPppSignals` / `PppMultiSatObs`: every usable signal of a satellite (one tracking mode per band, LLI and SNR per carrier); `toDualFrequencyObs` reduces it to the ionosphere-free engine's pair.
 - `PppAntennaModel.satBandOffset` / `rcvBandOffsets` (per-band, uncombined; `buildPppAntenna`, `withSatelliteAntennas`) and `PppCorrections.evaluateSignals` (per-band antenna, wind-up and higher-order ionosphere). Combined over a pair they equal the ionosphere-free API exactly.
 - `solvePppUncombined` / `PppUncombinedEngine`: slant ionosphere per satellite (white noise, random walk or a GIM constraint), one ambiguity per carrier, receiver code biases of extra signals, the GPS L5 inter-frequency clock bias, per-frequency slip detection. With two frequencies it reproduces `solvePpp` to < 0.1 mm (ABMF, WTZR, ONSA days).
-- Ambiguity resolution with satellite phase OSBs: extra-wide → wide → narrow lane cascade with LAMBDA and partial fixing. Eight EPN stations, 1 h windows: median time to fix 20 → 14 min with CODE's biases, 20 → 10.5 min with CNES's three-frequency biases, no wrong fixes. Report: `docs/reports/uncombined-ppp.md`.
+- Ambiguity resolution with satellite phase OSBs: extra-wide → wide → narrow lane cascade with LAMBDA and partial fixing; accepted with a bootstrapped success rate ≥ 0.999, ≥ 6 narrow lanes, a χ² test of the fixed position's shift against the float covariance, and a hold on integers fixed earlier on the same arcs. EPN, 44 station-days, 1 h windows: median time to fix 20 → 15.5–16 min with CODE's biases, 20 → 10.5 min with CNES's three-frequency biases. Report: `docs/reports/uncombined-ppp.md`.
+- Diagnostics (`diagnostics: true`, in `solvePpp`'s terms), float and fixed position covariances, and the `maxFloatGapM` guard on the session's fix.
+- `satBandOffset(prn, t, band, others)`: a band a known satellite's calibration lacks takes its other bands', as `satOffset` does for a pair (2.48); `evaluateSignals` excludes an unknown satellite.
+- Galileo E5 AltBOC is selected only on request (`bands: { E: '18' }`): with E5a and E5b it only added correlated code multipath.
 - `PppOptions.gateK`: the innovation gate of `solvePpp` (default 4, unchanged).
 
 ## 2.50.0
