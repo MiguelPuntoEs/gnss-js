@@ -825,7 +825,7 @@ export class PppEngine {
       sat: [number, number, number];
       model: number;
       gf: number;
-      mw: number;
+      mwCyc: number;
     }
   >;
   /** Consecutive gated-out phase updates per satellite. */
@@ -1247,6 +1247,9 @@ export class PppEngine {
       range: number;
       tropoFixed: number; // zhd·mh (+ range corrections)
       mw: number;
+      /** Melbourne–Wübbena wide-lane ambiguity this epoch (cycles) — not
+       *  `mw`, which is the wet mapping function. */
+      mwCyc: number;
       /** Geometry-free phase λ1·L1 − λ2·L2 (m): ionosphere + ambiguities. */
       gf: number;
       /** Gradient partials: mapping × cos/sin azimuth (0 when not estimated). */
@@ -1374,6 +1377,11 @@ export class PppEngine {
         range,
         tropoFixed: zhd * mh + trop.gradient + corr.rangeM,
         mw,
+        mwCyc:
+          o.l1 -
+          o.l2 -
+          ((o.f1 * o.c1 + o.f2 * o.c2) / (o.f1 + o.f2) / C_LIGHT) *
+            (o.f1 - o.f2),
         gf: o.l1 * lam1 - o.l2 * lam2,
         mgN: grad ? gradientMapping(elRad) * Math.cos(azRad) : 0,
         mgE: grad ? gradientMapping(elRad) * Math.sin(azRad) : 0,
@@ -1424,7 +1432,7 @@ export class PppEngine {
             v,
             d: v.lIf - prev.lIf - (v.range - r0) - (model - prev.model),
             gfJump: Math.abs(v.gf - prev.gf),
-            mwJump: Math.abs(v.mw - prev.mw),
+            mwJump: Math.abs(v.mwCyc - prev.mwCyc),
           });
         }
         tdPrev.set(v.prn, {
@@ -1433,7 +1441,7 @@ export class PppEngine {
           sat: v.sat,
           model,
           gf: v.gf,
-          mw: v.mw,
+          mwCyc: v.mwCyc,
         });
       }
       if (!kinematic) {
