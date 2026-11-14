@@ -79,6 +79,7 @@
  *   get cycles) and pass a `prn → measurement` map for the epoch.
  */
 
+import { saastamoinenSlantDelay } from './tropo-saastamoinen';
 import type { Ephemeris, GlonassEphemeris } from '../rinex/nav';
 import type { SatPosition } from '../orbit';
 import { computeSatPosition, ecefToAzEl, selectEphemeris } from '../orbit';
@@ -223,12 +224,6 @@ function sagnac(
   return [pos.x * c + pos.y * s, -pos.x * s + pos.y * c, pos.z];
 }
 
-/** Simple tropospheric zenith-delay model mapped by elevation (m). */
-function tropoDelay(elevationRad: number): number {
-  const sinEl = Math.sin(elevationRad);
-  return 2.47 / (sinEl + 0.0121);
-}
-
 /** Ephemeris source: a per-PRN map, or a list searched per epoch. */
 export type EphemerisSource =
   ReadonlyMap<string, Ephemeris> | readonly Ephemeris[];
@@ -304,16 +299,13 @@ function buildGeometry(
   const out: SatGeometry[] = [];
   // Base geodetic latitude/longitude (rad) for the base antenna correction —
   // the base is fixed, so this is constant across the epoch.
-  let baseLatRad = 0;
-  let baseLonRad = 0;
-  if (antenna?.base) {
-    // ecefToGeodetic returns radians.
-    [baseLatRad, baseLonRad] = ecefToGeodetic(
-      basePos[0],
-      basePos[1],
-      basePos[2]
-    );
-  }
+  // ecefToGeodetic returns radians (and the ellipsoidal height in m): the
+  // troposphere at the base is evaluated at its own height.
+  const [baseLatRad, baseLonRad, baseHgt] = ecefToGeodetic(
+    basePos[0],
+    basePos[1],
+    basePos[2]
+  );
   for (const [prn, mR] of rover) {
     const sys = prn[0]!;
     if (!'GERCJ'.includes(sys)) continue;
@@ -414,7 +406,9 @@ function buildGeometry(
       satR,
       rhoB,
       elB,
-      tropoB: troposphere ? tropoDelay(elB) : 0,
+      tropoB: troposphere
+        ? saastamoinenSlantDelay(elB, baseLatRad, baseHgt)
+        : 0,
       prR: mR.pr,
       prB: mB.pr,
       cpR: mR.cp ?? null,
@@ -454,7 +448,11 @@ function roverTerms(
   const elR = needEl ? ecefToAzEl(x, y, z, sx, sy, sz).el : 0;
   let dTropo = 0;
   if (troposphere) {
-    dTropo = tropoDelay(Math.max(elR, 0.05)) - g.tropoB;
+    // At the rover's own latitude and height: two receivers at different
+    // heights see different zenith delays (~0.3 mm per metre), which a
+    // single constant zenith value put into the rover's height.
+    const [latR, , hR] = ecefToGeodetic(x, y, z);
+    dTropo = saastamoinenSlantDelay(Math.max(elR, 0.05), latR, hR) - g.tropoB;
   }
   // Rover receiver-antenna correction (per frequency), added to the modelled
   // range. u is the satellite→receiver unit vector, so −u is the line of sight
