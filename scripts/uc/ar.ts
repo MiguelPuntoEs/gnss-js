@@ -72,6 +72,9 @@ const base = {
 
 interface Out {
   series: PppEpochResult[];
+  /** The session's fix as the page reports it (the final attempt's, or
+   *  the last accepted one within 3 cm of the final float). */
+  ar?: { position: [number, number, number] | null };
 }
 const engines: [string, (w: PppMultiEpoch[]) => Out][] = [
   [
@@ -196,7 +199,8 @@ for (
           (r.posSigma3d * 1000).toFixed(0)
         );
     const last = sol.series[sol.series.length - 1]!;
-    const endPos = last.fixedPosition ?? last.position;
+    const endFix = sol.ar?.position ?? null;
+    const endPos = endFix ?? last.position;
     const e = err(endPos).map((v) => v * 1000);
     const s = summary.get(name) ?? {
       ttf: [],
@@ -208,7 +212,7 @@ for (
     };
     s.n++;
     if (ttf !== null) s.ttf.push(ttf);
-    if (last.fixedPosition) s.fixed++;
+    if (endFix) s.fixed++;
     s.wrong += wrong;
     s.endErr.push(e);
     s.flt.push(
@@ -225,7 +229,7 @@ for (
       `ttf ${ttf === null ? '  —  ' : (ttf / 60).toFixed(1).padStart(5)} min`,
       `fixed ${((100 * nFixed) / sol.series.length).toFixed(0).padStart(3)} %`,
       `wrong ${wrong}`,
-      `end ${last.fixedPosition ? 'fix' : 'flt'} ${e.map((v) => v.toFixed(1)).join('/')} mm`,
+      `end ${endFix ? 'fix' : 'flt'} ${e.map((v) => v.toFixed(1)).join('/')} mm`,
       `(${sec.toFixed(1)} s)`
     );
   }
