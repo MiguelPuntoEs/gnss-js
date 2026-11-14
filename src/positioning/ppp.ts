@@ -120,6 +120,9 @@ export interface PppOptions {
    * 'sin': σ²/sin e (milder). 'rtklib': σ²(1 + 1/sin²e)/2.
    */
   elevationWeighting?: PppElevationWeighting;
+  /** Outlier gate on code and carrier innovations (multiples of their σ).
+   *  Default 4; 0 disables it (exact comparisons between engines). */
+  gateK?: number;
   /** Wet-troposphere random-walk process noise (m²/epoch). Default 1e-8. */
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
@@ -415,7 +418,7 @@ export interface PppArc {
 /* ================================================================== */
 
 /** Least-squares [Δx, Δy, Δz, Δclock] from time-differenced phase. */
-function tdLsq(
+export function tdLsq(
   qs: readonly { v: { e: [number, number, number] }; d: number }[]
 ): [number, number, number, number] | null {
   const M = [0, 1, 2, 3].map(() => [0, 0, 0, 0, 0]);
@@ -447,7 +450,7 @@ function tdLsq(
   ];
 }
 
-function tdResidual(
+export function tdResidual(
   q: { v: { e: [number, number, number] }; d: number },
   s: [number, number, number, number]
 ): number {
@@ -476,7 +479,7 @@ const CODE_GATE_M = 15;
  * exactly symmetric — is computed on one triangle and mirrored: ~5× fewer
  * operations than the dense form, the bulk of a day's PPP.
  */
-function ekfUpdateScalar(
+export function ekfUpdateScalar(
   x: number[],
   P: number[][],
   h: number[],
@@ -755,7 +758,7 @@ const wetSlant = (
   v: { mw: number; mgN: number; mgE: number }
 ) => x[IDX_ZWD]! * v.mw + x[IDX_GN]! * v.mgN + x[IDX_GE]! * v.mgE;
 
-function gradientConfig(
+export function gradientConfig(
   opts: PppOptions
 ): { sigmaM: number; randomWalkMPerSqrtH: number } | null {
   const g = opts.estimateGradients;
@@ -768,7 +771,7 @@ function gradientConfig(
 }
 
 /** Chen & Herring (1997) gradient mapping function. */
-const gradientMapping = (el: number) =>
+export const gradientMapping = (el: number) =>
   1 / (Math.sin(el) * Math.tan(el) + 0.0032);
 // Per-constellation receiver clocks (absorbing the inter-system bias) and
 // float ambiguities are appended dynamically after the base states.
@@ -1621,7 +1624,14 @@ export class PppEngine {
       const kC = opts.systemSigmaScale?.[v.prn[0]!]?.code ?? 1;
       if (
         Math.abs(innov) < 1e6 &&
-        ekfUpdateScalar(x, P, h, innov, (kC * codeSigma) ** 2 * wEl, 4)
+        ekfUpdateScalar(
+          x,
+          P,
+          h,
+          innov,
+          (kC * codeSigma) ** 2 * wEl,
+          opts.gateK ?? 4
+        )
       )
         codeUsed.add(v.prn);
     };
@@ -1650,7 +1660,7 @@ export class PppEngine {
         h[IDX_GN] = v.mgN;
         h[IDX_GE] = v.mgE;
         h[ai] = 1;
-        used = ekfUpdateScalar(x, P, h, innov, rPhase, 4);
+        used = ekfUpdateScalar(x, P, h, innov, rPhase, opts.gateK ?? 4);
       }
       if (used) phaseUsed.add(v.prn);
       if (reinit) {

@@ -699,6 +699,15 @@ export { niellMapping } from './ppp-tropo';
 export type { TropoMapping } from './ppp-tropo';
 export { createPppCorrections } from './ppp-corrections';
 export {
+  solvePppUncombined,
+  PppUncombinedEngine,
+  IONO_REF_FREQ,
+} from './ppp-uncombined';
+export type {
+  PppUncombinedOptions,
+  PppUncombinedSolution,
+} from './ppp-uncombined';
+export {
   selectPppSignals,
   toDualFrequencyObs,
   PPP_SIGNAL_PRIORITY,
