@@ -303,7 +303,7 @@ with the first round's acceptance (narrow-lane success rate 0.99, ≥ 5
 ambiguities): 6 of 192 one-hour CODE windows, 15 of 192 CNES windows with
 all frequencies — typically 5 narrow lanes fixed on a float still ~10 cm
 off with a 12 cm formal σ. Tried on 10 stations × 2 days: a float-σ gate
-(< 8 cm) cut wrong windows little and cost 4–7 min; arcs ≥ 5 min changed
+(< 8 cm) cut wrong windows little and cost 4–7 min (< 12 cm, after the hold: 3 → 2 windows for 2 min with all frequencies); arcs ≥ 5 min changed
 nothing; success rate 0.999 with ≥ 6 ambiguities removed most of them for
 1–2 min; requiring two consecutive attempts to agree within 3 cm
 (`confirmM`, off) removed one more of five for 0.5 min; holding the
