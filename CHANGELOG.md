@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.57.0
+
+### Changed — the ionosphere-free engine also waits for a settled float
+
+- `ar.maxDriftM` now defaults to 0.05 m (over `driftWindowS` = 300 s) in the ionosphere-free engine too (static sessions; `Infinity` turns it off). One-hour windows, GPS + GLONASS + Galileo, CODE MGEX: wrong-fix epochs 104 → 40 (10 EPN stations, 936 windows) and 396 → 196 (14 IGS Asia-Pacific stations, 666 windows), median time to fix 18 → 20 and 20 → 24 min, sessions fixed at the end unchanged (866 → 865, 593 → 593). 24 h EPN week 2430 (35 stations, CODE OPS, ambiguities fixed): 1.4/0.8/2.1 mm with and without, every station-day fixed.
+
 ## 2.56.0
 
 ### Changed — ambiguity fixing waits for the float to stop moving (uncombined engine)
