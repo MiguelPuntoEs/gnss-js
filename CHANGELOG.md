@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.54.0
 
 ### Fixed — time scales, checked end to end
 
