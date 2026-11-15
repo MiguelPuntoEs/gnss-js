@@ -36,4 +36,12 @@ jobs:
       - run: pnpm run lint
       - run: npx tsc --noEmit
       - run: pnpm test
+      # Dates hold the GPS clock face in their UTC fields; a stray local-time
+      # getter only shows away from UTC (gnss-js#2), so rerun the time tests
+      # west and far east of Greenwich.
+      - name: Time tests outside UTC
+        run: |
+          for tz in America/Los_Angeles Pacific/Kiritimati; do
+            TZ=$tz pnpm exec vitest run test/time-correctness.test.ts test/gnss-scales.test.ts test/functions.test.ts test/julian.test.ts test/time-rinex.test.ts test/rinex.test.ts test/time-difference.test.ts
+          done
       - run: pnpm run build

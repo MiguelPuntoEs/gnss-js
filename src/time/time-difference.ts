@@ -17,45 +17,65 @@ export function getTimeDifference(startDate: Date, finalDate: Date): number {
 }
 
 /**
- * Extracts the seconds component (0-59) from a time difference.
+ * One component of a duration, with the duration's sign: −90 s is −1 min
+ * −30 s, so the components add back up to the duration.
+ */
+function signedPart(
+  timeDifference: number,
+  modulo: number,
+  unit: number
+): number {
+  return (
+    Math.sign(timeDifference) *
+      Math.floor((Math.abs(timeDifference) % modulo) / unit) || 0 // no −0
+  );
+}
+
+/**
+ * Extracts the seconds component (0-59, signed like the difference) from a time difference.
  * @param timeDifference - Time difference in milliseconds
  * @returns Seconds component (0-59)
  */
 export function getSecondsFromTimeDifference(timeDifference: number): number {
-  return Math.floor(
-    (timeDifference % MILLISECONDS_IN_MINUTE) / MILLISECONDS_IN_SECOND
+  return signedPart(
+    timeDifference,
+    MILLISECONDS_IN_MINUTE,
+    MILLISECONDS_IN_SECOND
   );
 }
 
 /**
- * Extracts the minutes component (0-59) from a time difference.
+ * Extracts the minutes component (0-59, signed like the difference) from a time difference.
  * @param timeDifference - Time difference in milliseconds
  * @returns Minutes component (0-59)
  */
 export function getMinutesFromTimeDifference(timeDifference: number): number {
-  return Math.floor(
-    (timeDifference % MILLISECONDS_IN_HOUR) / MILLISECONDS_IN_MINUTE
+  return signedPart(
+    timeDifference,
+    MILLISECONDS_IN_HOUR,
+    MILLISECONDS_IN_MINUTE
   );
 }
 
 /**
- * Extracts the hours component (0-23) from a time difference.
+ * Extracts the hours component (0-23, signed like the difference) from a time difference.
  * @param timeDifference - Time difference in milliseconds
  * @returns Hours component (0-23)
  */
 export function getHoursFromTimeDifference(timeDifference: number): number {
-  return Math.floor(
-    (timeDifference % MILLISECONDS_IN_DAY) / MILLISECONDS_IN_HOUR
-  );
+  return signedPart(timeDifference, MILLISECONDS_IN_DAY, MILLISECONDS_IN_HOUR);
 }
 
 /**
- * Returns the total number of whole days in a time difference.
+ * Returns the total number of whole days in a time difference (signed, toward zero).
  * @param timeDifference - Time difference in milliseconds
  * @returns Total whole days
  */
 export function getTotalDaysFromTimeDifference(timeDifference: number): number {
-  return Math.floor(timeDifference / MILLISECONDS_IN_DAY);
+  return (
+    Math.sign(timeDifference) *
+      Math.floor(Math.abs(timeDifference) / MILLISECONDS_IN_DAY) || 0 // no −0
+  );
 }
 
 /**

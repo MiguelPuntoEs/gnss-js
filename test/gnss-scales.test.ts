@@ -108,13 +108,13 @@ test('getTimeOfWeek', () => {
 });
 
 test('getGloN4', () => {
-  // GLONASS leap epoch is 1996-01-01
-  // 1996-01-01 → N4 = 0 (first 4-year period)
-  expect(getGloN4(new Date('1996-01-01T00:00:00Z'))).toBe(0);
-  // 2000-01-01 → N4 = 1
-  expect(getGloN4(new Date('2000-01-01T00:00:00Z'))).toBe(1);
-  // 2024-03-15 → N4 = 7 (2024-1996=28, 28/4=7)
-  expect(getGloN4(new Date('2024-03-15T00:00:00Z'))).toBe(7);
+  // GLONASS ICD 5.1 / RTCM DF134: N4 = 1 for 1996–1999
+  expect(getGloN4(new Date('1996-01-01T00:00:00Z'))).toBe(1);
+  expect(getGloN4(new Date('1999-12-31T23:59:59Z'))).toBe(1);
+  expect(getGloN4(new Date('2000-01-01T00:00:00Z'))).toBe(2);
+  expect(getGloN4(new Date('2024-03-15T00:00:00Z'))).toBe(8);
+  expect(getGloN4(new Date('2027-06-01T00:00:00Z'))).toBe(8);
+  expect(getGloN4(new Date('2028-01-01T00:00:00Z'))).toBe(9);
 });
 
 test('getGloNA', () => {
@@ -124,24 +124,27 @@ test('getGloNA', () => {
   expect(getGloNA(new Date('1996-01-02T00:00:00Z'))).toBe(2);
   // 1996-12-31 → NA = 366 (1996 is a leap year)
   expect(getGloNA(new Date('1996-12-31T00:00:00Z'))).toBe(366);
+  // last day of an interval: 366 + 3 × 365
+  expect(getGloNA(new Date('2027-12-31T12:00:00Z'))).toBe(1461);
 });
 
 test('getDateFromGloN', () => {
-  // N4=0, NA=1, TOD=0 → 1996-01-01T00:00:00Z
-  const date = getDateFromGloN(0, 1, 0);
+  // N4=1, NA=1, TOD=0 → 1996-01-01T00:00:00Z
+  const date = getDateFromGloN(1, 1, 0);
   expect(date.toISOString()).toBe('1996-01-01T00:00:00.000Z');
-  // N4=1, NA=1, TOD=3600000ms (1 hour) → 2000-01-01T01:00:00Z
-  const date2 = getDateFromGloN(1, 1, 3600000);
+  // N4=2, NA=1, TOD=3600000ms (1 hour) → 2000-01-01T01:00:00Z
+  const date2 = getDateFromGloN(2, 1, 3600000);
   expect(date2.toISOString()).toBe('2000-01-01T01:00:00.000Z');
 });
 
 test('getNtpTime', () => {
-  // At GPS epoch (1980-01-06T00:00:00Z), TAI = 1980-01-06T00:00:19Z
-  // NTP epoch = 1900-01-01T00:00:00Z
-  // NTP time = TAI - NTP epoch
+  // NTP counts UTC seconds since 1900 (RFC 5905). At the GPS epoch
+  // GPS = UTC, so NTP time = 1980-01-06T00:00:00 − 1900-01-01.
   const ntp = getNtpTime(new Date('1980-01-06T00:00:00Z'));
   const expected =
-    new Date('1980-01-06T00:00:19Z').getTime() -
+    new Date('1980-01-06T00:00:00Z').getTime() -
     new Date('1900-01-01T00:00:00Z').getTime();
   expect(ntp).toBe(expected);
+  // 2026: GPS = UTC + 18 s
+  expect(getNtpTime(new Date('2026-11-15T00:00:18Z')) / 1000).toBe(4003689600);
 });

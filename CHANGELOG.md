@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — time scales, checked end to end
+
+- `getDateFromUtc` / `getDateFromUnixTime` (and Julian dates in UTC) were 1 s early during the first second after every leap second since 1981 (e.g. 2017-01-01T00:00:00 UTC gave GPS 00:00:17, not 00:00:18). The leap count is now looked up on the UTC scale; every step in the IERS table is tested both ways.
+- `getNtpTime` returned TAI − 1900 (37 s ahead); NTP time is UTC-based (RFC 5905, the scale of leap-seconds.list).
+- GLONASS: `getGloN4` is 1 for 1996–1999 as in the ICD and RTCM DF134 (it was 0-based, one less than the library's own almanac and RTCM decoders); `getGloN4` and `getDateFromGloN` read local time (a year off west of UTC). The input is the GLONASS clock face (UTC + 3 h), now documented.
+- Julian Date / MJD inverses round to the millisecond; float noise left them 1 ms early about half the time.
+- `getDateFromRINEX` reads any number of decimals (`45.5` was read as 45.000), accepts the trailing flag/satellite count and RINEX 2 epochs, and returns an Invalid Date for out-of-range fields instead of rolling them over (month 13 → next year).
+- `getDateFromDayOfYear` throws a RangeError for a day that is not in the reference year (0, 366 in a common year, fractions); `getDateFromDayOfWeek` requires an integer 0–6.
+- Time-difference components carry the difference's sign (−1 s was split into −1 d −1 h −1 min −1 s).
+
+### Added
+
+- `isLeapSecond(date)`: whether a GPS instant reads 23:59:60 UTC, which a Date cannot hold.
+
 ## 2.53.0
 
 ### Added — Hatanaka while writing

@@ -1,9 +1,12 @@
-import { MILLISECONDS_IN_SECOND } from '../constants/time';
-import { getDateFromTai, getNtpTime, getTaiDate } from './gnss';
+import {
+  MILLISECONDS_GPS_TAI,
+  MILLISECONDS_IN_SECOND,
+} from '../constants/time';
 
 // Leap second table: [NTP timestamp, TAI-UTC leap seconds]
 // Sorted descending for reverse lookup. NTP timestamps from IETF leap-seconds.list.
-// Last updated: 2025. No new leap seconds have been added since Jan 1, 2017.
+// Checked against leap-seconds.list (expires 2027-06-28) and IERS Bulletin C 72
+// (July 2026: no leap second at the end of December 2026).
 const LEAP_SECONDS_TABLE: [number, number][] = [
   [3692217600, 37], // 1 Jan 2017
   [3644697600, 36], // 1 Jul 2015
@@ -35,46 +38,64 @@ const LEAP_SECONDS_TABLE: [number, number][] = [
   [2272060800, 10], // 1 Jan 1972
 ];
 
+/** Seconds from the NTP epoch (1900-01-01) to the Unix epoch (1970-01-01). */
+const NTP_UNIX_OFFSET_S = 2208988800;
+
+/** TAI−UTC in force at a UTC clock-face instant (ms since 1970, leap seconds not counted). */
+function leapAtUtcMs(utcMs: number): number {
+  const utcNtpSeconds = utcMs / MILLISECONDS_IN_SECOND + NTP_UNIX_OFFSET_S;
+  for (const [timestamp, leapSeconds] of LEAP_SECONDS_TABLE) {
+    if (utcNtpSeconds >= timestamp) return leapSeconds;
+  }
+  return 8;
+}
+
 /**
  * Returns the TAI-UTC leap seconds count for a given date.
+ *
+ * Before 1972 UTC was not an integer offset from TAI (it drifted by
+ * fractions of a second); 8 s (its value at the Unix epoch) is returned for
+ * those dates, so conversions before 1972 are approximate.
+ * During an inserted leap second (23:59:60 UTC) the previous count applies.
  * @param date - Date in GPS time scale
  * @returns Number of TAI-UTC leap seconds
  */
 export function getLeap(date: Date): number {
-  const ntp_time: number = getNtpTime(date);
-
+  const taiMs = date.getTime() + MILLISECONDS_GPS_TAI;
   for (const [timestamp, leapSeconds] of LEAP_SECONDS_TABLE) {
-    if (ntp_time / MILLISECONDS_IN_SECOND - leapSeconds >= timestamp) {
+    const changeUtcMs =
+      (timestamp - NTP_UNIX_OFFSET_S) * MILLISECONDS_IN_SECOND;
+    if (taiMs - leapSeconds * MILLISECONDS_IN_SECOND >= changeUtcMs)
       return leapSeconds;
-    }
   }
-
   return 8;
 }
 
 /**
  * Returns the GPS-UTC leap seconds count (TAI-UTC minus 19) for a given date.
+ * Negative before 1980, when GPS time did not exist yet.
  * @param date - Date in GPS time scale
  * @returns Number of GPS-UTC leap seconds
  */
 export function getGpsLeap(date: Date): number {
-  const leap_seconds: number = getLeap(date);
-
-  if (leap_seconds < 0) return 0;
-
-  return leap_seconds - 19;
+  return getLeap(date) - MILLISECONDS_GPS_TAI / MILLISECONDS_IN_SECOND;
 }
 
 /**
  * Converts a GPS-scale Date to UTC scale (applies leap seconds).
+ *
+ * A Date cannot hold 23:59:60: the GPS second that falls on an inserted
+ * leap second maps to 00:00:00 of the next day, like the second after it
+ * (see `isLeapSecond`).
  * @param date - Date in GPS time scale
  * @returns Date in UTC time scale
  */
 export function getUtcDate(date: Date): Date {
-  const tai_date: Date = getTaiDate(date);
-  const leap_seconds: number = getLeap(date);
-
-  return new Date(tai_date.getTime() - leap_seconds * MILLISECONDS_IN_SECOND);
+  return new Date(
+    date.getTime() +
+      MILLISECONDS_GPS_TAI -
+      getLeap(date) * MILLISECONDS_IN_SECOND
+  );
 }
 
 /**
@@ -83,13 +104,19 @@ export function getUtcDate(date: Date): Date {
  * @returns Date in GPS time scale
  */
 export function getDateFromUtc(utc_date: Date): Date {
-  const tai_date: Date = new Date(
-    utc_date.getTime() + getLeap(utc_date) * MILLISECONDS_IN_SECOND
+  return new Date(
+    utc_date.getTime() +
+      leapAtUtcMs(utc_date.getTime()) * MILLISECONDS_IN_SECOND -
+      MILLISECONDS_GPS_TAI
   );
-  const leap_seconds: number = getLeap(getDateFromTai(tai_date));
-  const gps_date: Date = getDateFromTai(
-    new Date(utc_date.getTime() + leap_seconds * MILLISECONDS_IN_SECOND)
-  );
+}
 
-  return gps_date;
+/**
+ * Whether a GPS-scale instant falls inside an inserted leap second, i.e.
+ * its UTC reading is 23:59:60.xxx (which a Date cannot represent).
+ * @param date - Date in GPS time scale
+ */
+export function isLeapSecond(date: Date): boolean {
+  const next = new Date(date.getTime() + MILLISECONDS_IN_SECOND);
+  return getLeap(next) > getLeap(date);
 }

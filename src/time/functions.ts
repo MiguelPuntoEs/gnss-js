@@ -48,8 +48,16 @@ export function getDayOfYear(date: Date): number {
  * @param dayOfYear - Day-of-year number (1-based)
  * @param date - Reference date in GPS time scale (year and time-of-day are used)
  * @returns Date in GPS time scale
+ * @throws RangeError when dayOfYear is not a day of the reference year
  */
 export function getDateFromDayOfYear(dayOfYear: number, date: Date): Date {
+  const year = date.getUTCFullYear();
+  const daysInYear =
+    (Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / MILLISECONDS_IN_DAY;
+  if (!Number.isInteger(dayOfYear) || dayOfYear < 1 || dayOfYear > daysInYear)
+    throw new RangeError(
+      `Day of year must be an integer between 1 and ${daysInYear}`
+    );
   return new Date(
     Date.UTC(
       date.getUTCFullYear(),
@@ -80,8 +88,8 @@ export function getDayOfWeek(date: Date): number {
  * @returns Date in GPS time scale
  */
 export function getDateFromDayOfWeek(dayOfWeek: number, dateRaw: Date): Date {
-  if (dayOfWeek < 0 || dayOfWeek > 6)
-    throw new Error('Day of week must be a value between 0 and 7');
+  if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6)
+    throw new RangeError('Day of week must be an integer between 0 and 6');
 
   return new Date(
     dateRaw.getTime() + (dayOfWeek - dateRaw.getUTCDay()) * MILLISECONDS_IN_DAY

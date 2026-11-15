@@ -3,14 +3,15 @@ import {
   DAYS_MJD_JULIAN,
   MILLISECONDS_GPS_TAI,
   MILLISECONDS_IN_DAY,
-  MILLISECONDS_IN_SECOND,
   MILLISECONDS_TT_TAI,
   START_JULIAN_TAI,
   START_TAI_TIME,
 } from '../constants/time';
 import { Scale } from '../types/enums';
-import { getDateFromTai } from './gnss';
-import { getLeap } from './utc';
+import { getDateFromUtc, getUtcDate } from './utc';
+
+/** Julian Date of 1970-01-01T00:00:00 (the Unix epoch). */
+const JULIAN_UNIX_EPOCH = 2440587.5;
 
 /**
  * Returns the Julian Date for a given Date and time scale.
@@ -35,13 +36,7 @@ export function getJulianDate(date: Date, scale: Scale = Scale.TT): number {
   }
 
   if (scale === Scale.UTC) {
-    return (
-      (date.getTime() -
-        START_TAI_TIME.getTime() -
-        getLeap(date) * MILLISECONDS_IN_SECOND) /
-        MILLISECONDS_IN_DAY +
-      START_JULIAN_TAI
-    );
+    return getUtcDate(date).getTime() / MILLISECONDS_IN_DAY + JULIAN_UNIX_EPOCH;
   }
 
   // Scale = TT
@@ -62,39 +57,29 @@ export function getDateFromJulianDate(
   julianDate: number,
   scale: Scale = Scale.TT
 ): Date {
-  if (scale === Scale.TAI) {
-    return new Date(
-      (julianDate - START_JULIAN_TAI) * MILLISECONDS_IN_DAY +
-        START_TAI_TIME.getTime()
+  // Round to the millisecond: a JD near 2.46e6 carries ~40 µs of float
+  // noise, and new Date() would truncate it to the millisecond below.
+  if (scale === Scale.UTC) {
+    return getDateFromUtc(
+      new Date(
+        Math.round((julianDate - JULIAN_UNIX_EPOCH) * MILLISECONDS_IN_DAY)
+      )
     );
   }
 
-  if (scale === Scale.GPS) {
-    return new Date(
+  // TAI clock face, then shifted to GPS (TAI − 19 s) or from TT (TAI + 32.184 s)
+  const shiftMs =
+    scale === Scale.TAI
+      ? 0
+      : scale === Scale.GPS
+        ? MILLISECONDS_GPS_TAI
+        : -MILLISECONDS_TT_TAI;
+  return new Date(
+    Math.round(
       (julianDate - START_JULIAN_TAI) * MILLISECONDS_IN_DAY +
         START_TAI_TIME.getTime() +
-        MILLISECONDS_GPS_TAI
-    );
-  }
-
-  if (scale === Scale.UTC) {
-    const utc_date: Date = new Date(
-      (julianDate - START_JULIAN_TAI) * MILLISECONDS_IN_DAY +
-        START_TAI_TIME.getTime()
-    );
-    const tai_date: Date = new Date(
-      utc_date.getTime() + getLeap(utc_date) * MILLISECONDS_IN_SECOND
-    );
-    const leap_seconds: number = getLeap(getDateFromTai(tai_date));
-
-    return new Date(utc_date.getTime() + leap_seconds * MILLISECONDS_IN_SECOND);
-  }
-
-  // Scale = TT
-  return new Date(
-    (julianDate - START_JULIAN_TAI) * MILLISECONDS_IN_DAY +
-      START_TAI_TIME.getTime() -
-      MILLISECONDS_TT_TAI
+        shiftMs
+    )
   );
 }
 

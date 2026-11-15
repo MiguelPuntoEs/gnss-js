@@ -9,7 +9,6 @@ import {
   START_GPS_TIME,
   START_NTP_TIME,
 } from '../constants/time';
-import { getTimeDifference } from './time-difference';
 import { getDateFromUtc, getUtcDate } from './utc';
 
 /**
@@ -147,46 +146,61 @@ export function getDateFromTt(tt_date: Date): Date {
   );
 }
 
-/**
- * Returns the GLONASS four-year interval number (N4) since 1996.
- * @param date - Date in GPS time scale
- * @returns GLONASS N4 period number (0-based)
- */
-export function getGloN4(date: Date): number {
-  return Math.floor((date.getUTCFullYear() - START_GLO_LEAP.getFullYear()) / 4);
+/** Start (UTC fields) of the GLONASS four-year interval N4. */
+function gloIntervalStartMs(n4: number): number {
+  return Date.UTC(START_GLO_LEAP.getUTCFullYear() + 4 * (n4 - 1), 0, 1);
 }
 
 /**
- * Returns the GLONASS day number (NA) within the current four-year interval.
- * @param date - Date in GPS time scale
- * @returns Day number within the N4 period (1-based)
+ * Returns the GLONASS four-year interval number N4 (GLONASS ICD 5.1, RTCM
+ * DF134): 1 for 1996–1999, 2 for 2000–2003, …
+ *
+ * GLONASS counts days in GLONASS time, UTC(SU) + 3 h: pass a Date whose UTC
+ * fields hold that clock face (UTC + 3 h), not a GPS-scale Date.
+ * @param date - Date on the GLONASS clock face
+ * @returns N4 (1-based)
  */
-export function getGloNA(date: Date): number {
-  const n4 = getGloN4(date);
-
-  const init4YearPeriod = new Date(START_GLO_LEAP);
-  init4YearPeriod.setUTCFullYear(init4YearPeriod.getUTCFullYear() + n4 * 4);
-
+export function getGloN4(date: Date): number {
   return (
-    Math.floor(getTimeDifference(init4YearPeriod, date) / MILLISECONDS_IN_DAY) +
+    Math.floor((date.getUTCFullYear() - START_GLO_LEAP.getUTCFullYear()) / 4) +
     1
   );
 }
 
-/** Reconstruct a Date from GLONASS N4 (4-year period), NA (day number), and time-of-day in milliseconds. */
-export function getDateFromGloN(n4: number, na: number, tod: number): Date {
-  const date = new Date(START_GLO_LEAP);
-  date.setFullYear(date.getUTCFullYear() + n4 * 4);
-  date.setTime(date.getTime() + (na - 1) * MILLISECONDS_IN_DAY + tod);
-
-  return date;
+/**
+ * Returns the GLONASS day number NA within the four-year interval
+ * (1–1461, day 1 = 1 January of the leap year).
+ * @param date - Date on the GLONASS clock face (UTC + 3 h), as for getGloN4
+ * @returns NA (1-based)
+ */
+export function getGloNA(date: Date): number {
+  return (
+    Math.floor(
+      (date.getTime() - gloIntervalStartMs(getGloN4(date))) /
+        MILLISECONDS_IN_DAY
+    ) + 1
+  );
 }
 
 /**
- * Converts a GPS-scale Date to NTP time in milliseconds since the NTP epoch.
+ * Reconstructs a GLONASS clock-face Date from N4, NA and the time of day.
+ * @param n4 - Four-year interval number (1 = 1996–1999)
+ * @param na - Day within the interval (1-based)
+ * @param tod - Time of day in milliseconds
+ * @returns Date on the GLONASS clock face (UTC + 3 h)
+ */
+export function getDateFromGloN(n4: number, na: number, tod: number): Date {
+  return new Date(
+    gloIntervalStartMs(n4) + (na - 1) * MILLISECONDS_IN_DAY + tod
+  );
+}
+
+/**
+ * Converts a GPS-scale Date to NTP time: milliseconds since 1900-01-01 on
+ * the UTC scale, leap seconds not counted (RFC 5905), as in leap-seconds.list.
  * @param date - Date in GPS time scale
  * @returns NTP time in milliseconds
  */
 export function getNtpTime(date: Date): number {
-  return getTaiDate(date).getTime() - START_NTP_TIME.getTime();
+  return getUtcDate(date).getTime() - START_NTP_TIME.getTime();
 }
