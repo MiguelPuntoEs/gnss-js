@@ -117,61 +117,63 @@ export function crc24q(data: Uint8Array, length: number): number {
 export class Rtcm3Decoder {
   private buffer = new Uint8Array(0);
 
-  /** Feed raw bytes and extract any complete RTCM3 frames. */
+  /**
+   * Feed raw bytes and extract any complete RTCM3 frames. Linear in the
+   * input: a whole file in one call costs what it costs fed in chunks.
+   */
   decode(data: Uint8Array): Rtcm3Frame[] {
-    // Append new data to buffer
-    const combined = new Uint8Array(this.buffer.length + data.length);
-    combined.set(this.buffer);
-    combined.set(data, this.buffer.length);
-    this.buffer = combined;
+    let buf = data;
+    if (this.buffer.length > 0) {
+      buf = new Uint8Array(this.buffer.length + data.length);
+      buf.set(this.buffer);
+      buf.set(data, this.buffer.length);
+    }
 
     const frames: Rtcm3Frame[] = [];
+    let pos = 0;
 
-    while (this.buffer.length >= 6) {
+    while (buf.length - pos >= 6) {
       // Find sync byte 0xD3
-      const syncIdx = this.buffer.indexOf(0xd3);
+      const syncIdx = buf.indexOf(0xd3, pos);
       if (syncIdx === -1) {
-        this.buffer = new Uint8Array(0);
+        pos = buf.length;
         break;
       }
-      if (syncIdx > 0) {
-        this.buffer = this.buffer.slice(syncIdx);
-      }
+      pos = syncIdx;
 
-      if (this.buffer.length < 3) break;
+      if (buf.length - pos < 3) break;
 
       // Length: 6 reserved bits (must be 0) + 10-bit message length
-      const reservedBits = (this.buffer[1]! >> 2) & 0x3f;
+      const reservedBits = (buf[pos + 1]! >> 2) & 0x3f;
       if (reservedBits !== 0) {
         // Not a valid frame — skip this byte
-        this.buffer = this.buffer.slice(1);
+        pos++;
         continue;
       }
 
-      const length = ((this.buffer[1]! & 0x03) << 8) | this.buffer[2]!;
+      const length = ((buf[pos + 1]! & 0x03) << 8) | buf[pos + 2]!;
 
       if (length > 1023) {
         // Invalid length — skip this sync byte
-        this.buffer = this.buffer.slice(1);
+        pos++;
         continue;
       }
 
       const frameSize = 3 + length + 3; // header + payload + CRC
-      if (this.buffer.length < frameSize) break; // need more data
+      if (buf.length - pos < frameSize) break; // need more data
 
       // CRC-24Q validation: compute over header + payload, compare with trailing 3 bytes
-      const crcComputed = crc24q(this.buffer, 3 + length);
+      const crcComputed = crc24q(buf.subarray(pos), 3 + length);
+      const end = pos + 3 + length;
       const crcReceived =
-        (this.buffer[3 + length]! << 16) |
-        (this.buffer[3 + length + 1]! << 8) |
-        this.buffer[3 + length + 2]!;
+        (buf[end]! << 16) | (buf[end + 1]! << 8) | buf[end + 2]!;
       if (crcComputed !== crcReceived) {
         // CRC mismatch — not a valid frame, skip this sync byte and keep searching
-        this.buffer = this.buffer.slice(1);
+        pos++;
         continue;
       }
 
-      const payload = this.buffer.slice(3, 3 + length);
+      const payload = buf.slice(pos + 3, end);
 
       // Extract message type from first 12 bits of payload
       if (length >= 2) {
@@ -179,15 +181,18 @@ export class Rtcm3Decoder {
         frames.push({ messageType, length, payload });
       }
 
-      this.buffer = this.buffer.slice(frameSize);
+      pos += frameSize;
     }
 
-    // Prevent buffer from growing unbounded — find the next sync byte and truncate
-    if (this.buffer.length > 16384) {
-      const nextSync = this.buffer.indexOf(0xd3, 1);
-      this.buffer =
-        nextSync !== -1 ? this.buffer.slice(nextSync) : new Uint8Array(0);
+    // Keep what is left (a partial frame) — but not unbounded: past 16 kB,
+    // resume from the next sync byte.
+    let rest = buf.subarray(pos);
+    if (rest.length > 16384) {
+      const nextSync = rest.indexOf(0xd3, 1);
+      rest = nextSync !== -1 ? rest.subarray(nextSync) : new Uint8Array(0);
     }
+    // A copy: never hold on to (or alias) the caller's bytes.
+    this.buffer = rest.slice();
 
     return frames;
   }

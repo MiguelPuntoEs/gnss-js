@@ -4,6 +4,7 @@
 
 import type { RinexHeader } from './parser';
 import { padL, padR, fmtF, hdrLine } from './format';
+import { crxEncoder, type WriteCrxOptions } from './crx-writer';
 
 /**
  * Batched line sink that streams text through gzip compression so the
@@ -11,8 +12,12 @@ import { padL, padR, fmtF, hdrLine } from './format';
  *
  * Callers decide when to `flush()` (the writers flush every N epochs);
  * `finish()` flushes, closes the stream, and returns the Blob.
+ *
+ * With `crx`, the lines are Hatanaka-compressed on the way: the first
+ * flush must end with END OF HEADER and every later one at the end of an
+ * epoch (as the writers flush).
  */
-export function createGzipLineSink() {
+export function createGzipLineSink(crx?: WriteCrxOptions | null) {
   const encoder = new TextEncoder();
   const compressor = new CompressionStream('gzip');
   const writer = compressor.writable.getWriter();
@@ -28,11 +33,23 @@ export function createGzipLineSink() {
   })();
 
   let batch: string[] = [];
+  const enc = crx ? crxEncoder(crx) : null;
+  let inHeader = true;
 
   async function flush() {
     if (batch.length === 0) return;
-    await writer.write(encoder.encode(batch.join('\n') + '\n'));
+    let lines = batch;
+    if (enc) {
+      lines = [];
+      const cursor = { li: 0 };
+      if (inHeader) {
+        enc.header(batch, cursor, lines);
+        inHeader = false;
+      }
+      enc.epochs(batch, cursor, lines);
+    }
     batch = [];
+    await writer.write(encoder.encode(lines.join('\n') + '\n'));
   }
 
   return {

@@ -6,9 +6,9 @@
  */
 
 import type { RinexHeader } from './parser';
-import type { CompactEpoch } from './obs-writer';
+import type { CompactEpoch, ObsWriteOptions } from './obs-writer';
 import { padL, padR, fmtF, hdrLine } from './format';
-import { modalIntervalS } from './obs-writer';
+import { crxOptionsOf, modalIntervalS } from './obs-writer';
 import { RINEX2_CODE_ORDER, RINEX2_SYSTEMS, v2CodeColumns } from './obs-codes';
 import {
   clockOffsApplLine,
@@ -33,7 +33,8 @@ import {
 export async function writeRinex2ObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
-  obsTypes: Map<string, string[]>
+  obsTypes: Map<string, string[]>,
+  options?: ObsWriteOptions
 ): Promise<Blob> {
   if (epochs.length === 0) return new Blob([], { type: 'application/gzip' });
 
@@ -59,7 +60,7 @@ export async function writeRinex2ObsBlob(
     ]),
   ];
 
-  const sink = createGzipLineSink();
+  const sink = createGzipLineSink(crxOptionsOf(options));
   const BATCH = 200;
 
   // Satellite system character

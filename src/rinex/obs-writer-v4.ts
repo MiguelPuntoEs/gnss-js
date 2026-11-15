@@ -9,17 +9,19 @@
  */
 
 import type { RinexHeader } from './parser';
-import type { CompactEpoch } from './obs-writer';
+import type { CompactEpoch, ObsWriteOptions } from './obs-writer';
 import { writeModernObsBlob } from './obs-writer';
 
 /** Write RINEX 4.01 obs file from compact observations. */
 export function writeRinex4ObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
-  obsTypes: Map<string, string[]>
+  obsTypes: Map<string, string[]>,
+  options?: ObsWriteOptions
 ): Promise<Blob> {
   return writeModernObsBlob(header, epochs, obsTypes, {
     version: '4.01',
     comment: 'Converted to RINEX 4 by GNSSCalc',
+    ...options,
   });
 }

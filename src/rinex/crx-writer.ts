@@ -78,14 +78,14 @@ function strdiff(s1: string, s2: string): string {
 }
 
 /** rnx2crx `read_value`: split a 14-char F14.3 field into upper digits
- * and lower-5-digits, keyed off the decimal point at column 10. */
+ * and lower-5-digits, keyed off the decimal point at column 10. The C
+ * code shifts two digits over the decimal point and reads the lower part
+ * from columns 9–13 (= 8, 9, 11, 12, 13 of the field), the upper part up
+ * to the decimal point it puts at column 8. */
 function readValue(field14: string): { u: number; l: number } {
-  const c = field14.padEnd(14, ' ').split('');
+  const c = field14.length < 14 ? field14.padEnd(14, ' ') : field14;
   const p7 = c[7]!;
-  // shift two digits over the decimal point
-  c[10] = c[9]!;
-  c[9] = c[8]!;
-  let l = cAtol(c.slice(9, 14).join(''));
+  let l = cAtol(c[8]! + c[9]! + c.slice(11, 14));
   let u: number;
   if (p7 === ' ') {
     u = 0;
@@ -93,8 +93,7 @@ function readValue(field14: string): { u: number; l: number } {
     u = 0;
     l = -l;
   } else {
-    c[8] = '.';
-    u = cAtol(c.slice(0, 14).join(''));
+    u = cAtol(c.slice(0, 8));
     if (u < 0) l = -l;
   }
   return { u, l };
@@ -252,60 +251,33 @@ export function writeCrx(
   const rawLines = rinexText.split('\n');
   const cursor = { li: 0 };
   const out: string[] = [];
+  const enc = crxEncoder(opts);
+  enc.header(rawLines, cursor, out);
+  enc.epochs(rawLines, cursor, out);
+  return out.join('\n') + '\n';
+}
 
-  // ---- Header ----
-  const firstLine = chop(rawLines[cursor.li++] ?? '');
-  if (
-    firstLine.slice(60, 80) !== 'RINEX VERSION / TYPE' ||
-    firstLine[20] !== 'O'
-  ) {
-    throw new Error('writeCrx: not a RINEX observation file');
-  }
-  const rinexVersion = parseInt(firstLine, 10); // integer part
-  const rinexVersionFull = readVersionFull(firstLine);
-  if (rinexVersionFull < 0) throw new Error('writeCrx: invalid RINEX version');
-
-  const crxVersion =
-    rinexVersionFull >= 402 ? '3.1' : rinexVersion === 2 ? '1.0' : '3.0';
-  out.push(
-    `${crxVersion.padEnd(20)}${'COMPACT RINEX FORMAT'.padEnd(40)}${'CRINEX VERS   / TYPE'.padEnd(20)}`
-  );
-  const prog = (opts.prog ?? 'gnss-js writeCrx').slice(0, 40);
-  const date = opts.date ?? crinexDate();
-  out.push(`${prog.padEnd(40)}${date.padEnd(20)}CRINEX PROG / DATE`);
-  out.push(firstLine);
-
+/**
+ * The compressor as a stream: `header` takes the RINEX header lines (up to
+ * END OF HEADER), then `epochs` takes the records in batches that never
+ * split an epoch, each call appending CRINEX lines to `out`. The same
+ * output as {@link writeCrx} on the whole text, without ever holding it.
+ */
+export function crxEncoder(opts: WriteCrxOptions = {}) {
+  let rinexVersion = 0;
+  let rinexVersionFull = 0;
   let ntype = 0; // RINEX2 obs type count
   const ntypeGnss: Record<string, number> = {}; // RINEX3 per-system count
-  let line: string;
-  do {
-    line = chop(rawLines[cursor.li++] ?? '');
-    out.push(line);
-    // RINEX labels live in columns 60–79; tolerate the odd file whose
-    // label is shifted a column or two (real files sit exactly at 60,
-    // and so stay byte-exact with the reference compressor).
-    const label = line.slice(60).trimStart();
-    if (label.startsWith('# / TYPES OF OBSERV') && line[5] !== ' ') {
-      ntype = parseInt(line, 10);
-    } else if (label.startsWith('SYS / # / OBS TYPES') && line[0] !== ' ') {
-      ntypeGnss[line[0]!] = parseInt(line.slice(3), 10);
-    }
-    if (cursor.li >= rawLines.length) break; // guard against a headerless file
-  } while (!line.slice(60).trimStart().startsWith('END OF HEADER'));
-
-  // ---- Field offsets (fixed per version) ----
-  const v2 = rinexVersion === 2;
-  const off = v2
-    ? { event: 28, nsat: 29, satlst: 32, clock: 68, satOld: 32, shiftClk: 1 }
-    : {
-        event: 31,
-        nsat: 32,
-        satlst: 41,
-        clock: 41,
-        satOld: 41,
-        shiftClk: 4,
-        psec: 57,
-      };
+  let v2 = false;
+  let off: {
+    event: number;
+    nsat: number;
+    satlst: number;
+    clock: number;
+    satOld: number;
+    shiftClk: number;
+    psec?: number;
+  } = { event: 0, nsat: 0, satlst: 0, clock: 0, satOld: 0, shiftClk: 0 };
 
   // ---- Epoch loop state ----
   let oldline = '&';
@@ -322,143 +294,208 @@ export function writeCrx(
     clkOrderPrev = -1;
   };
 
-  for (;;) {
-    if (cursor.li >= rawLines.length) break;
-    let epoch = rawLines[cursor.li];
-    // Genuine EOF: trailing empty string from split on final '\n'.
-    if (epoch === undefined) break;
-    if (epoch === '' && cursor.li === rawLines.length - 1) break;
-    cursor.li++;
-    epoch = chop(epoch);
-    if (epoch === '') continue;
-
-    let newline: string;
-    if (v2) {
-      newline = epoch;
-    } else {
-      // pad epoch record to 41 (satellite IDs get written from col 41)
-      newline = epoch.length < 41 ? epoch.padEnd(41, ' ') : epoch;
+  function header(
+    rawLines: string[],
+    cursor: { li: number },
+    out: string[]
+  ): void {
+    // ---- Header ----
+    const firstLine = chop(rawLines[cursor.li++] ?? '');
+    if (
+      firstLine.slice(60, 80) !== 'RINEX VERSION / TYPE' ||
+      firstLine[20] !== 'O'
+    ) {
+      throw new Error('writeCrx: not a RINEX observation file');
     }
+    rinexVersion = parseInt(firstLine, 10); // integer part
+    rinexVersionFull = readVersionFull(firstLine);
+    if (rinexVersionFull < 0)
+      throw new Error('writeCrx: invalid RINEX version');
 
-    // Event flag > 1: copy verbatim event block, reset arcs.
-    const eventFlag = parseInt(newline[off.event] ?? '0', 10) || 0;
-    if (eventFlag > 1) {
-      putEventData(rawLines, cursor, v2, newline, out, ntypeGnss, (n) => {
-        ntype = n;
-      });
-      resetArcs();
-      clk0 = { u: [0, 0, 0, 0], l: [0, 0, 0, 0] };
-      dy0 = [];
-      flag0 = [];
-      continue;
-    }
+    const crxVersion =
+      rinexVersionFull >= 402 ? '3.1' : rinexVersion === 2 ? '1.0' : '3.0';
+    out.push(
+      `${crxVersion.padEnd(20)}${'COMPACT RINEX FORMAT'.padEnd(40)}${'CRINEX VERS   / TYPE'.padEnd(20)}`
+    );
+    const prog = (opts.prog ?? 'gnss-js writeCrx').slice(0, 40);
+    const date = opts.date ?? crinexDate();
+    out.push(`${prog.padEnd(40)}${date.padEnd(20)}CRINEX PROG / DATE`);
+    out.push(firstLine);
 
-    // pico-second record (RINEX ≥ 4.02) — rare; preserved if present.
-    let newpsec = '';
-    if (rinexVersionFull >= 402 && newline.length === 62) {
-      const psec = newline.slice(off.psec!, off.psec! + 5);
-      if (/^\d{5}$/.test(psec)) newpsec = psec;
-      newline = newline.slice(0, off.psec!).replace(/\s+$/, '');
-    }
-
-    // Clock offset (optional).
-    let clkOrder = -1;
-    const clk1: ClockField = { u: [0, 0, 0, 0], l: [0, 0, 0, 0] };
-    if (newline.length > off.clock) {
-      clkOrder = readClock(
-        newline.slice(off.clock),
-        off.shiftClk,
-        clk1,
-        clkOrderPrev
-      );
-      if (clkOrder > -1) {
-        newline = newline.slice(0, off.clock).replace(/\s+$/, '');
-        // Re-pad v3 epoch to 41 after stripping clock so satlist offset holds.
-        if (!v2 && newline.length < 41) newline = newline.padEnd(41, ' ');
+    let line: string;
+    do {
+      line = chop(rawLines[cursor.li++] ?? '');
+      out.push(line);
+      // RINEX labels live in columns 60–79; tolerate the odd file whose
+      // label is shifted a column or two (real files sit exactly at 60,
+      // and so stay byte-exact with the reference compressor).
+      const label = line.slice(60).trimStart();
+      if (label.startsWith('# / TYPES OF OBSERV') && line[5] !== ' ') {
+        ntype = parseInt(line, 10);
+      } else if (label.startsWith('SYS / # / OBS TYPES') && line[0] !== ' ') {
+        ntypeGnss[line[0]!] = parseInt(line.slice(3), 10);
       }
-    }
-    clkOrderPrev = clkOrder;
+      if (cursor.li >= rawLines.length) break; // guard against a headerless file
+    } while (!line.slice(60).trimStart().startsWith('END OF HEADER'));
 
-    // Number of satellites.
-    const nsat = parseInt((newline.slice(off.nsat) || '0').trim(), 10) || 0;
-    if (v2 && nsat > 12) {
-      newline = readMoreSat(rawLines, cursor, nsat, newline);
-    }
-
-    // Read each satellite's observations.
-    const sats: Sat[] = [];
-    const satIds: string[] = [];
-    let bad = false;
-    // For v3 the sat IDs are written into newline starting at col 41.
-    let satlist = v2 ? newline.slice(off.satlst, off.satlst + nsat * 3) : '';
-    for (let i = 0; i < nsat; i++) {
-      const r = readSat(rawLines, cursor, rinexVersion, ntype, ntypeGnss);
-      if (!r) {
-        bad = true;
-        break;
-      }
-      sats.push(r.sat);
-      satIds.push(v2 ? satlist.slice(i * 3, i * 3 + 3) : r.satId);
-    }
-    if (bad) continue;
-    if (!v2) satlist = satIds.join('');
-
-    // Compose the full "epoch + satellite list" line for diffing.
-    const fullNew = v2 ? newline : newline.slice(0, 41) + satlist;
-
-    // Sat table: index of each current sat in the previous epoch.
-    const oldSatList = v2
-      ? oldline.slice(off.satOld, off.satOld + nsatOld * 3)
-      : oldline.slice(off.satOld);
-    const sattbl: number[] = [];
-    const dup = new Set<string>();
-    for (let i = 0; i < nsat; i++) {
-      const id = satIds[i]!;
-      if (dup.has(id)) {
-        bad = true;
-        break;
-      }
-      dup.add(id);
-      let found = -1;
-      for (let j = 0; j < nsatOld; j++) {
-        if (oldSatList.slice(j * 3, j * 3 + 3) === id) {
-          found = j;
-          break;
-        }
-      }
-      sattbl.push(found);
-    }
-    if (bad) continue;
-
-    // ---- Emit epoch line, then the clock-offset line ----
-    // The clock offset always occupies its own line, left empty when the
-    // epoch carries no receiver clock offset (this is what the reference
-    // emits and what the decoder expects).
-    out.push(strdiff(oldline, fullNew));
-    let clockLine = '';
-    if (clkOrder > -1) {
-      if (clkOrder > 0) processClock(clk1, clk0, clkOrder);
-      clockLine += putClock(clk1.u[clkOrder]!, clk1.l[clkOrder]!, clkOrder);
-    }
-    if (newpsec.length === 5) {
-      clockLine += ' ' + strdiff(oldpsec, newpsec);
-    }
-    out.push(clockLine);
-
-    // ---- Emit data section ----
-    const dataLines = buildData(sats, sattbl, dy0, flag0, rinexVersion);
-    for (const dl of dataLines) out.push(dl);
-
-    // ---- Save state for next epoch ----
-    oldline = fullNew;
-    nsatOld = nsat;
-    clk0 = clk1;
-    oldpsec = newpsec;
-    dy0 = sats.map((s) => s.data);
-    flag0 = sats.map((s) => s.flag);
+    // ---- Field offsets (fixed per version) ----
+    v2 = rinexVersion === 2;
+    off = v2
+      ? { event: 28, nsat: 29, satlst: 32, clock: 68, satOld: 32, shiftClk: 1 }
+      : {
+          event: 31,
+          nsat: 32,
+          satlst: 41,
+          clock: 41,
+          satOld: 41,
+          shiftClk: 4,
+          psec: 57,
+        };
   }
 
-  return out.join('\n') + '\n';
+  function epochs(
+    rawLines: string[],
+    cursor: { li: number },
+    out: string[]
+  ): void {
+    for (;;) {
+      if (cursor.li >= rawLines.length) break;
+      let epoch = rawLines[cursor.li];
+      // Genuine EOF: trailing empty string from split on final '\n'.
+      if (epoch === undefined) break;
+      if (epoch === '' && cursor.li === rawLines.length - 1) break;
+      cursor.li++;
+      epoch = chop(epoch);
+      if (epoch === '') continue;
+
+      let newline: string;
+      if (v2) {
+        newline = epoch;
+      } else {
+        // pad epoch record to 41 (satellite IDs get written from col 41)
+        newline = epoch.length < 41 ? epoch.padEnd(41, ' ') : epoch;
+      }
+
+      // Event flag > 1: copy verbatim event block, reset arcs.
+      const eventFlag = parseInt(newline[off.event] ?? '0', 10) || 0;
+      if (eventFlag > 1) {
+        putEventData(rawLines, cursor, v2, newline, out, ntypeGnss, (n) => {
+          ntype = n;
+        });
+        resetArcs();
+        clk0 = { u: [0, 0, 0, 0], l: [0, 0, 0, 0] };
+        dy0 = [];
+        flag0 = [];
+        continue;
+      }
+
+      // pico-second record (RINEX ≥ 4.02) — rare; preserved if present.
+      let newpsec = '';
+      if (rinexVersionFull >= 402 && newline.length === 62) {
+        const psec = newline.slice(off.psec!, off.psec! + 5);
+        if (/^\d{5}$/.test(psec)) newpsec = psec;
+        newline = newline.slice(0, off.psec!).replace(/\s+$/, '');
+      }
+
+      // Clock offset (optional).
+      let clkOrder = -1;
+      const clk1: ClockField = { u: [0, 0, 0, 0], l: [0, 0, 0, 0] };
+      if (newline.length > off.clock) {
+        clkOrder = readClock(
+          newline.slice(off.clock),
+          off.shiftClk,
+          clk1,
+          clkOrderPrev
+        );
+        if (clkOrder > -1) {
+          newline = newline.slice(0, off.clock).replace(/\s+$/, '');
+          // Re-pad v3 epoch to 41 after stripping clock so satlist offset holds.
+          if (!v2 && newline.length < 41) newline = newline.padEnd(41, ' ');
+        }
+      }
+      clkOrderPrev = clkOrder;
+
+      // Number of satellites.
+      const nsat = parseInt((newline.slice(off.nsat) || '0').trim(), 10) || 0;
+      if (v2 && nsat > 12) {
+        newline = readMoreSat(rawLines, cursor, nsat, newline);
+      }
+
+      // Read each satellite's observations.
+      const sats: Sat[] = [];
+      const satIds: string[] = [];
+      let bad = false;
+      // For v3 the sat IDs are written into newline starting at col 41.
+      let satlist = v2 ? newline.slice(off.satlst, off.satlst + nsat * 3) : '';
+      for (let i = 0; i < nsat; i++) {
+        const r = readSat(rawLines, cursor, rinexVersion, ntype, ntypeGnss);
+        if (!r) {
+          bad = true;
+          break;
+        }
+        sats.push(r.sat);
+        satIds.push(v2 ? satlist.slice(i * 3, i * 3 + 3) : r.satId);
+      }
+      if (bad) continue;
+      if (!v2) satlist = satIds.join('');
+
+      // Compose the full "epoch + satellite list" line for diffing.
+      const fullNew = v2 ? newline : newline.slice(0, 41) + satlist;
+
+      // Sat table: index of each current sat in the previous epoch.
+      const oldSatList = v2
+        ? oldline.slice(off.satOld, off.satOld + nsatOld * 3)
+        : oldline.slice(off.satOld);
+      const sattbl: number[] = [];
+      const dup = new Set<string>();
+      for (let i = 0; i < nsat; i++) {
+        const id = satIds[i]!;
+        if (dup.has(id)) {
+          bad = true;
+          break;
+        }
+        dup.add(id);
+        let found = -1;
+        for (let j = 0; j < nsatOld; j++) {
+          if (oldSatList.slice(j * 3, j * 3 + 3) === id) {
+            found = j;
+            break;
+          }
+        }
+        sattbl.push(found);
+      }
+      if (bad) continue;
+
+      // ---- Emit epoch line, then the clock-offset line ----
+      // The clock offset always occupies its own line, left empty when the
+      // epoch carries no receiver clock offset (this is what the reference
+      // emits and what the decoder expects).
+      out.push(strdiff(oldline, fullNew));
+      let clockLine = '';
+      if (clkOrder > -1) {
+        if (clkOrder > 0) processClock(clk1, clk0, clkOrder);
+        clockLine += putClock(clk1.u[clkOrder]!, clk1.l[clkOrder]!, clkOrder);
+      }
+      if (newpsec.length === 5) {
+        clockLine += ' ' + strdiff(oldpsec, newpsec);
+      }
+      out.push(clockLine);
+
+      // ---- Emit data section ----
+      const dataLines = buildData(sats, sattbl, dy0, flag0, rinexVersion);
+      for (const dl of dataLines) out.push(dl);
+
+      // ---- Save state for next epoch ----
+      oldline = fullNew;
+      nsatOld = nsat;
+      clk0 = clk1;
+      oldpsec = newpsec;
+      dy0 = sats.map((s) => s.data);
+      flag0 = sats.map((s) => s.flag);
+    }
+  }
+
+  return { header, epochs };
 }
 
 /** rnx2crx `read_clock` — parse the receiver clock offset field. Returns

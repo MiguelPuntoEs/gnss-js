@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.53.0
+
+### Added — Hatanaka while writing
+
+- `writeRinex2ObsBlob`, `writeRinexObsBlob` and `writeRinex4ObsBlob` take `{ hatanaka: true | WriteCrxOptions }` and write Compact RINEX directly: the same bytes as `writeCrx` of the plain file, without holding, gzipping and re-reading the plain text. An hour of 1 Hz, 45-satellite data: 1.5 s instead of 5.2 s, and memory stays one batch of epochs deep.
+- `crxEncoder()`: the compressor as a stream (header lines, then batches of whole epochs). `writeCrx` is built on it, still byte-exact with rnx2crx.
+
+### Fixed — `Rtcm3Decoder.decode` on whole files
+
+- It copied the rest of its buffer after every frame, so one call with a whole log was quadratic: 8 MB took 8 s and gigabytes of copies. It now walks the buffer and keeps only the unfinished frame. The same frames, in any chunking.
+
 ## 2.52.2
 
 ### Fixed — `getWeekOfYear` (ISO 8601 week)

@@ -12,6 +12,7 @@
  */
 
 import type { RinexHeader } from './parser';
+import type { WriteCrxOptions } from './crx-writer';
 import type { SatValues } from './epoch-sats';
 import { v2ToV3ObsCode } from './obs-codes';
 import { padL, padR, fmtF, hdrLine } from './format';
@@ -61,6 +62,18 @@ export interface CompactEpoch {
 /*  Writer                                                             */
 /* ================================================================== */
 
+/** Options of the observation writers. */
+export interface ObsWriteOptions {
+  /**
+   * Write Compact RINEX (Hatanaka) instead: the same bytes as `writeCrx`
+   * of the plain file, compressed as it is written (`true` = defaults).
+   */
+  hatanaka?: boolean | WriteCrxOptions;
+}
+
+export const crxOptionsOf = (o?: ObsWriteOptions): WriteCrxOptions | null =>
+  o?.hatanaka ? (o.hatanaka === true ? {} : o.hatanaka) : null;
+
 /**
  * Write RINEX 3.04 obs file from compact observations.
  *
@@ -70,11 +83,13 @@ export interface CompactEpoch {
 export function writeRinexObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
-  obsTypes: Map<string, string[]>
+  obsTypes: Map<string, string[]>,
+  options?: ObsWriteOptions
 ): Promise<Blob> {
   return writeModernObsBlob(header, epochs, obsTypes, {
     version: '3.04',
     comment: 'Merged from multiple RINEX files',
+    ...options,
   });
 }
 
@@ -107,7 +122,7 @@ export async function writeModernObsBlob(
   header: RinexHeader,
   epochs: CompactEpoch[],
   inTypes: Map<string, string[]>,
-  opts: { version: string; comment: string }
+  opts: { version: string; comment: string } & ObsWriteOptions
 ): Promise<Blob> {
   if (epochs.length === 0) return new Blob([], { type: 'application/gzip' });
 
@@ -130,7 +145,7 @@ export async function writeModernObsBlob(
     columns.set(sys, cols);
   }
 
-  const sink = createGzipLineSink();
+  const sink = createGzipLineSink(crxOptionsOf(opts));
   const BATCH = 200;
 
   const systems = [...obsTypes.keys()];
