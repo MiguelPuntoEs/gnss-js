@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.56.0
+
+### Changed — ambiguity fixing waits for the float to stop moving (uncombined engine)
+
+- `ar.maxDriftM` / `ar.driftWindowS` (static sessions): no fix is attempted while the float position moved more than this over the window. Uncombined default 0.03 m over 180 s; ionosphere-free engine opt-in (off). At low latitudes a one-hour float can still drift by decimetres while its formal σ reads 4–6 cm (IISC, Bangalore: Up −17…−30 cm for half an hour; the 24 h solution through the same hours is within 1 cm), so σ-based gates do not catch it and the fix takes the wrong integers.
+- One-hour windows, GPS + GLONASS + Galileo, CODE MGEX, uncombined engine: 10 EPN stations (936 windows) windows with wrong fixes 7 → 2, wrong epochs 47 → 21, median time to fix 12 → 14 min; 14 IGS Asia-Pacific stations (666 windows) 22 → 7, 185 → 75, 13.5 → 16 min. Sessions fixed at the end unchanged (812 → 810, 552 → 551).
+- Ionosphere-free engine with 0.05 m over 300 s: wrong-fix epochs 104 → 40 (Europe), 396 → 196 (Asia-Pacific), median time to fix +2 / +4 min — available, not the default.
+- Tried and rejected for the low-latitude problem: a χ² test of the fixed position's shift (ionosphere-free: 88 fewer sessions fixed, wrong fixes unchanged), a GIM constraint (27 → 23 windows), GPT3 instead of the standard atmosphere a priori (no change: the troposphere is not the cause).
+
 ## 2.55.0
 
 ### Added — BeiDou-3 ambiguity fixing
