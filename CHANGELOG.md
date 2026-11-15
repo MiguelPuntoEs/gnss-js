@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.58.0
+
+### Changed — ambiguity-fixed runs keep GLONASS (ionosphere-free engine)
+
+- A satellite the bias product has no phase biases for (GLONASS in CODE's and CNES's products) now stays in the solution with a float ambiguity instead of being dropped; ambiguity fixing leaves it out. Before, every ambiguity-fixed run of the ionosphere-free engine silently lost GLONASS. The uncombined engine already kept such satellites float.
+- 24 h EPN week 2430 (35 stations, CODE OPS, ambiguities fixed, every station-day fixed): E/N/U RMS after Helmert 1.4/0.8/2.1 → 1.3/0.7/2.0 mm.
+- One-hour windows, CODE MGEX, ambiguities fixed: GPS + GLONASS + Galileo, 10 EPN stations (936 windows): fixed at the end 865 → 886, median time to fix 20 → 18 min, end RMS 12.6/6.4/19.0 → 10.2/5.7/17.2 mm; 14 IGS Asia-Pacific stations (666 windows): median time to fix 24 → 22 min, never-fixed windows 62 → 52, windows with wrong fixes 18 → 9. With BeiDou as well: Europe 18 → 16 min, end RMS 9.8/5.7/17.1 → 9.1/5.5/16.5 mm; Asia-Pacific 20 → 18 min, end RMS 10.0/6.3/24.8 → 9.7/6.2/23.4 mm.
+
 ## 2.57.0
 
 ### Changed — the ionosphere-free engine also waits for a settled float
