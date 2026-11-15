@@ -104,7 +104,9 @@ export function getDateFromMJD(mjd: number, scale: Scale = Scale.TT): Date {
 }
 
 /**
- * Returns the MJD2000 (Modified Julian Date referenced to J2000.0) for a given Date.
+ * Returns the MJD2000 for a given Date: days since 2000-01-01T00:00 on the
+ * chosen scale (MJD − 51544, the ESA convention). Days since the J2000.0
+ * epoch (noon) are MJD2000 − 0.5.
  * @param date - Date in GPS time scale
  * @param scale - Time scale for the output (default: TT)
  * @returns MJD2000 in fractional days

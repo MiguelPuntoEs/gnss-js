@@ -46,6 +46,7 @@ export const RINEX_CODES: HourCode[] = [
 ];
 export const START_JULIAN_TAI = 2436204.5; // 1958-01-01T00:00:00Z
 export const DAYS_MJD_JULIAN = 2400000.5;
-export const DAYS_MJD2000_MJD = 51544.5;
+/** MJD of 2000-01-01T00:00, the origin of MJD2000 (ESA convention). */
+export const DAYS_MJD2000_MJD = 51544;
 
 export const START_MJD_UNIX_SECONDS = 40587.0;

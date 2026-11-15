@@ -12,6 +12,8 @@
 - `getDateFromDayOfYear` throws a RangeError for a day that is not in the reference year (0, 366 in a common year, fractions); `getDateFromDayOfWeek` requires an integer 0–6.
 - Time-difference components carry the difference's sign (−1 s was split into −1 d −1 h −1 min −1 s).
 
+- MJD2000 counts from 2000-01-01T00:00 (MJD − 51544, the ESA convention and what gnsscalc documents); it counted from the J2000.0 noon epoch, half a day less. `DAYS_MJD2000_MJD` is 51544.
+
 ### Added
 
 - `isLeapSecond(date)`: whether a GPS instant reads 23:59:60 UTC, which a Date cannot hold.
