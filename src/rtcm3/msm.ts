@@ -56,6 +56,7 @@ const BDS_B2a = FREQ.C!['5']!;
 const BDS_B2b = FREQ.C!['7']!;
 
 const QZSS_L6 = FREQ.J!['6']!;
+const NAVIC_L5 = FREQ.I!['5']!;
 const NAVIC_S = FREQ.I!['9']!;
 
 /* ================================================================== */
@@ -249,6 +250,13 @@ const QZSS_SIGNALS: SignalDef[] = [
   sd('1X', GPS_L1), // 29-31
 ];
 
+/**
+ * NavIC (RTCM 10403.3 Table 3.5-108.3): signal ID 8 is S-band SPS (9A),
+ * ID 22 L5 SPS (5A) — the signal NavIC receivers track. Other IDs some
+ * software uses (L1 1D/1P/1X at 2–4, 9B/9C/9X at 9–11, 5B/5C/5X at 23–25:
+ * PocketSDR's, "tentative" in RTKLIB demo5) are not in the standard and are
+ * left out, so nothing written here is read differently elsewhere.
+ */
 const NAVIC_SIGNALS: SignalDef[] = [
   EMPTY,
   EMPTY,
@@ -257,8 +265,10 @@ const NAVIC_SIGNALS: SignalDef[] = [
   EMPTY,
   EMPTY,
   EMPTY,
-  sd('9A', NAVIC_S),
-  ...Array.from({ length: 24 }, () => EMPTY),
+  sd('9A', NAVIC_S), // 8
+  ...Array.from({ length: 13 }, () => EMPTY), // 9-21
+  sd('5A', NAVIC_L5), // 22
+  ...Array.from({ length: 10 }, () => EMPTY), // 23-32
 ];
 
 const SBAS_SIGNALS = GPS_SIGNALS; // SBAS uses same signal defs as GPS

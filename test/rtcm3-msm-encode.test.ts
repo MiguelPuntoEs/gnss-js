@@ -339,6 +339,36 @@ describe('MSM encode → decode', () => {
     expect(prns).toEqual(['S23', 'J02']); // RINEX naming either way in
   });
 
+  it('carries NavIC L5 (signal ID 22) and S-band (ID 8) as 1137', () => {
+    const NAVIC_S = C / 2492.028e6;
+    const sat = synthSat('I05', 3.7e7, [
+      ['9A', NAVIC_S],
+      ['5A', E5a],
+    ]);
+    const frames = decodeFrames(
+      encodeMsm({ timeMs: T0, observations: [sat] }, { msm: 7 })
+    );
+    expect(frames.map((f) => f.messageType)).toEqual([1137]);
+    // Signal mask bits 8 and 22 (DF395, 32 bits after the 64-bit sat mask).
+    const r = new BitReader(frames[0]!.payload);
+    r.skip(12 + 12 + 30 + 1 + 3 + 7 + 2 + 2 + 1 + 3 + 64);
+    const mask = r.readU(32);
+    expect(mask.toString(2).padStart(32, '0')).toBe(
+      '00000001000000000000010000000000'
+    );
+    const got = decodeMsmFull(frames[0]!)!.observations[0]!;
+    expect(got.prn).toBe('I05');
+    expect(got.signals.map((s) => s.rinexCode)).toEqual(['9A', '5A']);
+    for (const want of sat.signals) {
+      const s = got.signals.find((x) => x.rinexCode === want.rinexCode)!;
+      expect(s.wavelength).toBeCloseTo(want.wavelength!, 9);
+      expect(Math.abs(s.pseudorange! - want.pseudorange!)).toBeLessThan(0.001);
+      expect(Math.abs((s.phase! - want.phase!) * want.wavelength!)).toBeLessThan(
+        0.001
+      );
+    }
+  });
+
   it('marks a signal with pseudorange but no phase as phase-invalid', () => {
     const sat: MsmEncodeSat = {
       prn: 'G01',
