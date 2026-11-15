@@ -119,18 +119,17 @@ export function getHourCode(date: Date): HourCode {
  * @returns ISO week number
  */
 export function getWeekOfYear(date: Date): number {
-  // ISO week
+  // ISO week of the calendar date held in the UTC fields
   const target: Date = new Date(
-    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
   );
 
-  // Set to nearest Thursday: current date + 4 - current day number
-  // (Monday is 1, Sunday is 7 for ISO)
+  // Move to the Thursday of the same ISO week (Monday-first): its calendar
+  // year is the ISO week-year, and its ordinal day fixes the week number
   const dayNr = (target.getUTCDay() + 6) % 7; // 0=Monday, ..., 6=Sunday
   target.setUTCDate(target.getUTCDate() - dayNr + 3);
 
-  // First Thursday of the year
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const dayDiff = (target.getTime() - firstThursday.getTime()) / (86400 * 1000); // days since Jan 4
-  return 1 + Math.floor(dayDiff / 7) + 1;
+  const yearStart = Date.UTC(target.getUTCFullYear(), 0, 1);
+  const dayOfYear = (target.getTime() - yearStart) / MILLISECONDS_IN_DAY; // 0-based
+  return Math.floor(dayOfYear / 7) + 1;
 }

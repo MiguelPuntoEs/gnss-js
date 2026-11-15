@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.52.2
+
+### Fixed — `getWeekOfYear` (ISO 8601 week)
+
+- It returned the ISO week + 1 for every date in week-years whose 4 January falls on Monday–Thursday (2021–2024, 2027–2029, …), including a week 53 in 52-week years. It now counts from the Thursday of the date's week, checked against the ISO rule for every day 1980–2100.
+- It read the date from the local-time getters, so the result depended on the machine's time zone near midnight. It now reads the UTC fields, like the rest of the time functions (the GPS-scale clock face). Reported in #2.
+
 ## 2.52.1
 
 ### Fixed — SBAS broadcast records in metres
