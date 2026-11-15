@@ -221,6 +221,9 @@ export interface PppOptions {
         /** Satellites whose ambiguities may be fixed (others stay float
          *  in the solution). Default all with phase biases. */
         fixable?: (prn: string) => boolean;
+        /** No attempt while the float position's 3D formal σ exceeds this
+         *  (m). Default Infinity. */
+        maxFloatSigmaM?: number;
         /** Static sessions whose final fix attempt failed fall back to the
          *  last accepted fix only if it lies within this 3D distance (m) of
          *  the final float position; otherwise `ar.rejected` is set and
@@ -2035,6 +2038,12 @@ export class PppEngine {
     this.lastArMs = tMs;
     this.lastFix = null;
     const { x, P, ambIdx, arcSnap, mwState } = this;
+    // A partial fix on a float still decimetres off can pass the ratio
+    // test with the wrong integers.
+    const sig3 = Math.sqrt(
+      P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
+    );
+    if (sig3 > (cfg.maxFloatSigmaM ?? Infinity)) return;
     const minArcMs = (cfg.minArcS ?? 600) * 1000;
     const ambiguities: PppFixState['ambiguities'] = [];
     for (const v of vis) {

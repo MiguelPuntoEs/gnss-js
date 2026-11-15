@@ -192,7 +192,11 @@ export interface PppUncombinedOptions extends Omit<
          *  3D distance (m) of it. Default 0 (off). */
         confirmM?: number;
         /** Attempt only once the float 3D position σ is below this (m).
-         *  Default no limit. */
+         *  Default 0.12: at low latitudes (IISC, GUAM…) one-hour floats
+         *  stay decimetres off and partial fixes passed the tests with
+         *  the wrong integers; 14 IGS Asia-Pacific stations, 666 one-hour
+         *  windows: windows with wrong fixes 28 → 22, time to fix
+         *  unchanged (Europe: unchanged). */
         maxFloatSigmaM?: number;
         /** Max χ² (3 dof) of the fixed position's shift from the float
          *  position against the float covariance. Default 16.3 (99.9 %). */
@@ -1453,7 +1457,7 @@ export class PppUncombinedEngine {
     const sig3 = Math.sqrt(
       P[IDX_X]![IDX_X]! + P[IDX_Y]![IDX_Y]! + P[IDX_Z]![IDX_Z]!
     );
-    if (sig3 > (cfg.maxFloatSigmaM ?? Infinity)) return;
+    if (sig3 > (cfg.maxFloatSigmaM ?? 0.12)) return;
     // The filter-based wide lanes are fast but trust the code weights; if
     // the narrow lanes then fail, retry with the Melbourne–Wübbena ones
     // alone.

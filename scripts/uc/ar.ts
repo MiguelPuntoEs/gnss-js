@@ -122,7 +122,11 @@ const engines: [string, (w: PppMultiEpoch[]) => Out][] = [
       solvePpp(toDual(firstTwo(w)), sp3, {
         ...base,
         corrections: corr(),
-        ar: fixable ? { fixable } : true,
+        // IFAR='{"maxFloatSigmaM":0.12}': options of the IF engine's AR.
+        ar: {
+          ...(fixable ? { fixable } : {}),
+          ...(process.env.IFAR ? JSON.parse(process.env.IFAR) : {}),
+        },
       }),
   ],
   [
