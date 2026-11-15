@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.55.0
+
+### Added — BeiDou-3 ambiguity fixing
+
+- `ar.fixable(prn)` (both engines): which satellites' ambiguities may be fixed; the others stay float in the solution. BeiDou-3 satellites built by SECM spoil fixes with CODE's MGEX biases (B1C/B2a); keeping them float and fixing the CAST ones beats GPS + GLONASS + Galileo wherever measured. One-hour windows, ambiguities fixed, CODE MGEX final products:
+  - ionosphere-free engine, 10 EPN stations, 2026-215…218 (936 windows): fixed at the end 866 → 910, median time to fix 18 → 14 min (p75 24 → 20), never fixed 32 → 12, wrong-fix epochs 104 → 84, end RMS E/N/U 12.5/6.4/19.0 → 9.8/5.7/17.1 mm;
+  - uncombined engine, 14 IGS Asia-Pacific stations, 2026-215…216 (666 windows): fixed 552 → 582, median 13.5 → 11.5 min, wrong-fix windows 27 → 15.
+    With the SECM ambiguities fixed as well, the ionosphere-free engine had 33 instead of 9 windows with wrong fixes. Between-receiver double differences (a Leica and a Septentrio receiver at one site) show no receiver-specific CAST/SECM bias in phase, code or wide lane: the cause is on the satellite/product side.
+- `resolvePppAmbiguities` `group` option, and the ionosphere-free engine differences satellites within its receiver-clock groups (`clockGroup`): with `'bds-maker'` the BeiDou-3 CAST and SECM satellites each get their own reference.
+- `builtinSatelliteBlocks(date)`: each PRN's satellite type from the built-in igs20 table, for `clockGroupFromBlocks` without an ANTEX file (handles reused PRNs: C11 is BeiDou-2 until 2026-04-19, BeiDou-3 SECM from 2026-04-20).
+- Uncombined engine `ar.minPerSystem`: a constellation joins a fix only with at least this many narrow lanes (default 1, unchanged). With 2 and BeiDou fixed: wrong-fix epochs 40 → 27 on the EPN windows above.
+
 ## 2.54.0
 
 ### Fixed — time scales, checked end to end
