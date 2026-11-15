@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.59.1
+
+### Fixed — NavIC L5 in RTCM MSM
+
+- The NavIC MSM signal table (message 1137) had only the S-band signal (9A, ID 8). L5 SPS (5A, ID 22 per RTCM 10403.3 Table 3.5-108.3) — the signal NavIC receivers track — had no slot: decoding dropped it, and `MsmEncoder`/`RtcmBaseEncoder`/`receiverToRtcm3` wrote no NavIC at all. Both directions now carry it. The non-standard IDs some software uses (L1 and S/L5 B/C/X, "tentative" in RTKLIB demo5) are left out.
+
 ## 2.59.0
 
 ### Changed — the wet troposphere's random walk is per time, and looser
