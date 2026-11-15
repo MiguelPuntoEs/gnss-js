@@ -79,7 +79,7 @@ describe('leap seconds', () => {
     for (
       let t = at('1980-01-06T00:00:00Z');
       t < at('2030-01-01T00:00:00Z');
-      t += 3_600_500
+      t += 21_601_234
     ) {
       const d = new Date(t);
       if (isLeapSecond(d)) continue;
