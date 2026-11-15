@@ -71,6 +71,12 @@ export interface ArOptions {
   /** `fixPppPosition`: max χ²/dof of the float ambiguities against the fixed
    *  integers (a wrong fix sits many σ away). Default Infinity. */
   maxChi2?: number;
+  /** The group a satellite is differenced within (one reference each):
+   *  satellites whose receiver biases differ must not share one. Default
+   *  the constellation letter; the PPP engine passes its receiver-clock
+   *  groups (e.g. BeiDou-3 split by manufacturer, whose code biases in the
+   *  receiver differ enough to spoil the Melbourne–Wübbena wide lanes). */
+  group?: (prn: string) => string;
 }
 
 export interface ArFixedSat {
@@ -138,9 +144,10 @@ export function resolvePppAmbiguities(
   // works, its receiver part cancels in every difference below.
   const elev = (i: number) => sats[i]!.elevDeg ?? -1;
   const wlOf = (i: number) => sats[i]!.mwCyc - (sats[i]!.wlBiasCyc ?? 0);
+  const groupOf = opts.group ?? ((prn: string) => prn[0]!);
   const refOfSys = new Map<string, number>();
   for (let i = 0; i < n; i++) {
-    const sys = sats[i]!.prn[0]!;
+    const sys = groupOf(sats[i]!.prn);
     const r = refOfSys.get(sys);
     if (r === undefined || elev(i) > elev(r)) refOfSys.set(sys, i);
   }
@@ -153,7 +160,7 @@ export function resolvePppAmbiguities(
   }
   for (let i = 0; i < n; i++) {
     if (refIdx.has(i)) continue;
-    const r = refOfSys.get(sats[i]!.prn[0]!)!;
+    const r = refOfSys.get(groupOf(sats[i]!.prn))!;
     const sdWl = wlOf(i) - wlOf(r);
     const k = Math.round(sdWl);
     if (Math.abs(sdWl - k) <= wlThreshold) {

@@ -12,6 +12,7 @@
  * (igs20.atx: "BEIDOU-2M", "BEIDOU-3M-CAST", "BEIDOU-3M-SECM", …).
  */
 import type { AntennaEntry } from '../antex';
+import { SAT_BLOCK_TABLE } from './sat-blocks-data';
 
 /**
  * 'bds2-bds3': BeiDou-2 and BeiDou-3 on separate clocks ("C2", "C3").
@@ -41,6 +42,20 @@ export function satelliteBlocks(
     const until = antexMs(e.validUntil) ?? Infinity;
     if (dateMs < from || dateMs > until) continue;
     out.set(e.serialNo.trim(), e.type.trim());
+  }
+  return out;
+}
+
+/** {@link satelliteBlocks} from the built-in PRN table (sat-blocks-data.ts,
+ *  from igs20.atx): no ANTEX file needed. */
+export function builtinSatelliteBlocks(dateMs: number): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const row of SAT_BLOCK_TABLE.split(';')) {
+    const [prn, type, from, until] = row.split(',');
+    if (!prn || !type) continue;
+    if (from && dateMs < Date.parse(from + ':00Z')) continue;
+    if (until && dateMs > Date.parse(until + ':59.999Z')) continue;
+    out.set(prn, type);
   }
   return out;
 }

@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAntex, type AntennaEntry } from '../src/antex';
-import { clockGroupFromBlocks, satelliteBlocks } from '../src/positioning';
+import {
+  builtinSatelliteBlocks,
+  clockGroupFromBlocks,
+  satelliteBlocks,
+} from '../src/positioning';
 
 const entry = (
   prn: string,
@@ -70,5 +74,24 @@ describe('BeiDou receiver-clock groups', () => {
     expect(g('C19')).toBe('C3-CAST');
     expect(g('C25')).toBe('C3-SECM');
     expect(g('C12')).toBe('C2');
+  });
+});
+
+describe('builtinSatelliteBlocks', () => {
+  it('knows the BeiDou-3 makers and reused PRNs without an ANTEX file', () => {
+    const g = clockGroupFromBlocks(
+      builtinSatelliteBlocks(Date.UTC(2026, 7, 3)),
+      'bds-maker'
+    );
+    expect(g('C20')).toBe('C3-CAST');
+    expect(g('C25')).toBe('C3-SECM');
+    // C11: BeiDou-2 MEO until 2026-04-19, BeiDou-3 SECM since 2026-04-20.
+    expect(g('C11')).toBe('C3-SECM');
+    expect(g('G05')).toBe('G');
+    const old = clockGroupFromBlocks(
+      builtinSatelliteBlocks(Date.UTC(2024, 0, 1)),
+      'bds-maker'
+    );
+    expect(old('C11')).toBe('C2');
   });
 });

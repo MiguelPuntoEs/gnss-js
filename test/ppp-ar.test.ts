@@ -395,6 +395,44 @@ describe('PPP-AR across constellations', () => {
     }
   });
 
+  it('differences within the given groups (BeiDou-3 by manufacturer)', () => {
+    // One constellation, two receiver wide-lane/narrow-lane biases (CAST
+    // and SECM satellites): per constellation the wide lanes of one maker
+    // don't round; per group they all fix.
+    const f1 = FREQ.C!['1']!;
+    const f2 = FREQ.C!['5']!;
+    const l = nlWavelength(f1, f2);
+    const sats: ArSat[] = [
+      { prn: 'C20', n1: 3, nWl: 2, el: 70, wl: 0.1, nl: 0.2 },
+      { prn: 'C21', n1: -5, nWl: -1, el: 50, wl: 0.1, nl: 0.2 },
+      { prn: 'C22', n1: 8, nWl: 4, el: 35, wl: 0.1, nl: 0.2 },
+      { prn: 'C25', n1: 1, nWl: 3, el: 65, wl: 0.5, nl: -0.3 },
+      { prn: 'C26', n1: -2, nWl: -4, el: 45, wl: 0.5, nl: -0.3 },
+      { prn: 'C27', n1: 6, nWl: 0, el: 30, wl: 0.5, nl: -0.3 },
+    ].map((t) => ({
+      prn: t.prn,
+      aIF: l * (t.n1 + t.nl) + l * (f2 / (f1 - f2)) * (t.nWl + t.wl),
+      mwCyc: t.nWl + t.wl,
+      f1,
+      f2,
+      elevDeg: t.el,
+    }));
+    const n = sats.length;
+    const Q = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) Q[i * n + i] = 0.01 ** 2;
+    const bySystem = resolvePppAmbiguities(sats, Q, { minPartial: 2 });
+    expect(bySystem.rejectedWl.sort()).toEqual(['C25', 'C26', 'C27']);
+    const maker = (prn: string) =>
+      ['C25', 'C26', 'C27'].includes(prn) ? 'C:secm' : 'C:cast';
+    const byGroup = resolvePppAmbiguities(sats, Q, {
+      minPartial: 2,
+      group: maker,
+    });
+    expect(byGroup.fixed).toBe(true);
+    expect(byGroup.rejectedWl).toEqual([]);
+    expect(new Set(byGroup.refPrns)).toEqual(new Set(['C20', 'C25']));
+  });
+
   it('fixPppPosition honours minFixed and the χ² test', () => {
     const { sats } = multi();
     const n = sats.length;

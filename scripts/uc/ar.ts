@@ -17,6 +17,11 @@ import { parseIonex } from '../../src/rinex/ionex';
 import { parseOrbex } from '../../src/rinex/orbex';
 import { createSatAttitude } from '../../src/positioning/sat-attitude';
 import {
+  clockGroupFromBlocks,
+  satelliteBlocks,
+  type ClockGroupMode,
+} from '../../src/positioning/clock-groups';
+import {
   solvePpp,
   buildPppAntenna,
   createPppCorrections,
@@ -52,7 +57,8 @@ const truth = truthS!.split(',').map(Number) as [number, number, number];
 const sp3 = parseSp3(txt(sp3P!));
 const clk = parseClk(txt(clkP!));
 const osb = new SatOsbTable(parseBiasSinex(txt(biaP!)));
-const antenna = buildPppAntenna(parseAntex(txt(atxP!)));
+const antex = parseAntex(txt(atxP!));
+const antenna = buildPppAntenna(antex);
 const { header, multi: all } = await loadMulti(obsP!, {
   systems,
   ...(process.env.BANDS ? { bands: JSON.parse(process.env.BANDS) } : {}),
@@ -80,7 +86,23 @@ const corr = () =>
     antDeltaEnu: [delta[1], delta[2], delta[0]],
   });
 const ucExtra: Partial<PppUncombinedOptions> = extra ? JSON.parse(extra) : {};
+// NOFIX=regex: satellites kept float (both engines).
+const noFix = process.env.NOFIX ? new RegExp(`^(${process.env.NOFIX})$`) : null;
+const fixable = noFix ? (prn: string) => !noFix.test(prn) : undefined;
+if (fixable)
+  ucExtra.ar = {
+    ...(typeof ucExtra.ar === 'object' ? ucExtra.ar : {}),
+    fixable,
+  };
+// CG=bds-maker|bds2-bds3: receiver-clock (and AR) groups from igs20's blocks.
+const clockGroup = process.env.CG
+  ? clockGroupFromBlocks(
+      satelliteBlocks(antex.antennas, all[0]!.timeMs),
+      process.env.CG as ClockGroupMode
+    )
+  : undefined;
 const base = {
+  ...(clockGroup ? { clockGroup } : {}),
   aprioriPos: header.approxPosition as [number, number, number],
   clk,
   osb,
@@ -100,7 +122,7 @@ const engines: [string, (w: PppMultiEpoch[]) => Out][] = [
       solvePpp(toDual(firstTwo(w)), sp3, {
         ...base,
         corrections: corr(),
-        ar: true,
+        ar: fixable ? { fixable } : true,
       }),
   ],
   [
@@ -181,6 +203,8 @@ for (
   const w = all.filter(
     (e) => e.timeMs >= ws && e.timeMs < ws + Number(winH) * 3600e3
   );
+  // A data gap: nothing to solve (a window under 20 min is left out).
+  if (w.length < 40) continue;
   for (const [name, run] of engines) {
     const t = Date.now();
     const sol = run(w);

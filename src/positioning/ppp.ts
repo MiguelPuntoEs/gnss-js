@@ -109,8 +109,8 @@ export interface PppOptions {
   /** The receiver-clock group of a satellite: one clock (and so one
    *  inter-system bias) per distinct key. Default the constellation letter;
    *  e.g. split BeiDou-2 from BeiDou-3, or BeiDou-3 by manufacturer
-   *  (clockGroupFromBlocks, clock-groups.ts). Float only — ambiguity fixing differences
-   *  satellites per constellation. */
+   *  (clockGroupFromBlocks, clock-groups.ts). Ambiguity fixing differences
+   *  satellites within these groups. */
   clockGroup?: (prn: string) => string;
   /**
    * Elevation-dependent observation weighting (the variance at zenith ×
@@ -218,6 +218,9 @@ export interface PppOptions {
         minFixed?: number;
         /** Max χ²/dof of the float ambiguities vs the integers. Default 20. */
         maxChi2?: number;
+        /** Satellites whose ambiguities may be fixed (others stay float
+         *  in the solution). Default all with phase biases. */
+        fixable?: (prn: string) => boolean;
         /** Static sessions whose final fix attempt failed fall back to the
          *  last accepted fix only if it lies within this 3D distance (m) of
          *  the final float position; otherwise `ar.rejected` is set and
@@ -2039,6 +2042,7 @@ export class PppEngine {
       const snap = arcSnap.get(v.prn);
       const mw = mwState.get(v.prn);
       if (index === undefined || !snap || !mw) continue;
+      if (cfg.fixable && !cfg.fixable(v.prn)) continue;
       if (tMs - snap.startMs < minArcMs || snap.nEpochs < 20) continue;
       ambiguities.push({
         prn: v.prn,
@@ -2063,6 +2067,7 @@ export class PppEngine {
         minSuccessRate: cfg.successRate ?? 0.999,
         minFixed: cfg.minFixed ?? 5,
         maxChi2: cfg.maxChi2 ?? 20,
+        ...(this.opts.clockGroup ? { group: this.opts.clockGroup } : {}),
       }
     );
     if (!fx.fixed) return;

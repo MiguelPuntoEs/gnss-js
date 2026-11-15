@@ -158,6 +158,9 @@ export interface PppUncombinedOptions extends Omit<
          *  lone between-satellite difference has nothing within its own
          *  constellation to check it against). Default 1 (no rule). */
         minPerSystem?: number;
+        /** Satellites whose ambiguities may be fixed (others stay float).
+         *  Default all with phase biases. */
+        fixable?: (prn: string) => boolean;
         /** Max |float − integer| of a fixed extra-wide lane (cycles).
          *  Default 0.25. */
         maxFracWl?: number;
@@ -1568,6 +1571,7 @@ export class PppUncombinedEngine {
     const groups = new Map<string, Amb[]>();
     const bySat = new Map<string, Amb[]>();
     for (const v of vis) {
+      if (cfg.fixable && !cfg.fixable(v.prn)) continue;
       v.sigs.forEach((sg, order) => {
         if (!sg.fixable) return;
         const key = `N:${v.prn}:${sg.band}`;
