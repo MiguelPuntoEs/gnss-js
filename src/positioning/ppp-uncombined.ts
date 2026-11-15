@@ -198,6 +198,16 @@ export interface PppUncombinedOptions extends Omit<
          *  windows: windows with wrong fixes 28 → 22, time to fix
          *  unchanged (Europe: unchanged). */
         maxFloatSigmaM?: number;
+        /** Static: attempt only while the float position moved less than
+         *  this (m, 3D) over the last `driftWindowS`: the formal σ can be
+         *  optimistic while the float is still converging (low latitudes).
+         *  Default 0.03 (Infinity turns it off). One-hour windows, GPS +
+         *  GLONASS + Galileo: windows with wrong fixes 7 → 2 (10 EPN
+         *  stations) and 22 → 7 (14 IGS Asia-Pacific stations), median time
+         *  to fix +2 / +2.5 min, sessions fixed at the end unchanged. */
+        maxDriftM?: number;
+        /** Window of `maxDriftM` (s). Default 180. */
+        driftWindowS?: number;
         /** Max χ² (3 dof) of the fixed position's shift from the float
          *  position against the float covariance. Default 16.3 (99.9 %). */
         maxShiftChi2?: number;
@@ -401,6 +411,8 @@ export class PppUncombinedEngine {
   private reinited = new Set<string>();
   /** Last GIM pseudo-observation per satellite (ms). */
   private gimLast = new Map<string, number>();
+  /** Recent float positions (static drift gate). */
+  private floatHist: { t: number; p: [number, number, number] }[] = [];
   private resets: Record<string, number> = {};
   // AR bookkeeping.
   private lastFix: {
@@ -1444,12 +1456,30 @@ export class PppUncombinedEngine {
     const ar = this.opts.ar;
     if (!ar || !this.source.phaseBias) return;
     const cfg = ar === true ? {} : ar;
+    const driftWin = (cfg.driftWindowS ?? 180) * 1000;
+    const maxDrift = cfg.maxDriftM ?? 0.03;
+    if (Number.isFinite(maxDrift) && !this.kinematic) {
+      const h = this.floatHist;
+      h.push({ t: tMs, p: [this.x[IDX_X]!, this.x[IDX_Y]!, this.x[IDX_Z]!] });
+      while (h.length > 1 && tMs - h[1]!.t >= driftWin) h.shift();
+    }
     if (tMs - this.lastArMs < (cfg.everyS ?? 30) * 1000) {
       if (this.kinematic) this.lastFix = null;
       return;
     }
     this.lastArMs = tMs;
     this.lastFix = null;
+    if (Number.isFinite(maxDrift) && !this.kinematic) {
+      const h = this.floatHist;
+      const old = h[0]!;
+      if (tMs - old.t < driftWin) return;
+      const d = Math.hypot(
+        this.x[IDX_X]! - old.p[0],
+        this.x[IDX_Y]! - old.p[1],
+        this.x[IDX_Z]! - old.p[2]
+      );
+      if (d > maxDrift) return;
+    }
     // Not before the float solution is near the narrow-lane level: a
     // partial fix on a float still decimetres off can pass the ratio test
     // with the wrong integers.

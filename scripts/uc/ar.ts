@@ -15,6 +15,7 @@ import { parseBiasSinex, SatOsbTable } from '../../src/rinex/bias-sinex';
 import { parseAntex } from '../../src/antex';
 import { parseIonex } from '../../src/rinex/ionex';
 import { parseOrbex } from '../../src/rinex/orbex';
+import { createGpt3Troposphere, parseGpt3Grid } from '../../src/troposphere';
 import { createSatAttitude } from '../../src/positioning/sat-attitude';
 import {
   clockGroupFromBlocks,
@@ -101,7 +102,15 @@ const clockGroup = process.env.CG
       process.env.CG as ClockGroupMode
     )
   : undefined;
+// TROPO=gpt3_5.grd(.gz): GPT3 a priori + mapping instead of the standard
+// atmosphere (what /ppp uses when VMF3 grids are unavailable).
+const troposphereModel = process.env.TROPO
+  ? createGpt3Troposphere(parseGpt3Grid(txt(process.env.TROPO)), {
+      gradients: false,
+    })
+  : undefined;
 const base = {
+  ...(troposphereModel ? { troposphereModel } : {}),
   ...(clockGroup ? { clockGroup } : {}),
   aprioriPos: header.approxPosition as [number, number, number],
   clk,

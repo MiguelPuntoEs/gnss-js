@@ -224,6 +224,11 @@ export interface PppOptions {
         /** No attempt while the float position's 3D formal σ exceeds this
          *  (m). Default Infinity. */
         maxFloatSigmaM?: number;
+        /** Static: attempt only while the float position moved less than
+         *  this (m, 3D) over the last `driftWindowS`. Default no limit. */
+        maxDriftM?: number;
+        /** Window of `maxDriftM` (s). Default 300. */
+        driftWindowS?: number;
         /** Static sessions whose final fix attempt failed fall back to the
          *  last accepted fix only if it lies within this 3D distance (m) of
          *  the final float position; otherwise `ar.rejected` is set and
@@ -869,6 +874,8 @@ export class PppEngine {
     ratio: number;
   } | null;
   private lastArMs!: number;
+  /** Recent float positions (static drift gate). */
+  private floatHist: { t: number; p: [number, number, number] }[] = [];
   private firstFixMs!: number | null;
   private fixedEpochs!: number;
   private series!: PppEpochResult[];
@@ -2031,6 +2038,12 @@ export class PppEngine {
     const ar = this.opts.ar;
     if (!ar || !this.source.phaseBias) return;
     const cfg = ar === true ? {} : ar;
+    const driftWin = (cfg.driftWindowS ?? 300) * 1000;
+    if (cfg.maxDriftM !== undefined && !this.kinematic) {
+      const h = this.floatHist;
+      h.push({ t: tMs, p: [this.x[IDX_X]!, this.x[IDX_Y]!, this.x[IDX_Z]!] });
+      while (h.length > 1 && tMs - h[1]!.t >= driftWin) h.shift();
+    }
     if (tMs - this.lastArMs < (cfg.everyS ?? 120) * 1000) {
       if (this.kinematic) this.lastFix = null;
       return;
@@ -2038,6 +2051,16 @@ export class PppEngine {
     this.lastArMs = tMs;
     this.lastFix = null;
     const { x, P, ambIdx, arcSnap, mwState } = this;
+    if (cfg.maxDriftM !== undefined && !this.kinematic) {
+      const old = this.floatHist[0]!;
+      if (tMs - old.t < driftWin) return;
+      const d = Math.hypot(
+        x[IDX_X]! - old.p[0],
+        x[IDX_Y]! - old.p[1],
+        x[IDX_Z]! - old.p[2]
+      );
+      if (d > cfg.maxDriftM) return;
+    }
     // A partial fix on a float still decimetres off can pass the ratio
     // test with the wrong integers.
     const sig3 = Math.sqrt(

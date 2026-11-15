@@ -278,10 +278,19 @@ describe('uncombined PPP — ambiguity resolution (synthetic)', () => {
   });
 
   it('three frequencies: the extra-wide lanes fix first, the fix comes sooner', () => {
+    // The cascade's own speed: without the float-drift gate, which would
+    // hold both runs until the float settles.
+    const cascade = {
+      ...opts,
+      ar: {
+        ...(typeof opts.ar === 'object' ? opts.ar : {}),
+        maxDriftM: Infinity,
+      },
+    };
     const two = solvePppUncombined(
       scen({ G: GPS_L1L2, E: GAL_E1E5a }),
       arSource,
-      opts
+      cascade
     );
     const three = solvePppUncombined(
       scen({
@@ -289,7 +298,7 @@ describe('uncombined PPP — ambiguity resolution (synthetic)', () => {
         E: [...GAL_E1E5a, { band: '7', freq: FREQ.E!['7']!, code: '7Q' }],
       }),
       arSource,
-      opts
+      cascade
     );
     expect(three.ar!.lastAttempt!.ewl).toBeGreaterThanOrEqual(10);
     // 4.5 vs 10 min here; a first partial fix (5 narrow lanes) sits within
