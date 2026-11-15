@@ -66,6 +66,7 @@ import {
   type PppEpochDiagnostics,
   type PppEpochResult,
   type PppOptions,
+  ZTD_RW_M_PER_SQRT_H,
 } from './ppp';
 import type { PppMultiEpoch, PppSignal } from './ppp-signals';
 
@@ -556,8 +557,11 @@ export class PppUncombinedEngine {
         this.P[i]![i]! += s * s * dtS;
       }
     }
-    this.P[IDX_ZWD]![IDX_ZWD]! +=
-      (opts.ztdProcessNoise ?? 1e-8) * (ei > 0 ? 1 : 0);
+    if (ei > 0)
+      this.P[IDX_ZWD]![IDX_ZWD]! +=
+        opts.ztdProcessNoise ??
+        (opts.ztdRandomWalkMPerSqrtH ?? ZTD_RW_M_PER_SQRT_H) ** 2 *
+          (dtS / 3600);
     const grad = gradientConfig(opts);
     if (grad && this.lastEpochMs !== null) {
       const q = grad.randomWalkMPerSqrtH ** 2 * (dtS / 3600);

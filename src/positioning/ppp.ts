@@ -123,7 +123,12 @@ export interface PppOptions {
   /** Outlier gate on code and carrier innovations (multiples of their σ).
    *  Default 4; 0 disables it (exact comparisons between engines). */
   gateK?: number;
-  /** Wet-troposphere random-walk process noise (m²/epoch). Default 1e-8. */
+  /** Wet-troposphere random walk (m/√h), applied over the time between
+   *  epochs, so files at 1 s and 30 s get the same model. Default 0.0035
+   *  ({@link ZTD_RW_M_PER_SQRT_H}). */
+  ztdRandomWalkMPerSqrtH?: number;
+  /** Legacy: wet-troposphere process noise per epoch (m²/epoch), whatever
+   *  the sampling. When set it replaces `ztdRandomWalkMPerSqrtH`. */
   ztdProcessNoise?: number;
   /** Model + estimate the troposphere. Default true. */
   troposphere?: boolean;
@@ -763,6 +768,11 @@ export function satStateAtEmission(
 /*  Static float PPP solver (forward EKF over all epochs)              */
 /* ================================================================== */
 
+/** Default wet-troposphere random walk (m/√h): 1e-7 m² per 30 s epoch,
+ *  3.5 mm/√h (was 1.1 mm/√h, too tight for an hour of tropical or summer
+ *  wet delay: one-hour windows, 10 EPN stations, fixed at the end 810 →
+ *  865, end RMS 14.1/6.4/18.4 → 9.6/5.8/17.5 mm). */
+export const ZTD_RW_M_PER_SQRT_H = Math.sqrt(1e-7 * 120);
 const IDX_X = 0;
 const IDX_Y = 1;
 const IDX_Z = 2;
@@ -812,7 +822,6 @@ export class PppEngine {
   private readonly elevMask: number;
   private readonly codeSigma: number;
   private readonly phaseSigma: number;
-  private readonly ztdQ: number;
   private readonly kinematic: boolean;
   private readonly corrections?: PppCorrections;
   private readonly truth?: [number, number, number];
@@ -904,7 +913,6 @@ export class PppEngine {
     this.elevMask = ((opts.elevationMaskDeg ?? 10) * Math.PI) / 180;
     this.codeSigma = opts.codeSigma ?? 3.0;
     this.phaseSigma = opts.phaseSigma ?? 0.01;
-    this.ztdQ = opts.ztdProcessNoise ?? 1e-8;
     this.kinematic = opts.mode === 'kinematic';
     this.corrections = opts.corrections;
     this.truth = opts.groundTruth;
@@ -1194,7 +1202,6 @@ export class PppEngine {
       elevMask,
       codeSigma,
       phaseSigma,
-      ztdQ,
       kinematic,
       corrections,
       truth,
@@ -1245,12 +1252,18 @@ export class PppEngine {
     // Each constellation clock: white noise — reset its variance so it is
     // freely re-estimated each epoch.
     for (const ci of clkIdx.values()) P[ci]![ci] = CLK_VAR;
-    // Zenith wet delay: random walk.
-    P[IDX_ZWD]![IDX_ZWD]! += ztdQ * (ei > 0 ? 1 : 0);
+    // Zenith wet delay: random walk in time (or the legacy per-epoch value).
+    const dtH =
+      this.lastEpochMs !== null
+        ? Math.max(0, epoch.timeMs - this.lastEpochMs) / 3_600_000
+        : 0;
+    if (ei > 0)
+      P[IDX_ZWD]![IDX_ZWD]! +=
+        opts.ztdProcessNoise ??
+        (opts.ztdRandomWalkMPerSqrtH ?? ZTD_RW_M_PER_SQRT_H) ** 2 * dtH;
     // Gradients: random walk in time.
     const grad = gradientConfig(opts);
     if (grad && this.lastEpochMs !== null) {
-      const dtH = Math.max(0, epoch.timeMs - this.lastEpochMs) / 3_600_000;
       const q = grad.randomWalkMPerSqrtH ** 2 * dtH;
       P[IDX_GN]![IDX_GN]! += q;
       P[IDX_GE]![IDX_GE]! += q;
