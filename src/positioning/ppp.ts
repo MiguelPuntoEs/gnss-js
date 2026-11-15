@@ -621,28 +621,33 @@ export class Sp3EphemerisSource implements PppEphemerisSource {
  * Remove the source's satellite code/phase biases (OSB) from one observation,
  * so the code matches the clock reference and — with phase OSBs — the carrier
  * ambiguities are integers between satellites. Code biases are optional
- * (SP3/CLK sources fold them into the float ambiguity); a source that
- * publishes phase biases but has none for this satellite/signal drops it,
- * since one non-integer ambiguity would spoil the fix for all.
+ * (SP3/CLK sources fold them into the float ambiguity). A satellite of a
+ * source that publishes phase biases but has none for its signals (GLONASS
+ * in CODE's products) stays in the solution with a float ambiguity
+ * (`floatOnly`): ambiguity fixing leaves it out, since one non-integer
+ * ambiguity would spoil the fix for all.
  */
 function applySatBiases(
   source: PppEphemerisSource,
   o: PppSatObs,
   tMs: number
-): PppSatObs | null {
-  if (!source.codeBias && !source.phaseBias) return o;
+): { o: PppSatObs; floatOnly: boolean } {
+  if (!source.codeBias && !source.phaseBias) return { o, floatOnly: false };
   const b1 = source.codeBias?.(o.prn, o.code1 ?? '', tMs) ?? 0;
   const b2 = source.codeBias?.(o.prn, o.code2 ?? '', tMs) ?? 0;
   let l1 = o.l1;
   let l2 = o.l2;
+  let floatOnly = false;
   if (source.phaseBias) {
     const p1 = source.phaseBias(o.prn, o.phase1 ?? o.code1 ?? '', tMs);
     const p2 = source.phaseBias(o.prn, o.phase2 ?? o.code2 ?? '', tMs);
-    if (p1 == null || p2 == null) return null;
-    l1 -= p1 / (C_LIGHT / o.f1);
-    l2 -= p2 / (C_LIGHT / o.f2);
+    if (p1 == null || p2 == null) floatOnly = true;
+    else {
+      l1 -= p1 / (C_LIGHT / o.f1);
+      l2 -= p2 / (C_LIGHT / o.f2);
+    }
   }
-  return { ...o, c1: o.c1 - b1, c2: o.c2 - b2, l1, l2 };
+  return { o: { ...o, c1: o.c1 - b1, c2: o.c2 - b2, l1, l2 }, floatOnly };
 }
 
 /* ================================================================== */
@@ -818,6 +823,9 @@ export class PppEngine {
   private clkIdx!: Map<string, number>;
   private clockSeeded!: Set<string>;
   private ambIdx!: Map<string, number>;
+  /** Satellites without the product's phase biases: float ambiguities,
+   *  never fixed. */
+  private floatOnly = new Set<string>();
   private lastSeen!: Map<string, number>;
   private arcs!: PppArc[];
   private arcSnap!: Map<
@@ -1297,8 +1305,10 @@ export class PppEngine {
     for (const raw of epoch.obs) {
       if (raw.c1 === 0 || raw.c2 === 0 || raw.l1 === 0 || raw.l2 === 0)
         continue;
-      const ob = applySatBiases(source, raw, epoch.timeMs);
-      if (!ob) continue;
+      const biased = applySatBiases(source, raw, epoch.timeMs);
+      const ob = biased.o;
+      if (biased.floatOnly) this.floatOnly.add(ob.prn);
+      else this.floatOnly.delete(ob.prn);
       const rep = this.repairSlip(ob, epoch.timeMs);
       if (rep.defer) continue; // held out while the wide-lane settles
       const o = rep.o;
@@ -2081,6 +2091,7 @@ export class PppEngine {
       const mw = mwState.get(v.prn);
       if (index === undefined || !snap || !mw) continue;
       if (cfg.fixable && !cfg.fixable(v.prn)) continue;
+      if (this.floatOnly.has(v.prn)) continue;
       if (tMs - snap.startMs < minArcMs || snap.nEpochs < 20) continue;
       ambiguities.push({
         prn: v.prn,
