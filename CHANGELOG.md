@@ -10,6 +10,17 @@
     With the SECM ambiguities fixed as well, the ionosphere-free engine had 33 instead of 9 windows with wrong fixes. Between-receiver double differences (a Leica and a Septentrio receiver at one site) show no receiver-specific CAST/SECM bias in phase, code or wide lane: the cause is on the satellite/product side.
 - `resolvePppAmbiguities` `group` option, and the ionosphere-free engine differences satellites within its receiver-clock groups (`clockGroup`): with `'bds-maker'` the BeiDou-3 CAST and SECM satellites each get their own reference.
 - `builtinSatelliteBlocks(date)`: each PRN's satellite type from the built-in igs20 table, for `clockGroupFromBlocks` without an ANTEX file (handles reused PRNs: C11 is BeiDou-2 until 2026-04-19, BeiDou-3 SECM from 2026-04-20).
+
+### Changed — uncombined engine: fixes wait for a 12 cm float
+
+- `ar.maxFloatSigmaM` defaults to 0.12 m (was no limit): no fix is attempted while the float position's 3D formal σ is larger. At low latitudes one-hour floats stay decimetres off and partial fixes passed every test with the wrong integers. 14 IGS Asia-Pacific stations, 2026-215…216, 666 one-hour windows: windows with wrong fixes 28 → 22, time to fix unchanged; 10 EPN stations (936 windows): unchanged but the p75 time to fix 13.5 → 14 min.
+
+### Added — ionosphere-free engine `ar.maxFloatSigmaM`
+
+- The same gate for the ionosphere-free engine, off by default: there it changed little (Europe: windows with wrong fixes 9 → 8, p75 time to fix 24 → 26 min; Asia-Pacific: 25 → 22).
+
+### Added — uncombined engine `ar.minPerSystem`
+
 - Uncombined engine `ar.minPerSystem`: a constellation joins a fix only with at least this many narrow lanes (default 1, unchanged). With 2 and BeiDou fixed: wrong-fix epochs 40 → 27 on the EPN windows above.
 
 ## 2.54.0
