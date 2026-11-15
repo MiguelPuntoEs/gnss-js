@@ -225,7 +225,12 @@ export interface PppOptions {
          *  (m). Default Infinity. */
         maxFloatSigmaM?: number;
         /** Static: attempt only while the float position moved less than
-         *  this (m, 3D) over the last `driftWindowS`. Default no limit. */
+         *  this (m, 3D) over the last `driftWindowS`: the formal σ can be
+         *  optimistic while the float is still converging. Default 0.05
+         *  (Infinity turns it off). One-hour windows, GPS + GLONASS +
+         *  Galileo, CODE MGEX: wrong-fix epochs 104 → 40 (10 EPN stations)
+         *  and 396 → 196 (14 IGS Asia-Pacific stations), median time to
+         *  fix +2 / +4 min, sessions fixed at the end unchanged. */
         maxDriftM?: number;
         /** Window of `maxDriftM` (s). Default 300. */
         driftWindowS?: number;
@@ -2039,7 +2044,8 @@ export class PppEngine {
     if (!ar || !this.source.phaseBias) return;
     const cfg = ar === true ? {} : ar;
     const driftWin = (cfg.driftWindowS ?? 300) * 1000;
-    if (cfg.maxDriftM !== undefined && !this.kinematic) {
+    const maxDrift = cfg.maxDriftM ?? 0.05;
+    if (Number.isFinite(maxDrift) && !this.kinematic) {
       const h = this.floatHist;
       h.push({ t: tMs, p: [this.x[IDX_X]!, this.x[IDX_Y]!, this.x[IDX_Z]!] });
       while (h.length > 1 && tMs - h[1]!.t >= driftWin) h.shift();
@@ -2051,7 +2057,7 @@ export class PppEngine {
     this.lastArMs = tMs;
     this.lastFix = null;
     const { x, P, ambIdx, arcSnap, mwState } = this;
-    if (cfg.maxDriftM !== undefined && !this.kinematic) {
+    if (Number.isFinite(maxDrift) && !this.kinematic) {
       const old = this.floatHist[0]!;
       if (tMs - old.t < driftWin) return;
       const d = Math.hypot(
@@ -2059,7 +2065,7 @@ export class PppEngine {
         x[IDX_Y]! - old.p[1],
         x[IDX_Z]! - old.p[2]
       );
-      if (d > cfg.maxDriftM) return;
+      if (d > maxDrift) return;
     }
     // A partial fix on a float still decimetres off can pass the ratio
     // test with the wrong integers.

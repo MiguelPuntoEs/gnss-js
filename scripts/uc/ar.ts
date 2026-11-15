@@ -114,7 +114,9 @@ const base = {
   ...(clockGroup ? { clockGroup } : {}),
   aprioriPos: header.approxPosition as [number, number, number],
   clk,
-  osb,
+  // NOOSB=1: no bias product (a float run as the app makes it: code biases
+  // folded into the float ambiguities, nothing to fix).
+  ...(process.env.NOOSB ? {} : { osb }),
   estimateGradients: true,
 };
 
