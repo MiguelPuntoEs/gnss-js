@@ -153,6 +153,11 @@ export interface PppUncombinedOptions extends Omit<
         minArcS?: number;
         /** Min between-satellite narrow-lane ambiguities. Default 6. */
         minFixed?: number;
+        /** Min narrow-lane ambiguities a constellation must bring to a
+         *  fix: a constellation with fewer in the set is left out of it (a
+         *  lone between-satellite difference has nothing within its own
+         *  constellation to check it against). Default 1 (no rule). */
+        minPerSystem?: number;
         /** Max |float − integer| of a fixed extra-wide lane (cycles).
          *  Default 0.25. */
         maxFracWl?: number;
@@ -1720,13 +1725,22 @@ export class PppUncombinedEngine {
       lanes: Lane[],
       ratioMin: number,
       srMin: number,
-      minN: number
+      minN: number,
+      perSys = 1
     ): { n: number; ratio: number; chi2: number; rows: Row[] } => {
       let set = lanes
         .map((l) => ({ l, v: cov(l.row, l.row) }))
         .filter((q) => q.v < 0.5 * 0.5)
         .sort((p, q) => p.v - q.v)
         .map((q) => q.l);
+      // Constellations with fewer than `perSys` lanes in the set leave it.
+      const thin = (ls: Lane[]) => {
+        if (perSys <= 1) return ls;
+        const n = new Map<string, number>();
+        for (const l of ls) n.set(l.prn[0]!, (n.get(l.prn[0]!) ?? 0) + 1);
+        return ls.filter((l) => n.get(l.prn[0]!)! >= perSys);
+      };
+      set = thin(set);
       let firstRatio = 0;
       while (set.length >= Math.max(1, minN)) {
         const m = set.length;
@@ -1745,7 +1759,7 @@ export class PppUncombinedEngine {
           set.forEach((l, i) => impose(l.row, r.candidates[0]![i]!));
           return { n: m, ratio, chi2, rows: set.map((l) => l.row) };
         }
-        set = set.slice(0, -1);
+        set = thin(set.slice(0, -1));
       }
       return { n: 0, ratio: firstRatio, chi2: 0, rows: [] };
     };
@@ -1778,7 +1792,8 @@ export class PppUncombinedEngine {
       nl,
       cfg.ratio ?? 3,
       cfg.successRate ?? 0.999,
-      minFixed
+      minFixed,
+      cfg.minPerSystem ?? 1
     );
     stats.nl = res.n;
     stats.ratio = res.ratio;

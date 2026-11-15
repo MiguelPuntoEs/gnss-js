@@ -14,6 +14,8 @@ import { parseClk } from '../../src/rinex/clk';
 import { parseBiasSinex, SatOsbTable } from '../../src/rinex/bias-sinex';
 import { parseAntex } from '../../src/antex';
 import { parseIonex } from '../../src/rinex/ionex';
+import { parseOrbex } from '../../src/rinex/orbex';
+import { createSatAttitude } from '../../src/positioning/sat-attitude';
 import {
   solvePpp,
   buildPppAntenna,
@@ -55,9 +57,24 @@ const { header, multi: all } = await loadMulti(obsP!, {
   systems,
   ...(process.env.BANDS ? { bands: JSON.parse(process.env.BANDS) } : {}),
 });
+// DROP=regex: leave out matching satellites (e.g. 'C11|C30').
+if (process.env.DROP) {
+  const re = new RegExp(`^(${process.env.DROP})$`);
+  for (const e of all) e.obs = e.obs.filter((o) => !re.test(o.prn));
+}
 const delta = header.antDelta ?? [0, 0, 0];
+// ATT=file.OBX: the product's attitude quaternions; ATT=model: yaw models.
+const attitude = process.env.ATT
+  ? process.env.ATT === 'model'
+    ? createSatAttitude({ mode: 'model' })
+    : createSatAttitude({
+        mode: 'orbex',
+        orbex: parseOrbex(txt(process.env.ATT)),
+      })
+  : undefined;
 const corr = () =>
   createPppCorrections({
+    ...(attitude ? { attitude } : {}),
     antenna,
     rcvAntType: header.antType ?? '',
     antDeltaEnu: [delta[1], delta[2], delta[0]],
@@ -230,6 +247,7 @@ for (
       `fixed ${((100 * nFixed) / sol.series.length).toFixed(0).padStart(3)} %`,
       `wrong ${wrong}`,
       `end ${endFix ? 'fix' : 'flt'} ${e.map((v) => v.toFixed(1)).join('/')} mm`,
+      `flt ${s.flt[s.flt.length - 1]!.map((v) => v.toFixed(0)).join('/')}`,
       `(${sec.toFixed(1)} s)`
     );
   }
