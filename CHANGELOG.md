@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.59.0
+
+### Changed — the wet troposphere's random walk is per time, and looser
+
+- `ztdRandomWalkMPerSqrtH` (both engines): the zenith wet delay's random walk in m/√h, applied over the time between epochs. Before, `ztdProcessNoise` added 1e-8 m² per _epoch_ whatever the sampling — 1.1 mm/√h at 30 s but 6 mm/√h at 1 s, so the same site got a different troposphere model at each rate, and a data gap added only one epoch's worth. `ztdProcessNoise` still works (per epoch) when set.
+- Default 3.5 mm/√h (was 1.1 mm/√h at 30 s, too tight for an hour of summer or tropical wet delay; the error went into the height and the float's formal σ stayed optimistic). One-hour windows, GPS + GLONASS + Galileo, CODE MGEX, ambiguities fixed, 10 EPN stations (936 windows): ionosphere-free engine fixed at the end 886 → 901, end RMS E/N/U 10.2/5.7/17.2 → 6.6/5.3/17.1 mm; uncombined 810 → 865, 14.1/6.4/18.4 → 9.6/5.8/17.5 mm. 14 IGS Asia-Pacific stations: neutral to slightly better. 24 h EPN week 2430 (35 stations, fixed): coordinates unchanged (1.3/0.7/2.0 mm), ZTD against EUREF's combined troposphere product pooled RMS 4.5 → 4.1 mm.
+
 ## 2.58.0
 
 ### Changed — ambiguity-fixed runs keep GLONASS (ionosphere-free engine)
