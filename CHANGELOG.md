@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.59.2
+
+### Fixed — RTK antenna corrections on GPS-only calibrations
+
+- `buildRtkAntenna`: a band missing from a receiver antenna's calibration returned null, so Galileo/BeiDou at an antenna calibrated for GPS (and GLONASS) only went uncorrected while GPS on the same receiver got its full phase-centre offset — about 9 cm of PCO leaking into the baseline height. EPN CEBR–MADR (10 km, AOAD/M_T at MADR), epoch-by-epoch RTK over 7 days: Up +40.0 → +2.9 mm (GPS alone +3.0), 3-D RMS 40.6 → 11.3 mm. The nearest GPS band now stands in (`rtkGpsFallback`, exported: E1/B1C/B1I → L1, E5a/B2a → L5 else L2, E5b/E6/B3 → L2), as `buildPppAntenna` already did.
+- A radome without its own calibration — and a type given without its radome — now takes the antenna's NONE entry, as `buildPppAntenna` does; before, the whole antenna was uncalibrated.
+
 ## 2.59.1
 
 ### Fixed — NavIC L5 in RTCM MSM
