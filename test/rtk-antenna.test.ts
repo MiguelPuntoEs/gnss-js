@@ -5,6 +5,7 @@ import {
   postProcessRtk,
   buildRtkAntenna,
   rcvAntennaRangeM,
+  rtkGpsFallback,
   satClockCorrection,
   type RtkObsEpoch,
 } from '../src/positioning';
@@ -38,6 +39,26 @@ describe.skipIf(!existsSync(ANTEX_FIX))(
     it('is null for an unknown antenna or uncalibrated frequency', () => {
       expect(model.rcvOffset('NO SUCH ANTENNA', 'G01')).toBeNull();
       expect(model.rcvOffset(A, 'X99')).toBeNull();
+    });
+
+    it('falls back to the GPS band for an uncalibrated system, and to no radome', () => {
+      const g1 = model.rcvOffset(A, 'G01')!;
+      const g2 = model.rcvOffset(A, 'G02')!;
+      // No NavIC L1 or GLONASS G3 entries: GPS L1 and GPS L2 stand in.
+      expect(model.rcvOffset(A, 'I01')).toEqual(g1);
+      expect(model.rcvOffset(A, 'R03')).toEqual(g2);
+      expect(model.rcvOffset('TRM59800.00     SCIS', 'G01')).toEqual(g1);
+    });
+
+    it('rtkGpsFallback maps each band to the nearest GPS carrier', () => {
+      expect(rtkGpsFallback('E01')).toEqual(['G01']);
+      expect(rtkGpsFallback('C02')).toEqual(['G01']);
+      expect(rtkGpsFallback('R02')).toEqual(['G02']);
+      expect(rtkGpsFallback('E05')).toEqual(['G05', 'G02']);
+      expect(rtkGpsFallback('E07')).toEqual(['G02']);
+      expect(rtkGpsFallback('G01')).toEqual([]);
+      expect(rtkGpsFallback('G05')).toEqual(['G02']);
+      expect(rtkGpsFallback('X99')).toEqual([]);
     });
 
     it('rcvAntennaRangeM projects a straight-up PCO onto a zenith line of sight', () => {

@@ -652,6 +652,7 @@ export {
   buildRtkAntenna,
   rcvAntennaRangeM,
   antexFreqOfGroup,
+  rtkGpsFallback,
 } from './rtk-antenna';
 export type {
   RtkAntennaModel,

@@ -23,13 +23,44 @@ import { enuToEcef, interpPcv, vdot, type AntennaOffset } from './ppp-antenna';
 export type RtkAntennaOffset = AntennaOffset;
 
 export interface RtkAntennaModel {
-  /** Receiver PCO + PCV for one ANTEX frequency code (e.g. 'G01', 'E05'), or
-   *  null when the antenna type or that frequency isn't calibrated. */
+  /** Receiver PCO + PCV for one ANTEX frequency code (e.g. 'G01', 'E05'):
+   *  an uncalibrated radome falls back to NONE and an uncalibrated band to
+   *  the nearest GPS one ({@link rtkGpsFallback}); null when neither exists. */
   rcvOffset(antType: string, freq: string): RtkAntennaOffset | null;
 }
 
 function freqOf(entry: AntennaEntry, code: string): FrequencyData | undefined {
   return entry.frequencies.find((f) => f.frequency === code);
+}
+
+/**
+ * GPS bands that stand in for an uncalibrated ANTEX frequency, nearest
+ * carrier first ('E01' → ['G01'], 'E05' → ['G05', 'G02']). Many receiver
+ * antennas are calibrated for GPS (and GLONASS) only; leaving their Galileo
+ * or BeiDou signals uncorrected while GPS on the same receiver is corrected
+ * puts the PCO (~10 cm Up) into the baseline. buildPppAntenna falls back to
+ * GPS L1/L2 the same way. Empty for a GPS band other than L5 or an unknown
+ * band.
+ */
+export function rtkGpsFallback(freq: string): string[] {
+  if (freq[0] === 'G') return freq === 'G05' ? ['G02'] : [];
+  switch (freq[2]) {
+    case '1':
+    case '4':
+      return ['G01'];
+    case '2':
+      // BeiDou B1I (1561 MHz) sits by L1; the other systems' band 2 by L2.
+      return freq[0] === 'C' ? ['G01'] : ['G02'];
+    case '5':
+    case '8':
+      return ['G05', 'G02'];
+    case '3':
+    case '6':
+    case '7':
+      return ['G02'];
+    default:
+      return [];
+  }
 }
 
 /**
@@ -50,9 +81,15 @@ export function buildRtkAntenna(antex: AntexFile): RtkAntennaModel {
   const mm = 1e-3;
   return {
     rcvOffset(antType, freq) {
-      const entry = rcvs.get(antType);
+      // Exact type + radome, else the antenna without a radome (IGS
+      // practice when the combination is uncalibrated, as buildPppAntenna).
+      const entry =
+        rcvs.get(antType) ??
+        rcvs.get(antType.substring(0, 16).padEnd(16, ' ') + 'NONE');
       if (!entry) return null;
-      const f = freqOf(entry, freq);
+      let f: FrequencyData | undefined;
+      for (const code of [freq, ...rtkGpsFallback(freq)])
+        f ??= freqOf(entry, code);
       if (!f) return null;
       return {
         pco: [f.pcoN * mm, f.pcoE * mm, f.pcoU * mm],
