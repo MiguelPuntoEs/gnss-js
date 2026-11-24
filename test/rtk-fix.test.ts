@@ -634,7 +634,11 @@ describe('RtkFloatEngine instant ambiguity resolution (synthetic)', () => {
     }
     expect(sol!.status).toBe('fixed');
     expect(sol!.nFixed).toBe(9);
-    expect(fixedAt).toBeGreaterThan(2); // not before evidence accrues
+    // Not on the first epoch (code alone); from the second on, with
+    // 10 cm code over 11 satellites, the float is good enough. (Before
+    // the iterated update stopped counting ambiguity updates twice, the
+    // first fix came only after a few epochs.)
+    expect(fixedAt).toBeGreaterThanOrEqual(1);
     expect(wrongFixes).toBe(0);
     for (let i = 0; i < 3; i++)
       expect(Math.abs(sol!.position[i]! - ROVER[i]!)).toBeLessThan(0.02);

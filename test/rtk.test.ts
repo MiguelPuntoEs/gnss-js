@@ -671,6 +671,35 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(Math.sqrt(sumV / n)).toBeLessThan(1.5); // vertical RMS (m)
     });
 
+    it('keeps the float near the truth from the first epochs at 30 s', () => {
+      // Iterated updates once predicted the phase with the prior
+      // ambiguities while correcting for the iterate's, so every iteration
+      // after the first counted the ambiguity update twice. At 1 Hz the
+      // filter absorbed it; at 30 s it jumped tens of metres on the second
+      // epoch (EPN WTZR–WTZS, 68 m apart: 86 m).
+      const engine = new RtkFloatEngine(WHU_BASE, ephs, {
+        mode: 'static',
+        elevationMaskDeg: 15,
+        maxGapMs: 75_000,
+        ambiguityResolution: 'off',
+      });
+      const t0 = pairs[0]!.t;
+      let worst = 0;
+      let n = 0;
+      for (const p of pairs) {
+        if ((p.t - t0) % 30_000 !== 0) continue;
+        const sol = engine.process(p.rover, p.base, p.t);
+        if (!sol) continue;
+        n++;
+        worst = Math.max(
+          worst,
+          Math.hypot(...sol.position.map((x, i) => x - WHU_ROVER_TRUTH[i]!))
+        );
+      }
+      expect(n).toBeGreaterThanOrEqual(3);
+      expect(worst).toBeLessThan(2);
+    });
+
     it('static float solution converges to the decimetre level', () => {
       const engine = new RtkFloatEngine(WHU_BASE, ephs, {
         mode: 'static',

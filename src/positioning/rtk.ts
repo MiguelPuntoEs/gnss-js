@@ -224,6 +224,12 @@ function relocked(now: number | undefined, prev: number | undefined): boolean {
   return now < prev || (now === 0 && prev === 0);
 }
 
+/** Chao's wet mapping function (elevation in radians). */
+function chaoWetMapping(el: number): number {
+  const e = Math.max(el, 0.05);
+  return 1 / (Math.sin(e) + 0.00143 / (Math.tan(e) + 0.0445));
+}
+
 /** Rotate an ECEF position by the Earth rotation during signal travel. */
 function sagnac(
   pos: { x: number; y: number; z: number },
@@ -444,7 +450,13 @@ function roverTerms(
   y: number,
   z: number,
   troposphere: boolean
-): { rho: number; u: [number, number, number]; dTropo: number } {
+): {
+  rho: number;
+  u: [number, number, number];
+  dTropo: number;
+  /** Rover elevation (rad); 0 when neither troposphere nor PCV needs it. */
+  elR: number;
+} {
   const travel = Math.hypot(g.satR.x - x, g.satR.y - y, g.satR.z - z) / C_LIGHT;
   const [sx, sy, sz] = sagnac(g.satR, travel);
   let rho = Math.hypot(sx - x, sy - y, sz - z);
@@ -479,7 +491,7 @@ function roverTerms(
       g.roverDelta
     );
   }
-  return { rho, u, dTropo };
+  return { rho, u, dTropo, elR };
 }
 
 /** Single-difference variance (m²), elevation-weighted, 2 receivers. */
@@ -828,6 +840,19 @@ export interface RtkFloatOptions {
   elevationMaskDeg?: number;
   /** Model the differential troposphere. Default true. */
   troposphere?: boolean;
+  /**
+   * Estimate the rover's zenith wet delay relative to the base as one
+   * state (random walk, Chao wet mapping), on top of the modelled
+   * differential troposphere. The model takes a standard atmosphere at
+   * each receiver's height and misses the weather between them — a few
+   * millimetres of zenith delay that the height absorbs about threefold.
+   * Needs `troposphere`. Default false.
+   */
+  estimateTroposphere?: boolean;
+  /** Initial sigma of the relative zenith delay (m). Default 0.05. */
+  tropoInitSigmaM?: number;
+  /** Its random walk (m/√h). Default 0.01. */
+  tropoRandomWalkMPerSqrtH?: number;
   /** Zenith code sigma per receiver (m). Default 0.3. */
   codeSigmaM?: number;
   /** Zenith phase sigma per receiver (m). Default 0.003. */
@@ -928,6 +953,9 @@ export interface RtkFloatSolution {
   ambiguities: Record<string, number>;
   /** Reference satellite per signal group. */
   refSatellites: Record<string, string>;
+  /** Estimated rover-minus-base zenith wet delay (m), with
+   *  `estimateTroposphere`. */
+  relativeZenithDelayM?: number;
 }
 
 interface AmbEntry {
@@ -959,6 +987,9 @@ export class RtkFloatEngine {
   /** State vector [x, y, z, N₁…] and covariance; null before init. */
   private x: number[] | null = null;
   private P: number[][] = [];
+  /** Index of the first ambiguity state: position (3), then the relative
+   *  zenith delay when estimated. */
+  private readonly a0: number;
   private amb: AmbEntry[] = [];
   private refs = new Map<string, string>();
   private track = new Map<string, TrackRecord>();
@@ -975,6 +1006,10 @@ export class RtkFloatEngine {
       mode: opts.mode ?? 'kinematic',
       elevationMaskDeg: opts.elevationMaskDeg ?? 10,
       troposphere: opts.troposphere ?? true,
+      estimateTroposphere:
+        (opts.estimateTroposphere ?? false) && (opts.troposphere ?? true),
+      tropoInitSigmaM: opts.tropoInitSigmaM ?? 0.05,
+      tropoRandomWalkMPerSqrtH: opts.tropoRandomWalkMPerSqrtH ?? 0.01,
       codeSigmaM: opts.codeSigmaM ?? 0.3,
       phaseSigmaM: opts.phaseSigmaM ?? 0.003,
       processNoisePosM: opts.processNoisePosM ?? 0,
@@ -993,6 +1028,7 @@ export class RtkFloatEngine {
       minFixAmbiguities: opts.minFixAmbiguities ?? 4,
       antenna: opts.antenna ?? null,
     };
+    this.a0 = this.o.estimateTroposphere ? 4 : 3;
   }
 
   /** Clear all filter state (position, ambiguities, lock history). */
@@ -1011,7 +1047,7 @@ export class RtkFloatEngine {
 
   /** Remove one ambiguity state (row/col) from x and P. */
   private dropAmb(idx: number): void {
-    const s = 3 + idx;
+    const s = this.a0 + idx;
     this.amb.splice(idx, 1);
     this.x!.splice(s, 1);
     this.P.splice(s, 1);
@@ -1037,12 +1073,12 @@ export class RtkFloatEngine {
    */
   private retarget(group: string, oldRef: string, newRefIdx: number): void {
     const n = this.x!.length;
-    const j = 3 + newRefIdx;
+    const j = this.a0 + newRefIdx;
     const T = zeros(n, n);
     for (let i = 0; i < n; i++) T[i]![i] = 1;
     for (let k = 0; k < this.amb.length; k++) {
       if (this.amb[k]!.group !== group) continue;
-      const s = 3 + k;
+      const s = this.a0 + k;
       if (s === j) T[s]![s] = -1;
       else T[s]![j]! -= 1;
     }
@@ -1080,11 +1116,11 @@ export class RtkFloatEngine {
     const Qb = new Float64Array(k * k);
     const QbRows: number[][] = [];
     for (let i = 0; i < k; i++) {
-      const si = 3 + idxs[i]!;
+      const si = this.a0 + idxs[i]!;
       b[i] = this.x![si]!;
       const row: number[] = [];
       for (let j = 0; j < k; j++) {
-        const sj = 3 + idxs[j]!;
+        const sj = this.a0 + idxs[j]!;
         // Symmetrised copy — LtDL needs an exactly symmetric Q.
         const q = (this.P[si]![sj]! + this.P[sj]![si]!) / 2;
         Qb[i + j * k] = q;
@@ -1111,7 +1147,7 @@ export class RtkFloatEngine {
       for (let i = 0; i < k; i++) {
         let yi = 0;
         for (let j = 0; j < k; j++) yi += QbInv[i]![j]! * db[j]!;
-        dx += this.P[r]![3 + idxs[i]!]! * yi;
+        dx += this.P[r]![this.a0 + idxs[i]!]! * yi;
       }
       position[r] -= dx;
     }
@@ -1120,7 +1156,7 @@ export class RtkFloatEngine {
       Array.from({ length: k }, (_, j) => {
         let v = 0;
         for (let i = 0; i < k; i++)
-          v += this.P[r]![3 + idxs[i]!]! * QbInv[i]![j]!;
+          v += this.P[r]![this.a0 + idxs[i]!]! * QbInv[i]![j]!;
         return v;
       })
     );
@@ -1128,7 +1164,7 @@ export class RtkFloatEngine {
       [0, 1, 2].map((c) => {
         let v = 0;
         for (let j = 0; j < k; j++)
-          v += PxbQ[r]![j]! * this.P[3 + idxs[j]!]![c]!;
+          v += PxbQ[r]![j]! * this.P[this.a0 + idxs[j]!]![c]!;
         return (this.P[r]![c]! + this.P[c]![r]!) / 2 - v;
       })
     );
@@ -1199,10 +1235,14 @@ export class RtkFloatEngine {
       );
       if (!dg) return null;
       this.x = [...dg.position];
-      this.P = zeros(3, 3);
+      this.P = zeros(this.a0, this.a0);
       for (let i = 0; i < 3; i++) {
         const s = Math.max(dg.sigmas[i]!, 1);
         this.P[i]![i] = 25 * s * s;
+      }
+      if (o.estimateTroposphere) {
+        this.x.push(0);
+        this.P[3]![3] = o.tropoInitSigmaM * o.tropoInitSigmaM;
       }
       this.amb = [];
     } else if (o.mode === 'kinematic') {
@@ -1219,8 +1259,12 @@ export class RtkFloatEngine {
       const q = o.processNoisePosM * o.processNoisePosM * dtS;
       for (let i = 0; i < 3; i++) this.P[i]![i]! += q;
     }
+    if (o.estimateTroposphere && dtS > 0)
+      this.P[3]![3]! +=
+        (o.tropoRandomWalkMPerSqrtH * o.tropoRandomWalkMPerSqrtH * dtS) / 3600;
     const qAmb = o.ambProcessNoiseCycles * o.ambProcessNoiseCycles * dtS;
-    for (let k = 0; k < this.amb.length; k++) this.P[3 + k]![3 + k]! += qAmb;
+    for (let k = 0; k < this.amb.length; k++)
+      this.P[this.a0 + k]![this.a0 + k]! += qAmb;
 
     /* -- 4: reference selection + retargeting ---------------------- */
     const groups = groupEntries(geom);
@@ -1351,9 +1395,13 @@ export class RtkFloatEngine {
       h[0] = ts.u[0] - tr.u[0];
       h[1] = ts.u[1] - tr.u[1];
       h[2] = ts.u[2] - tr.u[2];
+      if (o.estimateTroposphere) {
+        h[3] = chaoWetMapping(ts.elR) - chaoWetMapping(tr.elR);
+        pred += h[3] * xs[3]!;
+      }
       if (row.ambIdx >= 0) {
-        pred += this.amb[row.ambIdx]!.lambda * this.x![3 + row.ambIdx]!;
-        h[3 + row.ambIdx] = this.amb[row.ambIdx]!.lambda;
+        pred += this.amb[row.ambIdx]!.lambda * xs[this.a0 + row.ambIdx]!;
+        h[this.a0 + row.ambIdx] = this.amb[row.ambIdx]!.lambda;
       }
       return { pred, h };
     };
@@ -1374,8 +1422,8 @@ export class RtkFloatEngine {
         // Undetected slip: re-initialise the ambiguity geometry-free.
         const zP = row.g.prR - row.g.prB - (row.ref.prR - row.ref.prB);
         const lam = this.amb[row.ambIdx]!.lambda;
-        this.x![3 + row.ambIdx] = (row.z - zP) / lam;
-        const s = 3 + row.ambIdx;
+        this.x![this.a0 + row.ambIdx] = (row.z - zP) / lam;
+        const s = this.a0 + row.ambIdx;
         for (let j = 0; j < this.x!.length; j++) {
           this.P[s]![j] = 0;
           this.P[j]![s] = 0;
@@ -1503,7 +1551,7 @@ export class RtkFloatEngine {
 
     const ambiguities: Record<string, number> = {};
     for (let k = 0; k < this.amb.length; k++)
-      ambiguities[this.amb[k]!.prn] = this.x[3 + k]!;
+      ambiguities[this.amb[k]!.prn] = this.x[this.a0 + k]!;
     const refSatellites: Record<string, string> = {};
     for (const [group, ref] of newRefs) refSatellites[group] = ref.prn;
     const nSats = new Set(rows.flatMap((r) => [r.g.prn, r.ref.prn])).size;
@@ -1537,6 +1585,7 @@ export class RtkFloatEngine {
       ],
       ambiguities,
       refSatellites,
+      ...(o.estimateTroposphere ? { relativeZenithDelayM: this.x[3]! } : {}),
     };
   }
 }
