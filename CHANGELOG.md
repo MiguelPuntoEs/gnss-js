@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.61.0
+
+### Fixed — the RTK float update counted ambiguity corrections twice
+
+- `RtkFloatEngine`: the iterated measurement update (`updateIterations`, default 2) predicted each phase double difference with the prior ambiguities while correcting for the step from the prior to the iterate, so every iteration after the first applied the ambiguity update twice. The filter absorbed it slowly at 1 Hz and not at all at 30 s, where the second epoch threw the float tens of metres off — EPN WTZR–WTZS (68 m) 86 m, MET3–METG (2.8 km) one whole day ended 34 m off (2.60.0: 0.3 km) — and satellites then failed the code gate. Now: fixed within a centimetre from the first epochs on both. WHU OEM719 1 Hz short baseline: first fix 6 s → at once, fix rate 96 → 100 %, worst fixed error in kinematic mode 12.6 → 2.4 cm (a wrong fix gone). Over the 13 EPN baselines, 24 h static, nothing up to 130 km gets worse (IGMI–GARI 160 → 124 mm).
+
+### Added — relative troposphere in static RTK
+
+- `estimateTroposphere` (default false): the rover's zenith wet delay relative to the base as one state (random walk `tropoRandomWalkMPerSqrtH`, 0.01 m/√h; `tropoInitSigmaM` 0.05 m; Chao wet mapping), on top of the modelled differential troposphere, reported as `relativeZenithDelayM`. Off by default: on 13 EPN baselines over two weeks it helps where the weather differs between the stations (MET3–METG 6.5 → 2.6 mm, BADH–FFMJ 20.5 → 17.9 mm, IENG–TORI in winter 8.8 → 6.9 mm) but takes up low-elevation site effects and, on long single-frequency baselines, the ionosphere into the height (CEBR–MADR 10.5 → 15.5 mm), so it needs tuning before it is a default.
+
 ## 2.60.0
 
 ### Fixed — undetected cycle slips in RTK post-processing
