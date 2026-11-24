@@ -18,6 +18,7 @@ import {
   type RawObservation,
   type RtkFloatOptions,
 } from './rtk';
+import { RtkSlipDetector, type RtkSlipOptions } from './rtk-slips';
 
 /** One observation epoch (base or rover) — the shape the receiver/RINEX
  *  parsers already produce (`parseNovatelRange().epochs`, etc.). */
@@ -67,6 +68,13 @@ export interface RtkPostProcessOptions extends RtkFloatOptions {
    * Track points come back with `status: 'dgnss'`. Default false.
    */
   codeOnly?: boolean;
+  /**
+   * Cycle-slip detection on both receivers' phases ahead of the engine
+   * ({@link RtkSlipDetector}: the files' loss-of-lock flags and jumps in
+   * the geometry-free combination), or `false` to rely on the observations'
+   * own lock times and the engine's phase-minus-code gate. Default on.
+   */
+  slipDetection?: boolean | RtkSlipOptions;
 }
 
 export interface RtkPostProcessResult {
@@ -78,6 +86,9 @@ export interface RtkPostProcessResult {
   unmatched: number;
   /** Fraction of solved epochs with an integer-fixed solution (0–1). */
   fixRate: number;
+  /** Slips the detector found on the base and the rover (zero when
+   *  `slipDetection` is off). */
+  slips: { base: number; rover: number };
   /**
    * The session's baseline for static processing: the last ambiguity-fixed
    * epoch (the static filter has used every epoch up to it), else the last
@@ -146,6 +157,14 @@ export function postProcessRtk(
   for (const e of epochsOf(base)) baseByT.set(round(e.timeMs), e);
 
   const engine = new RtkFloatEngine(baseEcef, ephemerides, engineOpts);
+  const slipOpts =
+    opts.slipDetection === false
+      ? null
+      : opts.slipDetection === true || opts.slipDetection === undefined
+        ? {}
+        : opts.slipDetection;
+  const slipB = slipOpts ? new RtkSlipDetector(slipOpts) : null;
+  const slipR = slipOpts ? new RtkSlipDetector(slipOpts) : null;
 
   // ECEF→ENU rotation at the base (constant), for the baseline readout.
   const [bLat, bLon] = ecefToGeodetic(baseEcef[0], baseEcef[1], baseEcef[2]);
@@ -209,8 +228,8 @@ export function postProcessRtk(
         : null;
     } else {
       const sol = engine.process(
-        toRtkEpoch(rEp.meas),
-        toRtkEpoch(bEp.meas),
+        toRtkEpoch(slipR ? slipR.annotate(rEp.timeMs, rEp.meas) : rEp.meas),
+        toRtkEpoch(slipB ? slipB.annotate(bEp.timeMs, bEp.meas) : bEp.meas),
         rEp.timeMs
       );
       point = sol
@@ -255,6 +274,10 @@ export function postProcessRtk(
     solved,
     unmatched,
     fixRate: solved ? fixed / solved : 0,
+    slips: {
+      base: slipB ? slipB.counts.receiver + slipB.counts.geometryFree : 0,
+      rover: slipR ? slipR.counts.receiver + slipR.counts.geometryFree : 0,
+    },
     final: lastFixed ?? lastFloat,
   };
 }

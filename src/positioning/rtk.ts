@@ -123,6 +123,9 @@ export interface RawObservation {
   cp?: number | null;
   lockTimeS?: number;
   gloChannel?: number | null;
+  /** RINEX loss-of-lock indicator of the carrier phase (bit 0: a cycle
+   *  slip may have occurred since the previous epoch). */
+  lli?: number | null;
 }
 
 /** Preferred L1-band code per system, in preference order. */
@@ -172,7 +175,7 @@ export function toRtkEpoch(
 /* ================================================================== */
 
 /** Carrier frequency (Hz) from system letter + RINEX band digit. */
-function carrierFreqHz(
+export function carrierFreqHz(
   sys: string,
   code: string,
   gloChannel: number | null
@@ -211,6 +214,14 @@ function carrierFreqHz(
     default:
       return 0;
   }
+}
+
+/** Lock lost since the previous epoch: the lock time went backwards, or
+ *  is still zero (re-acquired again, e.g. a loss-of-lock flag set on two
+ *  epochs running — zero is "just acquired" in every decoder's units). */
+function relocked(now: number | undefined, prev: number | undefined): boolean {
+  if (now === undefined || prev === undefined) return false;
+  return now < prev || (now === 0 && prev === 0);
 }
 
 /** Rotate an ECEF position by the Earth rotation during signal travel. */
@@ -1168,12 +1179,7 @@ export class RtkFloatEngine {
       const tr = this.track.get(g.prn);
       if (!tr) continue;
       if (timeMs - tr.lastMs > o.maxGapMs) slipped.add(g.prn);
-      else if (
-        (g.lockR !== undefined &&
-          tr.lockR !== undefined &&
-          g.lockR < tr.lockR) ||
-        (g.lockB !== undefined && tr.lockB !== undefined && g.lockB < tr.lockB)
-      )
+      else if (relocked(g.lockR, tr.lockR) || relocked(g.lockB, tr.lockB))
         slipped.add(g.prn);
     }
 

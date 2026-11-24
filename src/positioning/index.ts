@@ -633,6 +633,8 @@ export type {
 } from './rtk';
 
 export { postProcessRtk } from './rtk-postprocess';
+export { RtkSlipDetector } from './rtk-slips';
+export type { RtkSlipOptions } from './rtk-slips';
 export { ZeroBaselineEngine } from './zero-baseline';
 export { resolveMsmRanges, type MsmResolveOptions } from './msm-resolve';
 export type {
