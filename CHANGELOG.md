@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.60.0
+
+### Fixed — undetected cycle slips in RTK post-processing
+
+- `postProcessRtk` now runs a cycle-slip detector on both receivers ahead of the engine (`slipDetection`, default on; `RtkSlipDetector`, exported). RINEX carries no lock times, so the engine's only slip test on files was the 5 m phase-minus-code gate (~26 L1 cycles), and smaller slips bent static solutions. The detector restarts a satellite's lock time on a loss-of-lock indicator (`RawObservation.lli`, new, bit 0) or a jump of the geometry-free combination λ₁φ₁ − λ₂φ₂ above 5 cm against its linear prediction; the engine resets the ambiguity as for any lock-time regression. `result.slips` counts what it found.
+- The engine also resets when a lock time is zero on two epochs running (a loss of lock flagged again), which it missed before.
+- EPN TORI (Leica GR30, ~130 L1 slips a day, a few flagged) against IENG, 5.6 km, epoch-by-epoch over 7 days: Up +13.7 → +6.0 mm, 3-D RMS 21.6 → 8.2 mm, kinematic fix rate 0.85 → 0.99. Over 13 EPN baselines up to 130 km in two weeks, none gets worse (e.g. AXPV–MARS 120.8 → 31.8 mm, MATE–SNIK 304 → 61 mm); single-frequency baselines past 200 km, ionosphere-dominated, move by a few per cent either way.
+
 ## 2.59.2
 
 ### Fixed — RTK antenna corrections on GPS-only calibrations
