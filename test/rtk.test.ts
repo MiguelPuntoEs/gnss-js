@@ -576,6 +576,147 @@ describe('toRtkEpoch', () => {
     expect(epoch.get('C30')!.code).toBe('1P'); // B1C fallback
     expect(epoch.get('R05')!.gloChannel).toBe(1);
   });
+
+  it('adds the second frequency under <prn>@<band> on request', () => {
+    const meas = [
+      { prn: 'G14', code: '1C', pr: 2.1e7, cp: 1.1e8 },
+      { prn: 'G14', code: '2L', pr: 2.1e7, cp: 8.6e7 },
+      { prn: 'G14', code: '2W', pr: 2.1e7, cp: 8.6e7 },
+      { prn: 'E11', code: '1C', pr: 2.3e7, cp: 1.2e8 },
+      { prn: 'E11', code: '5Q', pr: 2.3e7, cp: 9.0e7 },
+      { prn: 'C08', code: '2I', pr: 2.4e7, cp: 1.2e8 },
+      { prn: 'C08', code: '7I', pr: 2.4e7, cp: 1.2e8 },
+      { prn: 'R05', code: '1C', pr: 2.0e7, cp: 1.0e8, gloChannel: 1 },
+      { prn: 'R05', code: '2C', pr: 2.0e7, cp: 7.8e7, gloChannel: 1 },
+    ];
+    expect([...toRtkEpoch(meas).keys()].sort()).toEqual([
+      'C08',
+      'E11',
+      'G14',
+      'R05',
+    ]);
+    const two = toRtkEpoch(meas, { frequencies: 2 });
+    expect([...two.keys()].sort()).toEqual([
+      'C08',
+      'C08@7',
+      'E11',
+      'E11@5',
+      'G14',
+      'G14@2',
+      'R05', // GLONASS stays on L1 (FDMA inter-frequency biases)
+    ]);
+    expect(two.get('G14@2')!.code).toBe('2W'); // P(Y) before L2C
+    expect(two.get('E11@5')!.code).toBe('5Q');
+  });
+});
+
+/* ================================================================== */
+/*  Ionosphere estimation (dual frequency, synthetic)                  */
+/* ================================================================== */
+
+describe('RtkFloatEngine ionosphere estimation (synthetic)', () => {
+  const sc = gpsGalScenario();
+  const F1 = 1575.42e6;
+  const F2: Record<string, number> = { G: 1227.6e6, E: 1176.45e6 };
+  const code2: Record<string, string> = { G: '2W', E: '5Q' };
+  // Between-receiver zenith ionosphere per satellite at 1575.42 MHz (m):
+  // a few centimetres, different per satellite, as on a long baseline.
+  const ionoZen: Record<string, number> = {};
+  sc.ephs.forEach((e, i) => (ionoZen[e.prn] = 0.02 + 0.007 * ((i * 5) % 7)));
+  const mapping = (el: number) => {
+    const z = (6371e3 / (6371e3 + 350e3)) * Math.cos(el);
+    return 1 / Math.sqrt(1 - z * z);
+  };
+
+  /** Dual-frequency epoch; the rover's signals carry the ionosphere. */
+  function dualEpoch(t: number) {
+    const rover = new Map<string, RtkMeasurement>();
+    const base = new Map<string, RtkMeasurement>();
+    const lock = 600_000 + (t - T0);
+    for (const eph of sc.ephs) {
+      const sys = eph.prn[0]!;
+      const s = computeSatPosition(eph, t);
+      const el = ecefToAzEl(BASE[0], BASE[1], BASE[2], s.x, s.y, s.z).el;
+      for (const [key, code, f] of [
+        [eph.prn, '1C', F1],
+        [`${eph.prn}@${code2[sys]![0]}`, code2[sys]!, F2[sys]!],
+      ] as const) {
+        const lam = C_LIGHT / f;
+        const iono = (F1 / f) ** 2 * mapping(el) * ionoZen[eph.prn]!;
+        base.set(
+          key,
+          synth(eph, BASE, t, {
+            code,
+            clockM: 150,
+            lambdaM: lam,
+            phaseBiasCycles: 0.31,
+            lockTimeMs: lock,
+          })
+        );
+        const r = synth(eph, ROVER, t, {
+          code,
+          clockM: -80,
+          lambdaM: lam,
+          phaseBiasCycles: -0.72,
+          ambCycles: sc.amb[eph.prn]! + (key === eph.prn ? 0 : 3),
+          lockTimeMs: lock,
+        });
+        rover.set(key, {
+          ...r,
+          pr: r.pr! + iono,
+          cp: r.cp! - iono / lam,
+        });
+      }
+    }
+    return { rover, base };
+  }
+
+  const run = (ionosphere: 'off' | 'estimate') => {
+    const engine = new RtkFloatEngine(BASE, sc.ephs, {
+      mode: 'static',
+      troposphere: false,
+      ionosphere,
+      // The test baseline is metres long: open the length-scaled prior.
+      ionoInitSigmaMPer10Km: 100,
+      ionoRandomWalkMPer10KmPerSqrtS: 0,
+      // Noise-free code: over 30 s of static geometry only the code tells
+      // the ionosphere from the float ambiguities, so weight it fully.
+      codeSigmaM: 0.001,
+    });
+    let sol = null;
+    for (let k = 0; k < 30; k++) {
+      const t = T0 + k * 1000;
+      const { rover, base } = dualEpoch(t);
+      sol = engine.process(rover, base, t) ?? sol;
+    }
+    return sol!;
+  };
+
+  it('recovers the baseline despite centimetres of differential ionosphere', () => {
+    const sol = run('estimate');
+    const err = Math.hypot(
+      ...sol.floatBaseline.map((v, i) => v - TRUE_BASELINE[i]!)
+    );
+    expect(err).toBeLessThan(0.003);
+    expect(sol.nSats).toBe(11);
+    // The states hold the differenced ionosphere: each satellite's minus
+    // its reference's (the common part is not observable).
+    const io = sol.ionosphereM!;
+    const ref = sol.refSatellites.G1C!;
+    for (const prn of ['G02', 'G03', 'G04'])
+      expect(
+        Math.abs(io[prn]! - io[ref]! - (ionoZen[prn]! - ionoZen[ref]!))
+      ).toBeLessThan(0.002);
+  });
+
+  it('is biased by the same ionosphere when it is not estimated', () => {
+    const sol = run('off');
+    const err = Math.hypot(
+      ...sol.floatBaseline.map((v, i) => v - TRUE_BASELINE[i]!)
+    );
+    expect(err).toBeGreaterThan(0.01);
+    expect(sol.ionosphereM).toBeUndefined();
+  });
 });
 
 /* ================================================================== */

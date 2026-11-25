@@ -620,7 +620,7 @@ export function solveSpp(
   };
 }
 
-export { solveDgnss, RtkFloatEngine, toRtkEpoch } from './rtk';
+export { solveDgnss, RtkFloatEngine, toRtkEpoch, rtkSatOf } from './rtk';
 export type {
   RtkMeasurement,
   RtkEpochMeasurements,
@@ -648,6 +648,7 @@ export type {
   RtkTrackPoint,
   RtkPostProcessOptions,
   RtkPostProcessResult,
+  RtkModelChoice,
 } from './rtk-postprocess';
 
 export {

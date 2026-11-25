@@ -75,6 +75,32 @@ export interface RtkPostProcessOptions extends RtkFloatOptions {
    * own lock times and the engine's phase-minus-code gate. Default on.
    */
   slipDetection?: boolean | RtkSlipOptions;
+  /**
+   * Carrier frequencies per satellite: 1 (the L1 band) or 2 (plus GPS L2,
+   * Galileo E5a, QZSS L2, BeiDou B3I/B2I — see {@link toRtkEpoch}). Two
+   * frequencies are what `ionosphere: 'estimate'` needs. Default 1.
+   */
+  frequencies?: 1 | 2;
+  /**
+   * Static sessions on a baseline longer than this (km, from a code
+   * solution on the first epochs) switch to the long-baseline model: two
+   * frequencies, the ionosphere estimated per satellite and the relative
+   * troposphere estimated — unless `frequencies`, `ionosphere` or
+   * `estimateTroposphere` is given. `false` keeps the single-frequency
+   * short-baseline model at every length. Default 12 (EPN pairs: no
+   * better at 10 km, 2–5× better from 16 km on). Kinematic sessions are
+   * not switched.
+   */
+  longBaselineKm?: number | false;
+}
+
+/** The model a run used (after the long-baseline choice). */
+export interface RtkModelChoice {
+  frequencies: 1 | 2;
+  ionosphere: 'off' | 'estimate';
+  troposphere: boolean;
+  /** Baseline length from the code solution (km), when one was made. */
+  baselineKm: number | null;
 }
 
 export interface RtkPostProcessResult {
@@ -89,6 +115,8 @@ export interface RtkPostProcessResult {
   /** Slips the detector found on the base and the rover (zero when
    *  `slipDetection` is off). */
   slips: { base: number; rover: number };
+  /** The model used: frequencies, ionosphere and troposphere estimation. */
+  model: RtkModelChoice;
   /**
    * The session's baseline for static processing: the last ambiguity-fixed
    * epoch (the static filter has used every epoch up to it), else the last
@@ -116,6 +144,61 @@ function medianIntervalMs(epochs: readonly RtkObsEpoch[]): number | null {
   for (let i = 1; i < times.length; i++) gaps.push(times[i]! - times[i - 1]!);
   gaps.sort((a, b) => a - b);
   return gaps[Math.floor(gaps.length / 2)]!;
+}
+
+/**
+ * The long-baseline choice: explicit options win; otherwise a static
+ * session longer than `longBaselineKm` gets two frequencies with the
+ * ionosphere and troposphere estimated.
+ */
+function chooseModel(
+  opts: RtkPostProcessOptions,
+  roverEpochs: readonly RtkObsEpoch[],
+  baseByT: ReadonlyMap<number, RtkObsEpoch>,
+  round: (ms: number) => number,
+  tol: number,
+  dgnss: (
+    rover: readonly RawObservation[],
+    base: readonly RawObservation[],
+    timeMs: number
+  ) => { baseline: [number, number, number] } | null
+): RtkModelChoice {
+  const explicit: RtkModelChoice = {
+    frequencies: opts.frequencies ?? 1,
+    ionosphere: opts.ionosphere ?? 'off',
+    troposphere: opts.estimateTroposphere ?? false,
+    baselineKm: null,
+  };
+  const limit = opts.longBaselineKm ?? 12;
+  if (
+    limit === false ||
+    opts.codeOnly ||
+    (opts.mode ?? 'kinematic') !== 'static' ||
+    opts.frequencies !== undefined ||
+    opts.ionosphere !== undefined ||
+    opts.estimateTroposphere !== undefined
+  )
+    return explicit;
+  // The first few paired epochs with a code solution give the length.
+  let tried = 0;
+  for (const r of roverEpochs) {
+    const b = baseByT.get(round(r.timeMs));
+    if (!b || Math.abs(b.timeMs - r.timeMs) > tol) continue;
+    const dg = dgnss(r.meas, b.meas, r.timeMs);
+    if (dg) {
+      const km = Math.hypot(...dg.baseline) / 1000;
+      return km > limit
+        ? {
+            frequencies: 2,
+            ionosphere: 'estimate',
+            troposphere: true,
+            baselineKm: km,
+          }
+        : { ...explicit, baselineKm: km };
+    }
+    if (++tried >= 20) break;
+  }
+  return explicit;
 }
 
 /**
@@ -147,16 +230,28 @@ export function postProcessRtk(
   // each epoch — resetting the float ambiguities and gutting the fix rate.
   // Tolerating ~2 missed epochs keeps the continuous float alive.
   const interval = medianIntervalMs(roverEpochs);
-  const engineOpts =
-    opts.maxGapMs != null || interval == null
-      ? opts
-      : { ...opts, maxGapMs: Math.max(10_000, Math.round(interval * 2.5)) };
-
   // Base epochs keyed by rounded second for synchronized lookup.
   const baseByT = new Map<number, RtkObsEpoch>();
   for (const e of epochsOf(base)) baseByT.set(round(e.timeMs), e);
 
+  const model = chooseModel(opts, roverEpochs, baseByT, round, tol, (r, b, t) =>
+    solveDgnss(toRtkEpoch(r), toRtkEpoch(b), baseEcef, ephemerides, t, {
+      elevationMaskDeg: opts.elevationMaskDeg,
+      troposphere: opts.troposphere,
+      codeSigmaM: opts.codeSigmaM,
+    })
+  );
+  const engineOpts: RtkPostProcessOptions = {
+    ...opts,
+    ionosphere: model.ionosphere,
+    estimateTroposphere: model.troposphere,
+    ...(opts.maxGapMs != null || interval == null
+      ? {}
+      : { maxGapMs: Math.max(10_000, Math.round(interval * 2.5)) }),
+  };
+
   const engine = new RtkFloatEngine(baseEcef, ephemerides, engineOpts);
+  const fq = { frequencies: model.frequencies };
   const slipOpts =
     opts.slipDetection === false
       ? null
@@ -207,8 +302,8 @@ export function postProcessRtk(
     let point: Omit<RtkTrackPoint, 'lat' | 'lon' | 'height' | 'enu'> | null;
     if (opts.codeOnly) {
       const dg = solveDgnss(
-        toRtkEpoch(rEp.meas),
-        toRtkEpoch(bEp.meas),
+        toRtkEpoch(rEp.meas, fq),
+        toRtkEpoch(bEp.meas, fq),
         baseEcef,
         ephemerides,
         rEp.timeMs,
@@ -228,8 +323,8 @@ export function postProcessRtk(
         : null;
     } else {
       const sol = engine.process(
-        toRtkEpoch(slipR ? slipR.annotate(rEp.timeMs, rEp.meas) : rEp.meas),
-        toRtkEpoch(slipB ? slipB.annotate(bEp.timeMs, bEp.meas) : bEp.meas),
+        toRtkEpoch(slipR ? slipR.annotate(rEp.timeMs, rEp.meas) : rEp.meas, fq),
+        toRtkEpoch(slipB ? slipB.annotate(bEp.timeMs, bEp.meas) : bEp.meas, fq),
         rEp.timeMs
       );
       point = sol
@@ -279,5 +374,6 @@ export function postProcessRtk(
       rover: slipR ? slipR.counts.receiver + slipR.counts.geometryFree : 0,
     },
     final: lastFixed ?? lastFloat,
+    model,
   };
 }

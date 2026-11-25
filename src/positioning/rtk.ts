@@ -139,26 +139,52 @@ const L1_CODES: Record<string, string[]> = {
   C: ['2I', '1P'], // B1I first (classic B1), then B1C
 };
 
+/** Preferred second-frequency code per system (GPS L2, Galileo E5a,
+ *  QZSS L2, BeiDou B3I/B2I); GLONASS stays single-frequency (FDMA
+ *  inter-frequency biases). */
+const L2_CODES: Record<string, string[]> = {
+  G: ['2W', '2L', '2X', '2S', '2C', '2P'],
+  E: ['5Q', '5X', '5I'],
+  J: ['2L', '2X', '2S'],
+  C: ['6I', '7I'],
+};
+
+/** Map key of a second-frequency measurement: `G05@2`. A key's satellite
+ *  is the part before `@`. */
+export function rtkSatOf(key: string): string {
+  const at = key.indexOf('@');
+  return at < 0 ? key : key.slice(0, at);
+}
+
 /**
  * Adapt one epoch of decoder observations (e.g.
  * `parseNovatelRange(...).epochs[i].meas`) to the RTK input map:
  * keeps each satellite's preferred L1-band code measurement with a
- * valid pseudorange, drops unsupported systems (SBAS, NavIC).
+ * valid pseudorange, drops unsupported systems (SBAS, NavIC). With
+ * `frequencies: 2` each satellite's preferred second-frequency signal
+ * is added under the key `<prn>@<band>` (e.g. `G05@2`, `E11@5`).
  */
 export function toRtkEpoch(
-  meas: readonly RawObservation[]
+  meas: readonly RawObservation[],
+  opts: { frequencies?: 1 | 2 } = {}
 ): Map<string, RtkMeasurement> {
   const out = new Map<string, RtkMeasurement>();
   const rank = new Map<string, number>();
+  const tables = opts.frequencies === 2 ? [L1_CODES, L2_CODES] : [L1_CODES];
   for (const m of meas) {
-    const prefs = L1_CODES[m.prn[0]!];
-    if (!prefs || m.pr === null || !Number.isFinite(m.pr)) continue;
-    const r = prefs.indexOf(m.code);
+    if (m.pr === null || !Number.isFinite(m.pr)) continue;
+    let key = '';
+    let r = -1;
+    for (let t = 0; t < tables.length && r < 0; t++) {
+      const prefs = tables[t]![m.prn[0]!];
+      r = prefs ? prefs.indexOf(m.code) : -1;
+      if (r >= 0) key = t === 0 ? m.prn : `${m.prn}@${m.code[0]}`;
+    }
     if (r < 0) continue;
-    const prev = rank.get(m.prn);
+    const prev = rank.get(key);
     if (prev !== undefined && prev <= r) continue;
-    rank.set(m.prn, r);
-    out.set(m.prn, {
+    rank.set(key, r);
+    out.set(key, {
       code: m.code,
       pr: m.pr,
       cp: m.cp ?? null,
@@ -230,6 +256,18 @@ function chaoWetMapping(el: number): number {
   return 1 / (Math.sin(e) + 0.00143 / (Math.tan(e) + 0.0445));
 }
 
+/** Reference frequency of the ionosphere states (Hz): the delay on any
+ *  carrier f is (F_IONO / f)² times the state. */
+const F_IONO = 1575.42e6;
+
+/** Single-layer ionosphere mapping (350 km shell), elevation in radians. */
+function ionoMapping(el: number): number {
+  const RE = 6371e3;
+  const H = 350e3;
+  const sinZp = (RE / (RE + H)) * Math.cos(Math.max(el, 0));
+  return 1 / Math.sqrt(1 - sinZp * sinZp);
+}
+
 /** Rotate an ECEF position by the Earth rotation during signal travel. */
 function sagnac(
   pos: { x: number; y: number; z: number },
@@ -245,13 +283,33 @@ function sagnac(
 export type EphemerisSource =
   ReadonlyMap<string, Ephemeris> | readonly Ephemeris[];
 
+/** Per-PRN index of an ephemeris list (rebuilt when the list grows, as a
+ *  live stream's does): selecting from the whole day's list for every
+ *  satellite at every epoch was most of a post-processing run. */
+const ephIndex = new WeakMap<
+  readonly Ephemeris[],
+  { n: number; byPrn: Map<string, Ephemeris[]> }
+>();
+
 function resolveEphemeris(
   src: EphemerisSource,
   prn: string,
   timeMs: number
 ): Ephemeris | null {
-  if (Array.isArray(src))
-    return selectEphemeris(src as Ephemeris[], prn, timeMs);
+  if (Array.isArray(src)) {
+    const list = src as Ephemeris[];
+    let ix = ephIndex.get(list);
+    if (!ix || ix.n !== list.length) {
+      const byPrn = new Map<string, Ephemeris[]>();
+      for (const e of list) {
+        const l = byPrn.get(e.prn);
+        if (l) l.push(e);
+        else byPrn.set(e.prn, [e]);
+      }
+      ephIndex.set(list, (ix = { n: list.length, byPrn }));
+    }
+    return selectEphemeris(ix.byPrn.get(prn) ?? [], prn, timeMs);
+  }
   return (src as ReadonlyMap<string, Ephemeris>).get(prn) ?? null;
 }
 
@@ -265,7 +323,12 @@ const NO_CALIBRATION: RtkAntennaOffset = {
 
 /** Per-satellite geometry shared by the DGNSS and float solvers. */
 interface SatGeometry {
+  /** Measurement key: the PRN, or `<prn>@<band>` for a second frequency. */
   prn: string;
+  /** The satellite (PRN) the measurement belongs to. */
+  sat: string;
+  /** Carrier frequency (Hz); 0 when unknown. */
+  freq: number;
   /** Signal group: system letter + code, e.g. "G1C", "C2I". */
   group: string;
   /** Carrier wavelength (m); 0 when the frequency is unknown. */
@@ -323,9 +386,11 @@ function buildGeometry(
     basePos[1],
     basePos[2]
   );
+  const satPos = new Map<string, { satB: SatPosition; satR: SatPosition }>();
   for (const [prn, mR] of rover) {
     const sys = prn[0]!;
     if (!'GERCJ'.includes(sys)) continue;
+    const sat = rtkSatOf(prn);
     const mB = base.get(prn);
     // Same band at both ends (E1C at one receiver, E1X at the other is
     // fine: phases on one frequency are aligned in RINEX 3.01+).
@@ -337,7 +402,7 @@ function buildGeometry(
       !Number.isFinite(mB.pr)
     )
       continue;
-    const eph = resolveEphemeris(ephemerides, prn, timeMs);
+    const eph = resolveEphemeris(ephemerides, sat, timeMs);
     if (!eph) continue;
 
     const satAt = (pr: number): SatPosition | null => {
@@ -346,9 +411,17 @@ function buildGeometry(
       const sat = computeSatPosition(eph, tTx - dts * 1000);
       return Number.isFinite(sat.x) ? sat : null;
     };
-    const satB = satAt(mB.pr);
-    const satR = satAt(mR.pr);
-    if (!satB || !satR) continue;
+    // A second frequency reuses its satellite's positions: the few metres
+    // between the two pseudoranges move the satellite by well under a
+    // micrometre.
+    let pos = satPos.get(sat);
+    if (!pos) {
+      const b = satAt(mB.pr);
+      const r = satAt(mR.pr);
+      if (!b || !r) continue;
+      satPos.set(sat, (pos = { satB: b, satR: r }));
+    }
+    const { satB, satR } = pos;
 
     const travelB =
       Math.hypot(
@@ -366,7 +439,7 @@ function buildGeometry(
     // differs between receiver makes and doesn't cancel across them —
     // Leica vs Javad at Wettzell: 28 mm East together, ≤ 2 mm apart.
     const group =
-      sys + mR.code + (sys === 'C' && Number(prn.slice(1)) >= 19 ? '3' : '');
+      sys + mR.code + (sys === 'C' && Number(sat.slice(1)) >= 19 ? '3' : '');
 
     // Receiver antenna phase-centre corrections (per frequency; the satellite
     // antenna cancels in the double difference). The base correction is fixed
@@ -418,6 +491,8 @@ function buildGeometry(
 
     out.push({
       prn,
+      sat,
+      freq,
       group,
       lambda: freq > 0 ? C_LIGHT / freq : 0,
       satR,
@@ -853,6 +928,23 @@ export interface RtkFloatOptions {
   tropoInitSigmaM?: number;
   /** Its random walk (m/√h). Default 0.01. */
   tropoRandomWalkMPerSqrtH?: number;
+  /**
+   * Estimate the ionosphere: one between-receiver zenith delay per
+   * satellite (at 1575.42 MHz, single-layer mapping), entering code with
+   * + and phase with − scaled by (1575.42 MHz / f)². Its prior and random
+   * walk scale with the baseline length, so on a short baseline it stays
+   * near zero and the model reduces to the usual one. Separating the
+   * ionosphere from the position needs two frequencies — feed
+   * `toRtkEpoch(meas, { frequencies: 2 })`. Default 'off'.
+   */
+  ionosphere?: 'off' | 'estimate';
+  /** Initial sigma of a satellite's ionosphere state per 10 km of
+   *  baseline (m). Default 0.03. */
+  ionoInitSigmaMPer10Km?: number;
+  /** Its random walk per 10 km of baseline (m/√s). Default 0.0001 — ten
+   *  times tighter than RTKLIB's: looser states weakened the fixes on
+   *  10–50 km EPN baselines. */
+  ionoRandomWalkMPer10KmPerSqrtS?: number;
   /** Zenith code sigma per receiver (m). Default 0.3. */
   codeSigmaM?: number;
   /** Zenith phase sigma per receiver (m). Default 0.003. */
@@ -956,12 +1048,19 @@ export interface RtkFloatSolution {
   /** Estimated rover-minus-base zenith wet delay (m), with
    *  `estimateTroposphere`. */
   relativeZenithDelayM?: number;
+  /** Estimated rover-minus-base zenith ionosphere delay per satellite
+   *  (m at 1575.42 MHz), with `ionosphere: 'estimate'`. */
+  ionosphereM?: Record<string, number>;
 }
 
+/** A dynamic state after the fixed ones: a DD ambiguity (cycles), or —
+ *  `iono: true` — a satellite's between-receiver ionosphere (m; `prn` is
+ *  the satellite, `group` empty, `lambda` 0). */
 interface AmbEntry {
   prn: string;
   group: string;
   lambda: number;
+  iono?: true;
 }
 
 interface TrackRecord {
@@ -1010,6 +1109,10 @@ export class RtkFloatEngine {
         (opts.estimateTroposphere ?? false) && (opts.troposphere ?? true),
       tropoInitSigmaM: opts.tropoInitSigmaM ?? 0.05,
       tropoRandomWalkMPerSqrtH: opts.tropoRandomWalkMPerSqrtH ?? 0.01,
+      ionosphere: opts.ionosphere ?? 'off',
+      ionoInitSigmaMPer10Km: opts.ionoInitSigmaMPer10Km ?? 0.03,
+      ionoRandomWalkMPer10KmPerSqrtS:
+        opts.ionoRandomWalkMPer10KmPerSqrtS ?? 0.0001,
       codeSigmaM: opts.codeSigmaM ?? 0.3,
       phaseSigmaM: opts.phaseSigmaM ?? 0.003,
       processNoisePosM: opts.processNoisePosM ?? 0,
@@ -1038,12 +1141,20 @@ export class RtkFloatEngine {
     this.amb = [];
     this.refs.clear();
     this.track.clear();
+    this.ionoSeen.clear();
     this.lastMs = null;
   }
 
   private ambIndex(prn: string): number {
-    return this.amb.findIndex((a) => a.prn === prn);
+    return this.amb.findIndex((a) => a.prn === prn && !a.iono);
   }
+
+  private ionoIndex(sat: string): number {
+    return this.amb.findIndex((a) => a.iono && a.prn === sat);
+  }
+
+  /** Satellite → last epoch it was in the geometry (ionosphere states). */
+  private ionoSeen = new Map<string, number>();
 
   /** Remove one ambiguity state (row/col) from x and P. */
   private dropAmb(idx: number): void {
@@ -1198,8 +1309,14 @@ export class RtkFloatEngine {
 
     /* -- 1: drop states unseen for too long ------------------------ */
     if (this.x) {
+      const sats = new Set(geom.map((g) => g.sat));
       for (let i = this.amb.length - 1; i >= 0; i--) {
         const prn = this.amb[i]!.prn;
+        if (this.amb[i]!.iono) {
+          const last = this.ionoSeen.get(prn) ?? -Infinity;
+          if (!sats.has(prn) && timeMs - last > o.maxGapMs) this.dropAmb(i);
+          continue;
+        }
         const tr = this.track.get(prn);
         const seen = byPrn.get(prn);
         const hasPhase = seen && seen.cpR !== null && seen.cpB !== null;
@@ -1263,8 +1380,25 @@ export class RtkFloatEngine {
       this.P[3]![3]! +=
         (o.tropoRandomWalkMPerSqrtH * o.tropoRandomWalkMPerSqrtH * dtS) / 3600;
     const qAmb = o.ambProcessNoiseCycles * o.ambProcessNoiseCycles * dtS;
-    for (let k = 0; k < this.amb.length; k++)
-      this.P[this.a0 + k]![this.a0 + k]! += qAmb;
+    // Ionosphere scale: the baseline length in units of 10 km (RTKLIB's
+    // convention), from the current position.
+    const blScale =
+      Math.hypot(
+        this.x[0]! - this.basePos[0],
+        this.x[1]! - this.basePos[1],
+        this.x[2]! - this.basePos[2]
+      ) / 1e4;
+    const elOf = new Map(geom.map((g) => [g.sat, g.elB]));
+    for (let k = 0; k < this.amb.length; k++) {
+      const a = this.amb[k]!;
+      if (a.iono) {
+        const f =
+          o.ionoRandomWalkMPer10KmPerSqrtS *
+          blScale *
+          Math.cos(elOf.get(a.prn) ?? 0);
+        this.P[this.a0 + k]![this.a0 + k]! += f * f * dtS;
+      } else this.P[this.a0 + k]![this.a0 + k]! += qAmb;
+    }
 
     /* -- 4: reference selection + retargeting ---------------------- */
     const groups = groupEntries(geom);
@@ -1341,6 +1475,20 @@ export class RtkFloatEngine {
       const a = this.amb[i]!;
       if (newRefs.get(a.group)?.prn === a.prn) this.dropAmb(i);
     }
+    // One ionosphere state per satellite in a differenced group.
+    if (o.ionosphere === 'estimate') {
+      const s0 = o.ionoInitSigmaMPer10Km * blScale;
+      for (const group of newRefs.keys())
+        for (const g of groups.get(group)!) {
+          this.ionoSeen.set(g.sat, timeMs);
+          if (this.ionoIndex(g.sat) < 0)
+            this.addAmb(
+              { prn: g.sat, group: '', lambda: 0, iono: true },
+              0,
+              Math.max(s0 * s0, 1e-8)
+            );
+        }
+    }
 
     /* -- 7: measurement rows ---------------------------------------- */
     interface Row extends DdRow {
@@ -1383,12 +1531,32 @@ export class RtkFloatEngine {
     }
 
     /* -- 8: innovation gating at the prior -------------------------- */
+    // Rover terms per measurement at one position (each reference serves
+    // many rows; the gate and every iteration ask again).
+    let termsAt: [number, number, number] = [NaN, NaN, NaN];
+    const termsMemo = new Map<SatGeometry, ReturnType<typeof roverTerms>>();
+    const terms = (g: SatGeometry, xs: readonly number[]) => {
+      if (
+        xs[0] !== termsAt[0] ||
+        xs[1] !== termsAt[1] ||
+        xs[2] !== termsAt[2]
+      ) {
+        termsAt = [xs[0]!, xs[1]!, xs[2]!];
+        termsMemo.clear();
+      }
+      let t = termsMemo.get(g);
+      if (!t) {
+        t = roverTerms(g, xs[0]!, xs[1]!, xs[2]!, o.troposphere);
+        termsMemo.set(g, t);
+      }
+      return t;
+    };
     const predict = (
       row: Row,
       xs: readonly number[]
     ): { pred: number; h: number[] } => {
-      const ts = roverTerms(row.g, xs[0]!, xs[1]!, xs[2]!, o.troposphere);
-      const tr = roverTerms(row.ref, xs[0]!, xs[1]!, xs[2]!, o.troposphere);
+      const ts = terms(row.g, xs);
+      const tr = terms(row.ref, xs);
       let pred =
         ts.rho - row.g.rhoB + ts.dTropo - (tr.rho - row.ref.rhoB + tr.dTropo);
       const h = new Array<number>(this.x!.length).fill(0);
@@ -1398,6 +1566,20 @@ export class RtkFloatEngine {
       if (o.estimateTroposphere) {
         h[3] = chaoWetMapping(ts.elR) - chaoWetMapping(tr.elR);
         pred += h[3] * xs[3]!;
+      }
+      if (o.ionosphere === 'estimate') {
+        // Code delayed (+), phase advanced (−), by (F_IONO/f)²·m(el)·I.
+        const sign = row.kind === 'code' ? 1 : -1;
+        for (const [g, w] of [
+          [row.g, 1],
+          [row.ref, -1],
+        ] as const) {
+          const k = this.ionoIndex(g.sat);
+          if (k < 0 || g.freq <= 0) continue;
+          const c = sign * w * (F_IONO / g.freq) ** 2 * ionoMapping(g.elB);
+          h[this.a0 + k] = c;
+          pred += c * xs[this.a0 + k]!;
+        }
       }
       if (row.ambIdx >= 0) {
         pred += this.amb[row.ambIdx]!.lambda * xs[this.a0 + row.ambIdx]!;
@@ -1550,11 +1732,14 @@ export class RtkFloatEngine {
     this.lastMs = timeMs;
 
     const ambiguities: Record<string, number> = {};
+    const ionosphereM: Record<string, number> = {};
     for (let k = 0; k < this.amb.length; k++)
-      ambiguities[this.amb[k]!.prn] = this.x[this.a0 + k]!;
+      if (this.amb[k]!.iono)
+        ionosphereM[this.amb[k]!.prn] = this.x[this.a0 + k]!;
+      else ambiguities[this.amb[k]!.prn] = this.x[this.a0 + k]!;
     const refSatellites: Record<string, string> = {};
     for (const [group, ref] of newRefs) refSatellites[group] = ref.prn;
-    const nSats = new Set(rows.flatMap((r) => [r.g.prn, r.ref.prn])).size;
+    const nSats = new Set(rows.flatMap((r) => [r.g.sat, r.ref.sat])).size;
 
     return {
       timeMs,
@@ -1586,6 +1771,7 @@ export class RtkFloatEngine {
       ambiguities,
       refSatellites,
       ...(o.estimateTroposphere ? { relativeZenithDelayM: this.x[3]! } : {}),
+      ...(o.ionosphere === 'estimate' ? { ionosphereM } : {}),
     };
   }
 }

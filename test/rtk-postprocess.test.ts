@@ -58,6 +58,65 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(bl).toBeLessThan(1600);
     });
 
+    it('chooses the model by baseline length (static only)', () => {
+      const short = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        mode: 'static',
+        elevationMaskDeg: 15,
+      }).model;
+      expect(short.frequencies).toBe(1);
+      expect(short.ionosphere).toBe('off');
+      expect(short.troposphere).toBe(false);
+      expect(short.baselineKm!).toBeGreaterThan(1.5);
+      expect(short.baselineKm!).toBeLessThan(1.7);
+
+      // A 1 km limit makes the same 1.58 km session "long": two
+      // frequencies, ionosphere and troposphere estimated. Minutes of data
+      // on a short baseline are what the default limit keeps away from
+      // this model (it lands 6 cm off here, the short model 3 mm) — it
+      // must still solve and fix.
+      const long = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        mode: 'static',
+        elevationMaskDeg: 15,
+        ambiguityResolution: 'instant',
+        longBaselineKm: 1,
+      });
+      expect(long.model).toMatchObject({
+        frequencies: 2,
+        ionosphere: 'estimate',
+        troposphere: true,
+      });
+      expect(long.fixRate).toBeGreaterThan(0.5);
+      const f = long.final!;
+      expect(f.status).toBe('fixed');
+      const [dE, dN, dU] = getEnuDifference(
+        WHU_BASE[0] + f.baseline[0],
+        WHU_BASE[1] + f.baseline[1],
+        WHU_BASE[2] + f.baseline[2],
+        WHU_ROVER_TRUTH[0],
+        WHU_ROVER_TRUTH[1],
+        WHU_ROVER_TRUTH[2]
+      );
+      expect(Math.hypot(dE, dN, dU)).toBeLessThan(0.1);
+
+      // Explicit options and kinematic sessions are never switched.
+      const pinned = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        mode: 'static',
+        frequencies: 1,
+        longBaselineKm: 1,
+      }).model;
+      expect(pinned).toEqual({
+        frequencies: 1,
+        ionosphere: 'off',
+        troposphere: false,
+        baselineKm: null,
+      });
+      const kin = postProcessRtk(base, rover, ephs, WHU_BASE, {
+        mode: 'kinematic',
+        longBaselineKm: 1,
+      }).model;
+      expect(kin.frequencies).toBe(1);
+    }, 30_000);
+
     it('produces integer-fixed epochs with instant AR', () => {
       const res = postProcessRtk(base, rover, ephs, WHU_BASE, {
         mode: 'static',
