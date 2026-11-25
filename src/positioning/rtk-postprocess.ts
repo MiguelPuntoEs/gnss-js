@@ -87,11 +87,17 @@ export interface RtkPostProcessOptions extends RtkFloatOptions {
    * frequencies, the ionosphere estimated per satellite and the relative
    * troposphere estimated — unless `frequencies`, `ionosphere` or
    * `estimateTroposphere` is given. `false` keeps the single-frequency
-   * short-baseline model at every length. Default 12 (EPN pairs: no
-   * better at 10 km, 2–5× better from 16 km on). Kinematic sessions are
-   * not switched.
+   * short-baseline model at every length. Default 8 (EPN pairs from 8.6 to
+   * 16.9 km: better in every week but at CEBR–MADR, 10 km; 2–5× better
+   * from 16 km on). Kinematic sessions use {@link kinematicLongBaselineKm}.
    */
   longBaselineKm?: number | false;
+  /**
+   * The same switch for kinematic sessions. Default 20: on EPN pairs
+   * processed epoch by epoch the long-baseline model fixes less often up
+   * to 17 km and fixes more often, with fewer wrong fixes, from 24 km on.
+   */
+  kinematicLongBaselineKm?: number | false;
 }
 
 /** The model a run used (after the long-baseline choice). */
@@ -147,9 +153,9 @@ function medianIntervalMs(epochs: readonly RtkObsEpoch[]): number | null {
 }
 
 /**
- * The long-baseline choice: explicit options win; otherwise a static
- * session longer than `longBaselineKm` gets two frequencies with the
- * ionosphere and troposphere estimated.
+ * The long-baseline choice: explicit options win; otherwise a session
+ * longer than `longBaselineKm` (static) or `kinematicLongBaselineKm`
+ * gets two frequencies with the ionosphere and troposphere estimated.
  */
 function chooseModel(
   opts: RtkPostProcessOptions,
@@ -169,11 +175,13 @@ function chooseModel(
     troposphere: opts.estimateTroposphere ?? false,
     baselineKm: null,
   };
-  const limit = opts.longBaselineKm ?? 12;
+  const limit =
+    (opts.mode ?? 'kinematic') === 'static'
+      ? (opts.longBaselineKm ?? 8)
+      : (opts.kinematicLongBaselineKm ?? 20);
   if (
     limit === false ||
     opts.codeOnly ||
-    (opts.mode ?? 'kinematic') !== 'static' ||
     opts.frequencies !== undefined ||
     opts.ionosphere !== undefined ||
     opts.estimateTroposphere !== undefined

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.63.0
+
+### Changed — the long-baseline RTK model also for kinematic sessions, and from 8 km
+
+- `postProcessRtk`: kinematic sessions longer than `kinematicLongBaselineKm` (new, default 20 km) now run the long-baseline model (two frequencies, ionosphere and troposphere estimated), as static ones already did. EPN pairs processed epoch by epoch over two weeks, against the EUREF solution, fix rate and 3-D RMS of all epochs, single-frequency → long: AXPV–MARS (24 km) 97.9 % / 54 mm → 92.6 % / 48 mm, EIJS–WARE (32 km) 96.1 % / 58 mm → 98.9 % / 44 mm, MATE–SNIK (53 km) 78 % / 139 mm → 95 % / 54 mm, IGMI–GARI (128 km) 29 % / 324 mm → 74 % / 106 mm. Up to 17 km the long model fixes less often (CEBR–MADR, 10 km, 97.6 → 68.2 %), hence the 20 km default.
+- The static limit `longBaselineKm` drops from 12 to 8 km. Seven more EPN pairs from 8.6 to 16.9 km, 24 h static, 3-D RMS (mm) per week: the long model is better in all 13 weeks with data, e.g. TLMF–TLSE (8.7 km) 20.4 / 17.7 → 8.4 / 8.9, ASIR–M0SE (11 km) 13.3 / 10.6 → 3.7 / 9.1, FFMJ–KLOP (15 km) 19.6 / 11.5 → 8.2 / 4.2. CEBR–MADR (10 km) is the exception and is now worse, 10.5 / 10.1 → 19.4 / 13.9 mm; across the pairs between 8 and 17 km the long model still gains more than it loses there.
+
 ## 2.62.0
 
 ### Added — long baselines in RTK: two frequencies, ionosphere and troposphere estimated

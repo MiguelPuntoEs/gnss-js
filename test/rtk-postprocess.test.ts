@@ -58,7 +58,7 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(bl).toBeLessThan(1600);
     });
 
-    it('chooses the model by baseline length (static only)', () => {
+    it('chooses the model by baseline length', () => {
       const short = postProcessRtk(base, rover, ephs, WHU_BASE, {
         mode: 'static',
         elevationMaskDeg: 15,
@@ -98,7 +98,7 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       );
       expect(Math.hypot(dE, dN, dU)).toBeLessThan(0.1);
 
-      // Explicit options and kinematic sessions are never switched.
+      // Explicit options are never switched.
       const pinned = postProcessRtk(base, rover, ephs, WHU_BASE, {
         mode: 'static',
         frequencies: 1,
@@ -110,11 +110,17 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
         troposphere: false,
         baselineKm: null,
       });
-      const kin = postProcessRtk(base, rover, ephs, WHU_BASE, {
-        mode: 'kinematic',
-        longBaselineKm: 1,
-      }).model;
-      expect(kin.frequencies).toBe(1);
+      // Kinematic sessions have their own limit: the static one does not
+      // apply, a kinematic one of 1 km does.
+      const kin = (o: object) =>
+        postProcessRtk(base, rover, ephs, WHU_BASE, {
+          mode: 'kinematic',
+          ...o,
+        }).model;
+      expect(kin({ longBaselineKm: 1 }).frequencies).toBe(1);
+      const kinLong = kin({ kinematicLongBaselineKm: 1 });
+      expect(kinLong.frequencies).toBe(2);
+      expect(kinLong.baselineKm!).toBeGreaterThan(1.5);
     }, 30_000);
 
     it('produces integer-fixed epochs with instant AR', () => {
