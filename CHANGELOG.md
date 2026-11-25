@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.62.0
+
+### Added — long baselines in RTK: two frequencies, ionosphere and troposphere estimated
+
+- `postProcessRtk`: a static session whose baseline is longer than `longBaselineKm` (default 12 km, from a code solution on the first epochs) now runs the long-baseline model — two frequencies per satellite, one between-receiver ionosphere state per satellite and the relative troposphere (`estimateTroposphere`). Shorter baselines and kinematic sessions keep the single-frequency model unchanged; `frequencies`, `ionosphere` or `estimateTroposphere` given explicitly always win, and `longBaselineKm: false` turns the switch off. `result.model` reports what was used and the baseline length.
+- `toRtkEpoch(meas, { frequencies: 2 })` adds each satellite's preferred second signal (GPS L2, Galileo E5a, QZSS L2, BeiDou B3I/B2I; GLONASS stays on L1) under the key `<prn>@<band>`, e.g. `G05@2`; `rtkSatOf(key)` gives the satellite back.
+- `RtkFloatEngine` option `ionosphere: 'estimate'`: a zenith delay at 1575.42 MHz per satellite with a single-layer mapping, entering code with + and phase with − scaled by (1575.42 MHz / f)². Its prior (`ionoInitSigmaMPer10Km`, 0.03 m) and random walk (`ionoRandomWalkMPer10KmPerSqrtS`, 0.0001 m/√s — ten times tighter than RTKLIB's, which weakened the fixes on 10–50 km) scale with the baseline length. The solution reports `ionosphereM` per satellite.
+- 13 EPN baselines, two weeks, 24 h static against the EUREF solution, 3-D RMS (mm), week 2297 / 2430: up to 10 km unchanged; BADH–FFMJ (16 km) 20.5 / 17.9 → 7.6 / 5.1, AXPV–MARS (24 km) 31.7 / 31.0 → 13.2 / 20.3, EIJS–WARE (32 km) 17.1 / 13.3 → 3.3 / 4.1, MATE–SNIK (53 km) 47.5 / 59.8 → 19.2 / 18.8, IGMI–GARI (128 km) 123.5 / 105.0 → 22.1 / 22.4, DGOR–SNIK (242 km) 246 / 213 → 89 / 66. Sessions of 1 h and 4 h on the same 16–128 km pairs: better in all 20 cases (e.g. EIJS–WARE 1 h 92 / 39 → 12 / 9). The 12 km limit sits between the two pairs that bracket the crossover (CEBR–MADR, 10 km, no better with the long model; BADH–FFMJ, 16 km, 2–3× better).
+
+### Faster — RTK ephemeris lookup
+
+- The engine selected each satellite's ephemeris by filtering the whole list at every epoch, which was most of a post-processing run; it now indexes the list by PRN (rebuilt when the list grows). A 30 s day of a 10 km pair: about five times faster, identical results.
+
 ## 2.61.0
 
 ### Fixed — the RTK float update counted ambiguity corrections twice
