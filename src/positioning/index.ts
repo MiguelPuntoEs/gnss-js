@@ -634,6 +634,12 @@ export type {
 
 export { postProcessRtk } from './rtk-postprocess';
 export { RtkSlipDetector } from './rtk-slips';
+export { parseDjiMrk, photoPositions } from './photo-positions';
+export type {
+  CameraEvent,
+  PhotoPosition,
+  PhotoPositionOptions,
+} from './photo-positions';
 export type { RtkSlipOptions } from './rtk-slips';
 export { ZeroBaselineEngine } from './zero-baseline';
 export { resolveMsmRanges, type MsmResolveOptions } from './msm-resolve';

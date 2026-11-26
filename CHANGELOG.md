@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — RTK with a rover faster than its base
+
+- `postProcessRtk` paired each rover epoch with the base epoch of the same rounded second and modelled both at the rover's time. A 5 Hz rover over a 1 Hz base therefore had four epochs in five differenced against a base up to 0.4 s away as if simultaneous — the satellites move hundreds of metres in that time — and a 1 Hz rover over a 30 s base solved one epoch in thirty. Each rover epoch now takes the nearest base epoch within `pairToleranceMs` (default 15 s, was 0.5 s), and `RtkFloatEngine.process(rover, base, timeMs, baseTimeMs)` / `solveDgnss({ baseTimeMs })` model the base at its own epoch: satellite positions at its transmission times and the satellite clock change between the two epochs. Pairs sampled at the same instant are unchanged. A DJI M300 (5 Hz, 44 m from a 1 Hz Stonex base, one hour) against a commercial post-processed trajectory: before, 10 267 of 18 603 epochs solved, 5.5 % "fixed" and metres off; now all solved, 92 % fixed, fixed epochs 0.2 cm horizontal / 0.5 cm vertical median (0.8 / 2.1 cm at 95 %). With the base thinned to 30 s: 91.5 % fixed, 0.7 / 0.7 cm.
+
+### Added — photo positions for drone PPK
+
+- `parseDjiMrk(text)` reads a DJI `Timestamp.MRK` (Phantom 4 RTK, Matrice 300/350, Mavic 3 Enterprise): per photo the shutter time, the antenna→camera offset (North / East / Down, following the gimbal) and the drone's own position, standard deviations and solution flag.
+- `photoPositions(track, events)` places shutter events on a kinematic `postProcessRtk` track — linear interpolation between the bracketing epochs, events in gaps longer than 2.5 × the track interval left out — and moves each from the antenna phase centre to the camera with its offset. Each photo carries the worse status of its two epochs and, when the event has one, its difference from the drone's onboard position. On the M300 flight, 586 photos against the geotags made from the commercial trajectory: all fixed, 0.2 cm horizontal / 0.5 cm vertical median, 0.5 / 1.7 cm worst.
+
 ## 2.63.0
 
 ### Changed — the long-baseline RTK model also for kinematic sessions, and from 8 km
