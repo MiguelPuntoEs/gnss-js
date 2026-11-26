@@ -374,7 +374,8 @@ function buildGeometry(
   timeMs: number,
   maskRad: number,
   troposphere: boolean,
-  antenna: RtkAntennaConfig | null = null
+  antenna: RtkAntennaConfig | null = null,
+  baseTimeMs: number = timeMs
 ): SatGeometry[] {
   const out: SatGeometry[] = [];
   // Base geodetic latitude/longitude (rad) for the base antenna correction —
@@ -386,7 +387,14 @@ function buildGeometry(
     basePos[1],
     basePos[2]
   );
-  const satPos = new Map<string, { satB: SatPosition; satR: SatPosition }>();
+  // Per satellite: its positions at the base's and the rover's transmission
+  // times, and the change in its clock between the two (m) — zero when
+  // both receivers sampled the same instant, otherwise what the single
+  // difference keeps of the satellite clock.
+  const satPos = new Map<
+    string,
+    { satB: SatPosition; satR: SatPosition; clockM: number }
+  >();
   for (const [prn, mR] of rover) {
     const sys = prn[0]!;
     if (!'GERCJ'.includes(sys)) continue;
@@ -405,23 +413,26 @@ function buildGeometry(
     const eph = resolveEphemeris(ephemerides, sat, timeMs);
     if (!eph) continue;
 
-    const satAt = (pr: number): SatPosition | null => {
-      const tTx = timeMs - (pr / C_LIGHT) * 1000;
+    const satAt = (pr: number, tRx: number) => {
+      const tTx = tRx - (pr / C_LIGHT) * 1000;
       const dts = satClockCorrection(eph, tTx);
       const sat = computeSatPosition(eph, tTx - dts * 1000);
-      return Number.isFinite(sat.x) ? sat : null;
+      return Number.isFinite(sat.x) ? { sat, dts } : null;
     };
     // A second frequency reuses its satellite's positions: the few metres
     // between the two pseudoranges move the satellite by well under a
     // micrometre.
     let pos = satPos.get(sat);
     if (!pos) {
-      const b = satAt(mB.pr);
-      const r = satAt(mR.pr);
+      const b = satAt(mB.pr, baseTimeMs);
+      const r = satAt(mR.pr, timeMs);
       if (!b || !r) continue;
-      satPos.set(sat, (pos = { satB: b, satR: r }));
+      satPos.set(
+        sat,
+        (pos = { satB: b.sat, satR: r.sat, clockM: C_LIGHT * (r.dts - b.dts) })
+      );
     }
-    const { satB, satR } = pos;
+    const { satB, satR, clockM } = pos;
 
     const travelB =
       Math.hypot(
@@ -430,7 +441,11 @@ function buildGeometry(
         satB.z - basePos[2]
       ) / C_LIGHT;
     const [bx, by, bz] = sagnac(satB, travelB);
-    let rhoB = Math.hypot(bx - basePos[0], by - basePos[1], bz - basePos[2]);
+    // The base is modelled at its own epoch (a 1 Hz or 30 s base under a
+    // faster rover): the satellite's clock change between the two epochs
+    // goes into the base range so the single difference stays clean.
+    let rhoB =
+      Math.hypot(bx - basePos[0], by - basePos[1], bz - basePos[2]) + clockM;
     const elB = ecefToAzEl(basePos[0], basePos[1], basePos[2], bx, by, bz).el;
     if (elB < maskRad) continue;
 
@@ -714,6 +729,9 @@ export interface DgnssOptions {
   rejectThresholdM?: number;
   /** Initial rover position; defaults to the base position. */
   initialPosition?: [number, number, number];
+  /** The base's epoch (GPS-scale ms) when it differs from the rover's;
+   *  default the same. */
+  baseTimeMs?: number;
 }
 
 export interface DgnssSolution {
@@ -763,6 +781,7 @@ export function solveDgnss(
     codeSigmaM = 0.3,
     rejectThresholdM = 20,
     initialPosition,
+    baseTimeMs = timeMs,
   } = opts;
 
   let geom = buildGeometry(
@@ -772,7 +791,9 @@ export function solveDgnss(
     ephemerides,
     timeMs,
     (elevationMaskDeg * Math.PI) / 180,
-    troposphere
+    troposphere,
+    null,
+    baseTimeMs
   );
 
   const rejected: string[] = [];
@@ -1283,15 +1304,18 @@ export class RtkFloatEngine {
   }
 
   /**
-   * Process one synchronized epoch (same nominal `timeMs` for both
-   * receivers). Returns null until a first position can be
+   * Process one epoch: the rover's at `timeMs`, the base's at `baseTimeMs`
+   * (default the same). A base sampled at another instant is modelled at
+   * its own epoch — satellite positions and clocks — so a 1 Hz or 30 s base
+   * serves a faster rover. Returns null until a first position can be
    * initialised (via an internal DGNSS solve) or when the epoch has
    * fewer than 3 usable DD rows.
    */
   process(
     rover: RtkEpochMeasurements,
     base: RtkEpochMeasurements,
-    timeMs: number
+    timeMs: number,
+    baseTimeMs: number = timeMs
   ): RtkFloatSolution | null {
     const o = this.o;
     const geom = buildGeometry(
@@ -1302,7 +1326,8 @@ export class RtkFloatEngine {
       timeMs,
       (o.elevationMaskDeg * Math.PI) / 180,
       o.troposphere,
-      o.antenna
+      o.antenna,
+      baseTimeMs
     );
     const byPrn = new Map(geom.map((g) => [g.prn, g]));
     const dtS = this.lastMs !== null ? (timeMs - this.lastMs) / 1000 : 0;
@@ -1348,6 +1373,7 @@ export class RtkFloatEngine {
           elevationMaskDeg: o.elevationMaskDeg,
           troposphere: o.troposphere,
           codeSigmaM: o.codeSigmaM,
+          baseTimeMs,
         }
       );
       if (!dg) return null;

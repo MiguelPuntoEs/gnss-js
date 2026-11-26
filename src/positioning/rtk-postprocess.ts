@@ -55,9 +55,12 @@ export interface RtkTrackPoint {
 
 export interface RtkPostProcessOptions extends RtkFloatOptions {
   /**
-   * Maximum |base − rover| epoch-time difference to accept a pair (ms).
-   * Default 500. Base and rover are matched by rounded second, so this
-   * mainly rejects a base gap rather than sub-second offsets.
+   * Maximum age of the base epoch paired with a rover epoch (ms): each
+   * rover epoch takes the nearest base epoch, which the engine models at
+   * its own time. Default 15 000, so a 30 s base serves a 1 Hz or 5 Hz
+   * rover (DJI M300 at 5 Hz, 44 m from its base, against a commercial
+   * trajectory: fixed epochs 0.3 cm horizontal / 0.5 cm vertical median
+   * with a 1 Hz base, 0.7 / 0.7 cm with a 30 s one).
    */
   pairToleranceMs?: number;
   /**
@@ -160,13 +163,10 @@ function medianIntervalMs(epochs: readonly RtkObsEpoch[]): number | null {
 function chooseModel(
   opts: RtkPostProcessOptions,
   roverEpochs: readonly RtkObsEpoch[],
-  baseByT: ReadonlyMap<number, RtkObsEpoch>,
-  round: (ms: number) => number,
-  tol: number,
+  pairBase: (timeMs: number) => RtkObsEpoch | null,
   dgnss: (
-    rover: readonly RawObservation[],
-    base: readonly RawObservation[],
-    timeMs: number
+    rover: RtkObsEpoch,
+    base: RtkObsEpoch
   ) => { baseline: [number, number, number] } | null
 ): RtkModelChoice {
   const explicit: RtkModelChoice = {
@@ -190,9 +190,9 @@ function chooseModel(
   // The first few paired epochs with a code solution give the length.
   let tried = 0;
   for (const r of roverEpochs) {
-    const b = baseByT.get(round(r.timeMs));
-    if (!b || Math.abs(b.timeMs - r.timeMs) > tol) continue;
-    const dg = dgnss(r.meas, b.meas, r.timeMs);
+    const b = pairBase(r.timeMs);
+    if (!b) continue;
+    const dg = dgnss(r, b);
     if (dg) {
       const km = Math.hypot(...dg.baseline) / 1000;
       return km > limit
@@ -226,9 +226,7 @@ export function postProcessRtk(
   baseEcef: readonly [number, number, number],
   opts: RtkPostProcessOptions = {}
 ): RtkPostProcessResult {
-  const tol = opts.pairToleranceMs ?? 500;
-  const round = (ms: number) => Math.round(ms / 1000) * 1000;
-
+  const tol = opts.pairToleranceMs ?? 15_000;
   const roverEpochs = epochsOf(rover);
 
   // Detect the rover sampling interval and, unless the caller pinned it,
@@ -238,16 +236,43 @@ export function postProcessRtk(
   // each epoch — resetting the float ambiguities and gutting the fix rate.
   // Tolerating ~2 missed epochs keeps the continuous float alive.
   const interval = medianIntervalMs(roverEpochs);
-  // Base epochs keyed by rounded second for synchronized lookup.
-  const baseByT = new Map<number, RtkObsEpoch>();
-  for (const e of epochsOf(base)) baseByT.set(round(e.timeMs), e);
+  // Each rover epoch is paired with the nearest base epoch within the
+  // tolerance; the engine models the base at its own epoch, so a 1 Hz base
+  // serves a 5 Hz rover.
+  const baseEpochs = [...epochsOf(base)].sort((a, b) => a.timeMs - b.timeMs);
+  const pairBase = (t: number): RtkObsEpoch | null => {
+    let lo = 0;
+    let hi = baseEpochs.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (baseEpochs[mid]!.timeMs < t) lo = mid + 1;
+      else hi = mid;
+    }
+    let best: RtkObsEpoch | null = null;
+    for (const e of [baseEpochs[lo - 1], baseEpochs[lo]])
+      if (
+        e &&
+        Math.abs(e.timeMs - t) <= tol &&
+        (!best || Math.abs(e.timeMs - t) < Math.abs(best.timeMs - t))
+      )
+        best = e;
+    return best;
+  };
 
-  const model = chooseModel(opts, roverEpochs, baseByT, round, tol, (r, b, t) =>
-    solveDgnss(toRtkEpoch(r), toRtkEpoch(b), baseEcef, ephemerides, t, {
-      elevationMaskDeg: opts.elevationMaskDeg,
-      troposphere: opts.troposphere,
-      codeSigmaM: opts.codeSigmaM,
-    })
+  const model = chooseModel(opts, roverEpochs, pairBase, (r, b) =>
+    solveDgnss(
+      toRtkEpoch(r.meas),
+      toRtkEpoch(b.meas),
+      baseEcef,
+      ephemerides,
+      r.timeMs,
+      {
+        elevationMaskDeg: opts.elevationMaskDeg,
+        troposphere: opts.troposphere,
+        codeSigmaM: opts.codeSigmaM,
+        baseTimeMs: b.timeMs,
+      }
+    )
   );
   const engineOpts: RtkPostProcessOptions = {
     ...opts,
@@ -297,13 +322,15 @@ export function postProcessRtk(
   let fixed = 0;
   let lastFixed: RtkPostProcessResult['final'] = null;
   let lastFloat: RtkPostProcessResult['final'] = null;
+  let lastBase: RtkObsEpoch | null = null;
+  let lastBaseMeas: ReturnType<typeof toRtkEpoch> | null = null;
 
   const sorted = [...roverEpochs].sort((a, b) => a.timeMs - b.timeMs);
   for (const rEp of sorted) {
     if (seen.has(rEp.timeMs)) continue; // drop RANGE/RANGECMP-style repeats
     seen.add(rEp.timeMs);
-    const bEp = baseByT.get(round(rEp.timeMs));
-    if (!bEp || Math.abs(bEp.timeMs - rEp.timeMs) > tol) {
+    const bEp = pairBase(rEp.timeMs);
+    if (!bEp) {
       unmatched++;
       continue;
     }
@@ -319,6 +346,7 @@ export function postProcessRtk(
           elevationMaskDeg: opts.elevationMaskDeg,
           troposphere: opts.troposphere,
           codeSigmaM: opts.codeSigmaM,
+          baseTimeMs: bEp.timeMs,
         }
       );
       point = dg
@@ -330,10 +358,20 @@ export function postProcessRtk(
           }
         : null;
     } else {
+      // A base epoch serving several rover epochs goes through its slip
+      // detector once.
+      if (bEp !== lastBase) {
+        lastBase = bEp;
+        lastBaseMeas = toRtkEpoch(
+          slipB ? slipB.annotate(bEp.timeMs, bEp.meas) : bEp.meas,
+          fq
+        );
+      }
       const sol = engine.process(
         toRtkEpoch(slipR ? slipR.annotate(rEp.timeMs, rEp.meas) : rEp.meas, fq),
-        toRtkEpoch(slipB ? slipB.annotate(bEp.timeMs, bEp.meas) : bEp.meas, fq),
-        rEp.timeMs
+        lastBaseMeas!,
+        rEp.timeMs,
+        bEp.timeMs
       );
       point = sol
         ? {

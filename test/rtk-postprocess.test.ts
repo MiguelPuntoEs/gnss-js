@@ -203,6 +203,35 @@ describe.skipIf(!existsSync(BASE_FIX) || !existsSync(ROVER_FIX))(
       expect(Math.hypot(dE, dN, dU)).toBeLessThan(5);
     });
 
+    it('models a slower base at its own epoch', () => {
+      // Every 10th base epoch: the other rover epochs take a base up to 5 s
+      // away. Modelled at the rover's time instead, the base ranges are off
+      // by the satellites' motion (hundreds of metres in 5 s).
+      const kin = {
+        mode: 'kinematic',
+        ambiguityResolution: 'instant',
+      } as const;
+      const full = postProcessRtk(base, rover, ephs, WHU_BASE, kin);
+      const thin = {
+        epochs: base.epochs.filter((_, i) => i % 10 === 0),
+      };
+      const res = postProcessRtk(thin, rover, ephs, WHU_BASE, kin);
+      expect(res.unmatched).toBe(0);
+      expect(res.solved).toBe(full.solved);
+      expect(res.fixRate).toBeGreaterThan(0.9 * full.fixRate);
+      const ref = new Map(full.track.map((p) => [p.timeMs, p.position]));
+      let worst = 0;
+      for (const p of res.track) {
+        const q = ref.get(p.timeMs);
+        if (p.status !== 'fixed' || !q) continue;
+        worst = Math.max(
+          worst,
+          Math.hypot(...getEnuDifference(...p.position, ...q))
+        );
+      }
+      expect(worst).toBeLessThan(0.03); // 1.2 cm
+    });
+
     it('leaves rover epochs with no base epoch unmatched', () => {
       // Shift the rover an hour off — far past the ~2-min base window, so no
       // rover epoch finds a base within tolerance.
