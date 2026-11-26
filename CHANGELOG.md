@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.64.0
 
 ### Fixed — RTK with a rover faster than its base
 
